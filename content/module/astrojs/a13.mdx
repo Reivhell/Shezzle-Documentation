@@ -1,0 +1,504 @@
+---
+title: "Sesi 13: SSR, SSG & Hybrid Rendering"
+description: "SSG adalah mode default Astro di mana semua halaman di-render saat build time menjadi file HTML statis."
+category: "astrojs"
+tags: ["astrojs"]
+order: 13
+---
+
+# Sesi 13: SSR, SSG & Hybrid Rendering
+
+## 13.1 Static Site Generation (SSG)
+
+SSG adalah mode default Astro di mana semua halaman di-render saat build time menjadi file HTML statis.
+
+### Analogi Sederhana:
+
+> Bayangkan SSG seperti **mencetak buku**. Setiap halaman ditulis, diedit, dan dicetak sebelum buku dijual. Pembaca hanya membaca hasil cetakan - tidak ada yang menulis ulang saat mereka membaca. Cepat, murah, dan scalable!
+
+### Karakteristik SSG:
+
+| Aspek | Deskripsi |
+|-------|-----------|
+| **Build Time** | Render saat `npm run build` |
+| **Output** | File HTML statis di folder `dist/` |
+| **Hosting** | CDN, static hosting (Netlify, Vercel, GitHub Pages) |
+| **Performance** | Tercepat (pre-rendered) |
+| **Use Case** | Blog, docs, landing pages, marketing sites |
+
+### Konfigurasi SSG:
+
+```javascript
+// astro.config.mjs
+import { defineConfig } from 'astro/config';
+
+export default defineConfig({
+  output: 'static', // Default, bisa dihilangkan
+  
+  // Adapter tidak diperlukan untuk static
+  // adapter: undefined,
+});
+```
+
+### Contoh SSG Lengkap:
+
+```astro
+---
+// src/pages/blog/[slug].astro
+// Halaman ini di-generate saat build menjadi file HTML
+
+import { getCollection } from 'astro:content';
+import Layout from '../../layouts/Layout.astro';
+
+// getStaticPaths: Generate semua path saat build
+export async function getStaticPaths() {
+  const posts = await getCollection('blog');
+  
+  console.log('Generating', posts.length, 'pages at build time');
+  // Output di terminal saat build, bukan di browser
+  
+  return posts.map(post => ({
+    params: { slug: post.slug },
+    props: { post },
+  }));
+}
+
+const { post } = Astro.props;
+const { Content } = await post.render();
+---
+
+<Layout title={post.data.title}>
+  <article>
+    <h1>{post.data.title}</h1>
+    <time>{post.data.pubDate.toLocaleDateString('id-ID')}</time>
+    <Content />
+  </article>
+</Layout>
+```
+
+### Build Output:
+
+```
+dist/
+├── index.html              ← Halaman statis
+├── about/
+│   └── index.html          ← /about
+├── blog/
+│   ├── index.html          ← /blog (list)
+│   ├── hello-world/
+│   │   └── index.html      ← /blog/hello-world
+│   └── astro-guide/
+│       └── index.html      ← /blog/astro-guide
+└── _astro/                 ← Assets (CSS, JS, images)
+    ├── assets.hash.css
+    └── client.hash.js
+```
+
+---
+
+## 13.2 Server-Side Rendering (SSR)
+
+SSR merender halaman di server setiap kali ada request, bukan saat build.
+
+### Karakteristik SSR:
+
+| Aspek | Deskripsi |
+|-------|-----------|
+| **Render Time** | Per request (on-demand) |
+| **Output** | HTML dinamis dari server |
+| **Hosting** | Node.js server, serverless functions |
+| **Performance** | Lebih lambat dari SSG, tapi fresh data |
+| **Use Case** | Dashboard, user-specific content, real-time data |
+
+### Konfigurasi SSR:
+
+```javascript
+// astro.config.mjs
+import { defineConfig } from 'astro/config';
+import node from '@astrojs/node'; // atau cloudflare, vercel, dll
+
+export default defineConfig({
+  output: 'server',
+  
+  adapter: node({
+    mode: 'standalone', // atau 'middleware'
+  }),
+});
+```
+
+### Contoh SSR:
+
+```astro
+---
+// src/pages/dashboard.astro
+// Rendered fresh di setiap request!
+
+// Cek authentication
+const authToken = Astro.cookies.get('auth')?.value;
+if (!authToken) {
+  return Astro.redirect('/login');
+}
+
+// Fetch data real-time dari API/Database
+const userResponse = await fetch('https://api.example.com/user', {
+  headers: { Authorization: `Bearer ${authToken}` }
+});
+const user = await userResponse.json();
+
+// Data real-time yang berubah setiap request
+const statsResponse = await fetch('https://api.example.com/stats/realtime');
+const stats = await statsResponse.json();
+
+// Timestamp unik per request
+const serverTime = new Date().toISOString();
+---
+
+<Layout title="Dashboard">
+  <h1>Welcome, {user.name}</h1>
+  <p>Server time: {serverTime}</p>
+  
+  <div class="stats">
+    <div class="stat">
+      <h3>Active Users</h3>
+      <p>{stats.activeUsers}</p>
+    </div>
+    <div class="stat">
+      <h3>Revenue Today</h3>
+      <p>Rp {stats.revenue.toLocaleString('id-ID')}</p>
+    </div>
+  </div>
+  
+  <!-- Data user-specific -->
+  <div class="recent-activity">
+    <h2>Your Recent Activity</h2>
+    {user.recentActivity.map(activity => (
+      <div class="activity-item">
+        <p>{activity.description}</p>
+        <time>{new Date(activity.timestamp).toLocaleString()}</time>
+      </div>
+    ))}
+  </div>
+</Layout>
+```
+
+### SSR dengan Database:
+
+```astro
+---
+// src/pages/products/[id].astro
+import { db, Product, eq } from 'astro:db';
+
+const { id } = Astro.params;
+
+// Query database langsung di server
+const product = await db
+  .select()
+  .from(Product)
+  .where(eq(Product.id, id))
+  .get();
+
+if (!product) {
+  return new Response('Product not found', { status: 404 });
+}
+
+// Check stock real-time
+const stock = await checkInventory(id);
+---
+
+<Layout title={product.name}>
+  <h1>{product.name}</h1>
+  <p class:stock={stock > 0 ? 'in-stock' : 'out-of-stock'}>
+    {stock > 0 ? `${stock} in stock` : 'Out of stock'}
+  </p>
+  <p>Price: Rp {product.price.toLocaleString('id-ID')}</p>
+  
+  {stock > 0 && (
+    <form method="POST" action="/api/cart">
+      <input type="hidden" name="productId" value={id} />
+      <button type="submit">Add to Cart</button>
+    </form>
+  )}
+</Layout>
+```
+
+---
+
+## 13.3 Hybrid Rendering
+
+Hybrid rendering menggabungkan SSG dan SSR dalam satu project - halaman default statis, tapi bisa opt-in ke SSR per halaman.
+
+### Konfigurasi Hybrid:
+
+```javascript
+// astro.config.mjs
+import { defineConfig } from 'astro/config';
+import vercel from '@astrojs/vercel/serverless';
+
+export default defineConfig({
+  output: 'hybrid', // Campuran SSG dan SSR
+  
+  adapter: vercel(),
+});
+```
+
+### Opt-in SSR per Halaman:
+
+```astro
+---
+// src/pages/dashboard.astro
+// SSR: Rendered per request
+export const prerender = false;
+
+const user = await getUser(Astro.cookies);
+---
+
+<h1>Dashboard for {user.name}</h1>
+<p>Real-time data: {new Date().toISOString()}</p>
+```
+
+```astro
+---
+// src/pages/about.astro
+// SSG: Rendered saat build (default di hybrid)
+// export const prerender = true; // Opsional, default true
+
+const team = await getStaticTeamData(); // Data dari build time
+---
+
+<h1>About Us</h1>
+{team.map(member => <p>{member.name}</p>)}
+```
+
+### Struktur Project Hybrid:
+
+```
+src/pages/
+├── index.astro              # SSG (default)
+├── about.astro              # SSG
+├── blog/
+│   ├── index.astro          # SSG
+│   └── [slug].astro         # SSG dengan getStaticPaths
+├── dashboard/
+│   ├── index.astro          # SSR (prerender = false)
+│   ├── settings.astro       # SSR
+│   └── analytics.astro      # SSR
+└── api/
+    └── *.ts                 # API routes (selalu SSR)
+```
+
+---
+
+## 13.4 On-Demand Rendering
+
+Astro 4.0+ mendukung on-demand rendering dengan revalidation.
+
+### ISR (Incremental Static Regeneration):
+
+```javascript
+// astro.config.mjs
+export default defineConfig({
+  output: 'hybrid',
+  
+  // Experimental ISR
+  experimental: {
+    isr: {
+      // Cache seluruh site
+      strategy: 'pathname',
+      
+      // Atau per-route
+      routes: [
+        {
+          pattern: '/blog/[slug]',
+          ttl: 60 * 60, // 1 jam
+        },
+        {
+          pattern: '/products/[id]',
+          ttl: 60, // 1 menit
+        },
+      ],
+    },
+  },
+});
+```
+
+### Server Islands (Astro 5.0+):
+
+```astro
+---
+// src/pages/product/[id].astro
+// Static shell dengan dynamic islands
+
+import Layout from '../../layouts/Layout.astro';
+import ProductInfo from '../../components/ProductInfo.astro'; // Static
+import LivePrice from '../../components/LivePrice.astro'; // Server island
+import Reviews from '../../components/Reviews.astro'; // Static
+
+export const prerender = true; // Static shell
+---
+
+<Layout>
+  <!-- Static: Product info dari CMS -->
+  <ProductInfo productId={Astro.params.id} />
+  
+  <!-- Server Island: Price real-time dari database -->
+  <LivePrice server:defer productId={Astro.params.id}>
+    <div slot="fallback">Loading price...</div>
+  </LivePrice>
+  
+  <!-- Static: Reviews dari cache -->
+  <Reviews productId={Astro.params.id} />
+</Layout>
+```
+
+```astro
+---
+// src/components/LivePrice.astro
+// Server Island: Rendered di server, streamed ke client
+
+interface Props {
+  productId: string;
+}
+
+const { productId } = Astro.props;
+
+// Fetch real-time price
+const price = await db
+  .select({ price: Products.price, discount: Products.discount })
+  .from(Products)
+  .where(eq(Products.id, productId))
+  .get();
+
+const finalPrice = price.price * (1 - price.discount);
+---
+
+<div class="live-price">
+  {price.discount > 0 && (
+    <span class="original">Rp {price.price.toLocaleString()}</span>
+  )}
+  <span class="current">Rp {finalPrice.toLocaleString()}</span>
+  {price.discount > 0 && (
+    <span class="badge">-{Math.round(price.discount * 100)}%</span>
+  )}
+</div>
+```
+
+---
+
+## 13.5 Output Modes (static, server, hybrid)
+
+Perbandingan lengkap ketiga mode:
+
+| Fitur | `output: 'static'` | `output: 'server'` | `output: 'hybrid'` |
+|-------|-------------------|-------------------|-------------------|
+| **Default Behavior** | Semua halaman SSG | Semua halaman SSR | Semua halaman SSG |
+| **Opt-in SSR** | Tidak bisa | Default | `prerender = false` |
+| **Build Output** | File HTML statis | Server bundle | Campuran |
+| **Hosting** | CDN | Node/serverless | Edge/serverless |
+| **Cold Start** | N/A | Ada | Minimal (static) |
+| **Real-time Data** | Tidak | Ya | Per halaman |
+| **Cache Control** | HTTP headers | Server response | Mixed |
+
+### Decision Tree:
+
+```
+Apakah butuh real-time data?
+├── Tidak → output: 'static'
+│           └── Blog, docs, landing pages
+└── Ya → Semua halaman butuh real-time?
+    ├── Ya → output: 'server'
+    │        └── Dashboard, admin panels
+    └── Tidak → output: 'hybrid'
+                 └── Marketing site + user dashboard
+```
+
+---
+
+## 13.6 Caching Strategies
+
+Strategi caching untuk optimasi performa.
+
+### HTTP Cache Headers:
+
+```astro
+---
+// src/pages/blog/[slug].astro
+// SSG dengan cache headers
+
+Astro.response.headers.set('Cache-Control', 'public, max-age=3600, s-maxage=86400');
+// max-age: 1 jam browser cache
+// s-maxage: 24 jam CDN cache
+
+const post = await getEntry('blog', Astro.params.slug);
+---
+
+<article>...</article>
+```
+
+### SSR dengan Cache:
+
+```astro
+---
+// src/pages/api/weather.astro
+export const prerender = false;
+
+// Cache response 5 menit
+const cacheKey = 'weather-' + new Date().toISOString().slice(0, 14); // Per 10 menit
+const cached = await Astro.locals.runtime.cache?.get(cacheKey);
+
+if (cached) {
+  return new Response(JSON.stringify(cached), {
+    headers: { 'Content-Type': 'application/json' }
+  });
+}
+
+const weather = await fetchWeather();
+await Astro.locals.runtime.cache?.put(cacheKey, weather, { ttl: 300 });
+
+return new Response(JSON.stringify(weather), {
+  headers: { 
+    'Content-Type': 'application/json',
+    'Cache-Control': 'public, max-age=300'
+  }
+});
+---
+```
+
+### Stale-While-Revalidate:
+
+```javascript
+// astro.config.mjs (dengan adapter tertentu)
+export default defineConfig({
+  output: 'hybrid',
+  adapter: vercel({
+    isr: {
+      // Serve cached version sambil regenerate di background
+      expiration: 60, // 1 menit
+      bypassToken: process.env.ISR_BYPASS_TOKEN,
+    },
+  }),
+});
+```
+
+---
+
+## Ringkasan Sesi 13
+
+| Mode | Kapan Menggunakan | Contoh |
+|------|-------------------|--------|
+| **SSG (`static`)** | Konten jarang berubah, performa maksimal | Blog, docs, portfolio |
+| **SSR (`server`)** | Data real-time, user-specific | Dashboard, e-commerce cart |
+| **Hybrid (`hybrid`)** | Campuran static dan dynamic | Marketing site + app |
+| **Server Islands** | Static shell + dynamic parts | Product page dengan live price |
+| **ISR** | Update berkala tanpa rebuild | News site, frequently updated content |
+
+### Best Practices:
+
+1. **Default ke SSG**: Paling cepat dan murah
+2. **Gunakan Hybrid**: Untuk fleksibilitas maksimal
+3. **Cache Aggressively**: Static content = long cache
+4. **Server Islands**: Untuk granular control
+5. **Edge Deployment**: Untuk global low latency
+
+---
+
+**Selanjutnya:** Di Sesi 14, kita akan membahas **Middleware & Server-Side Features** - request/response manipulation, authentication, dan session management.

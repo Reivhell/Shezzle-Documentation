@@ -1,0 +1,615 @@
+---
+title: "Sesi 17: Environment Variables & Configuration"
+description: "Environment variables (env vars) adalah cara untuk menyimpan konfigurasi dan secrets yang berbeda-beda antara development, staging, dan production."
+category: "astrojs"
+tags: ["astrojs", "setup"]
+order: 17
+---
+
+# Sesi 17: Environment Variables & Configuration
+
+## 17.1 Environment Variables
+
+Environment variables (env vars) adalah cara untuk menyimpan konfigurasi dan secrets yang berbeda-beda antara development, staging, dan production.
+
+### Analogi Sederhana:
+
+> Bayangkan env vars seperti **pengaturan pribadi di smartphone**. Setiap orang (environment) punya preferensi berbeda: bahasa, notifikasi, wallpaper. Begitu juga aplikasi - development butuh database lokal, production butuh database cloud, tapi kode aplikasinya tetap sama!
+
+### File Environment:
+
+```
+project-root/
+├── .env                  # Default, loaded di semua environment
+├── .env.local            # Local overrides (jangan commit!)
+├── .env.development      # Development specific
+├── .env.production       # Production specific
+├── .env.test             # Test environment
+└── astro.config.mjs
+```
+
+### Aturan Loading:
+
+| File | Environment | Git |
+|------|-------------|-----|
+| `.env` | Semua | ✅ Commit |
+| `.env.local` | Semua | ❌ Ignore |
+| `.env.[mode]` | Mode specific | ✅ Commit |
+| `.env.[mode].local` | Mode specific | ❌ Ignore |
+
+---
+
+## 17.2 Public vs Private Variables
+
+Astro membedakan antara variabel yang bisa diakses client vs server-only.
+
+### Private Variables (Server-only):
+
+```bash
+# .env
+# Variabel ini HANYA tersedia di server (frontmatter, API routes, middleware)
+
+DATABASE_URL=postgresql://user:pass@localhost:5432/mydb
+API_SECRET_KEY=sk_live_abc123xyz789
+STRIPE_SECRET_KEY=sk_test_...
+SESSION_SECRET=super-secret-jwt-key
+```
+
+**Penggunaan di Server:**
+
+```astro
+---
+// src/pages/api/webhook.ts
+// Hanya server yang bisa akses
+
+const secret = process.env.STRIPE_SECRET_KEY;
+
+export const POST = async ({ request }) => {
+  const payload = await request.text();
+  const signature = request.headers.get('stripe-signature');
+  
+  // Verify webhook dengan secret
+  const event = stripe.webhooks.constructEvent(
+    payload,
+    signature,
+    process.env.STRIPE_WEBHOOK_SECRET
+  );
+  
+  // Process event...
+};
+---
+```
+
+### Public Variables (Client + Server):
+
+```bash
+# .env
+# Prefix PUBLIC_ untuk variabel yang bisa diakses client
+
+PUBLIC_SITE_URL=https://www.example.com
+PUBLIC_API_URL=https://api.example.com
+PUBLIC_STRIPE_PUBLISHABLE_KEY=pk_live_...
+PUBLIC_ANALYTICS_ID=UA-XXXXX-X
+PUBLIC_FEATURE_FLAGS=new-dashboard,v2-checkout
+```
+
+**Penggunaan di Client:**
+
+```astro
+---
+// src/components/PaymentForm.astro
+---
+
+<form id="payment-form">
+  <div id="card-element"></div>
+  <button type="submit">Pay</button>
+</form>
+
+<script>
+  // Public var tersedia di client
+  const stripe = Stripe(import.meta.env.PUBLIC_STRIPE_PUBLISHABLE_KEY);
+  
+  const elements = stripe.elements();
+  const cardElement = elements.create('card');
+  cardElement.mount('#card-element');
+  
+  document.getElementById('payment-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    
+    const { error, paymentMethod } = await stripe.createPaymentMethod({
+      type: 'card',
+      card: cardElement,
+    });
+    
+    if (error) {
+      console.error(error);
+    } else {
+      // Send ke server
+      await fetch('/api/payment', {
+        method: 'POST',
+        body: JSON.stringify({ paymentMethodId: paymentMethod.id }),
+      });
+    }
+  });
+</script>
+```
+
+### Perbandingan Akses:
+
+| Variabel | Server (Frontmatter) | Client (Script) | API Routes |
+|----------|---------------------|-----------------|------------|
+| `DATABASE_URL` | ✅ `process.env` | ❌ Undefined | ✅ `process.env` |
+| `PUBLIC_API_URL` | ✅ `process.env` | ✅ `import.meta.env` | ✅ `process.env` |
+
+---
+
+## 17.3 astro:env API
+
+API baru di Astro untuk type-safe environment variables.
+
+### Definisi Schema:
+
+```typescript
+// src/env.d.ts atau env.config.ts
+import { defineConfig, envField } from 'astro/config';
+
+export default defineConfig({
+  env: {
+    schema: {
+      // Server-only variables
+      DATABASE_URL: envField.string({
+        context: 'server',
+        access: 'secret',
+      }),
+      
+      API_SECRET: envField.string({
+        context: 'server',
+        access: 'secret',
+      }),
+      
+      // Public variables
+      PUBLIC_SITE_URL: envField.string({
+        context: 'client',
+        access: 'public',
+        optional: true,
+        default: 'http://localhost:4321',
+      }),
+      
+      PUBLIC_ANALYTICS_ID: envField.string({
+        context: 'client',
+        access: 'public',
+        optional: true,
+      }),
+      
+      // Number dengan validasi
+      PUBLIC_ITEMS_PER_PAGE: envField.number({
+        context: 'client',
+        access: 'public',
+        default: 10,
+        validation: { min: 1, max: 100 },
+      }),
+      
+      // Boolean
+      PUBLIC_DEBUG_MODE: envField.boolean({
+        context: 'client',
+        access: 'public',
+        default: false,
+      }),
+      
+      // Enum
+      PUBLIC_THEME: envField.enum({
+        context: 'client',
+        access: 'public',
+        values: ['light', 'dark', 'system'],
+        default: 'system',
+      }),
+    },
+  },
+});
+```
+
+### Penggunaan dengan Type Safety:
+
+```astro
+---
+// src/pages/index.astro
+import { DATABASE_URL, API_SECRET } from 'astro:env/server';
+import { PUBLIC_SITE_URL, PUBLIC_DEBUG_MODE } from 'astro:env/client';
+
+// Fully typed! Auto-completion works
+console.log(DATABASE_URL); // string
+console.log(PUBLIC_DEBUG_MODE); // boolean
+---
+
+<script>
+  import { PUBLIC_SITE_URL, PUBLIC_ITEMS_PER_PAGE } from 'astro:env/client';
+  
+  // Type-safe di client juga
+  console.log(PUBLIC_SITE_URL); // string
+  console.log(PUBLIC_ITEMS_PER_PAGE); // number
+  
+  fetch(`${PUBLIC_SITE_URL}/api/data?limit=${PUBLIC_ITEMS_PER_PAGE}`);
+</script>
+```
+
+### Validasi Runtime:
+
+```typescript
+// src/env.d.ts
+/// <reference types="astro/client" />
+
+interface ImportMetaEnv {
+  readonly DATABASE_URL: string;
+  readonly API_SECRET: string;
+  readonly PUBLIC_SITE_URL: string;
+  readonly PUBLIC_ANALYTICS_ID?: string;
+}
+
+interface ImportMeta {
+  readonly env: ImportMetaEnv;
+}
+```
+
+---
+
+## 17.4 Configuration File (astro.config.mjs)
+
+Konfigurasi pusat untuk behavior Astro.
+
+### Konfigurasi Lengkap:
+
+```javascript
+// astro.config.mjs
+import { defineConfig } from 'astro/config';
+import node from '@astrojs/node';
+import tailwind from '@astrojs/tailwind';
+import react from '@astrojs/react';
+import sitemap from '@astrojs/sitemap';
+
+export default defineConfig({
+  // Site configuration
+  site: 'https://www.example.com',
+  base: '/',                    // Subpath jika deploy di subfolder
+  trailingSlash: 'ignore',      // 'always' | 'never' | 'ignore'
+  
+  // Output mode
+  output: 'hybrid',             // 'static' | 'server' | 'hybrid'
+  adapter: node({ mode: 'standalone' }),
+  
+  // Build configuration
+  build: {
+    format: 'directory',        // 'file' | 'directory'
+    assets: '_astro',           // Asset folder name
+    assetsPrefix: 'https://cdn.example.com', // CDN untuk assets
+    serverEntry: 'entry.mjs',   // Server entry point name
+    clientEntry: 'client',      // Client entry point name
+  },
+  
+  // Server configuration
+  server: {
+    host: false,                // '0.0.0.0' untuk expose
+    port: 4321,
+    headers: {
+      // Default headers untuk semua responses
+      'X-Frame-Options': 'DENY',
+    },
+  },
+  
+  // Development configuration
+  devToolbar: {
+    enabled: true,
+  },
+  
+  // Markdown configuration
+  markdown: {
+    syntaxHighlight: 'shiki',
+    shikiConfig: {
+      theme: 'dracula',
+      wrap: true,
+    },
+    remarkPlugins: [
+      'remark-gfm',
+      ['remark-toc', { heading: 'contents' }],
+    ],
+    rehypePlugins: [
+      'rehype-slug',
+      ['rehype-autolink-headings', { behavior: 'wrap' }],
+    ],
+    drafts: false,              // Include draft posts
+  },
+  
+  // Image optimization
+  image: {
+    service: {
+      entrypoint: 'astro/assets/services/sharp',
+      config: {
+        limitInputPixels: false,
+      },
+    },
+    domains: ['cdn.example.com', 'images.unsplash.com'],
+    remotePatterns: [
+      { protocol: 'https', hostname: '**.example.com' },
+    ],
+  },
+  
+  // Integrations
+  integrations: [
+    tailwind({
+      configFile: './tailwind.config.mjs',
+      applyBaseStyles: false,
+    }),
+    react({
+      include: ['**/react-components/**'],
+      experimentalReactChildren: true,
+    }),
+    sitemap({
+      filter: (page) => !page.includes('/admin/'),
+      customPages: ['https://external.example.com/page'],
+      changefreq: 'weekly',
+      priority: 0.7,
+      lastmod: new Date('2026-01-01'),
+    }),
+  ],
+  
+  // Vite configuration
+  vite: {
+    plugins: [myCustomPlugin()],
+    css: {
+      preprocessorOptions: {
+        scss: {
+          additionalData: `@use "src/styles/vars.scss" as *;`,
+        },
+      },
+    },
+    resolve: {
+      alias: {
+        '@': '/src',
+        '@components': '/src/components',
+        '@layouts': '/src/layouts',
+        '@utils': '/src/utils',
+      },
+    },
+    build: {
+      rollupOptions: {
+        output: {
+          manualChunks: {
+            'vendor-react': ['react', 'react-dom'],
+            'vendor-charts': ['chart.js', 'react-chartjs-2'],
+          },
+        },
+      },
+    },
+    ssr: {
+      noExternal: ['some-esm-package'],
+    },
+  },
+  
+  // Experimental features
+  experimental: {
+    actions: true,
+    serverIslands: true,
+    contentLayer: true,
+    env: {
+      schema: {
+        // Schema definition
+      },
+    },
+  },
+});
+```
+
+---
+
+## 17.5 Vite Configuration
+
+Astro menggunakan Vite sebagai build tool, jadi kamu bisa mengkonfigurasi Vite langsung.
+
+### Common Vite Configurations:
+
+```javascript
+// astro.config.mjs
+export default defineConfig({
+  vite: {
+    // Resolve aliases
+    resolve: {
+      alias: {
+        '@': '/src',
+        '@components': '/src/components',
+        '@assets': '/src/assets',
+      },
+    },
+    
+    // CSS preprocessing
+    css: {
+      preprocessorOptions: {
+        scss: {
+          additionalData: `
+            @import "src/styles/variables.scss";
+            @import "src/styles/mixins.scss";
+          `,
+        },
+        less: {
+          javascriptEnabled: true,
+        },
+      },
+      modules: {
+        generateScopedName: '[name]__[local]___[hash:base64:5]',
+      },
+    },
+    
+    // Optimize dependencies
+    optimizeDeps: {
+      include: ['lodash-es', 'date-fns'],
+      exclude: ['some-problematic-package'],
+    },
+    
+    // Build options
+    build: {
+      target: 'esnext',
+      minify: 'terser',
+      terserOptions: {
+        compress: {
+          drop_console: true,
+          drop_debugger: true,
+        },
+      },
+      rollupOptions: {
+        output: {
+          manualChunks(id) {
+            if (id.includes('node_modules')) {
+              if (id.includes('react')) return 'vendor-react';
+              if (id.includes('vue')) return 'vendor-vue';
+              return 'vendor-other';
+            }
+          },
+        },
+      },
+    },
+    
+    // Server options (dev)
+    server: {
+      proxy: {
+        '/api': {
+          target: 'http://localhost:3001',
+          changeOrigin: true,
+          rewrite: (path) => path.replace(/^\/api/, ''),
+        },
+      },
+      hmr: {
+        overlay: false,
+      },
+    },
+    
+    // Plugins
+    plugins: [
+      // Custom plugins
+    ],
+    
+    // SSR options
+    ssr: {
+      external: ['node-fetch'],
+      noExternal: ['some-esm-only-package'],
+    },
+  },
+});
+```
+
+---
+
+## 17.6 Build Configuration
+
+Konfigurasi spesifik untuk production build.
+
+### Environment-specific Config:
+
+```javascript
+// astro.config.mjs
+import { defineConfig } from 'astro/config';
+import node from '@astrojs/node';
+import vercel from '@astrojs/vercel/serverless';
+
+const isDev = process.env.NODE_ENV === 'development';
+const isVercel = process.env.VERCEL === '1';
+
+export default defineConfig({
+  // Different adapter berdasarkan environment
+  output: isDev ? 'hybrid' : 'server',
+  adapter: isVercel ? vercel() : node({ mode: 'standalone' }),
+  
+  // Different settings per environment
+  site: isDev ? 'http://localhost:4321' : 'https://www.example.com',
+  
+  build: {
+    // Development: faster builds
+    // Production: optimized builds
+    minify: isDev ? false : 'terser',
+    sourcemap: isDev,
+  },
+  
+  vite: {
+    define: {
+      __DEV__: isDev,
+      __VERSION__: JSON.stringify(process.env.npm_package_version),
+    },
+  },
+});
+```
+
+### Multi-environment Setup:
+
+```javascript
+// config/astro.base.mjs
+import { defineConfig } from 'astro/config';
+
+export const baseConfig = {
+  integrations: [tailwind(), react()],
+  markdown: {
+    syntaxHighlight: 'shiki',
+  },
+};
+```
+
+```javascript
+// config/astro.development.mjs
+import { defineConfig, mergeConfig } from 'astro/config';
+import { baseConfig } from './astro.base.mjs';
+
+export default defineConfig(mergeConfig(baseConfig, {
+  output: 'hybrid',
+  devToolbar: { enabled: true },
+  vite: {
+    build: { sourcemap: true },
+  },
+}));
+```
+
+```javascript
+// config/astro.production.mjs
+import { defineConfig, mergeConfig } from 'astro/config';
+import node from '@astrojs/node';
+import { baseConfig } from './astro.base.mjs';
+
+export default defineConfig(mergeConfig(baseConfig, {
+  output: 'server',
+  adapter: node({ mode: 'standalone' }),
+  build: {
+    minify: 'terser',
+  },
+  vite: {
+    build: {
+      rollupOptions: {
+        output: {
+          manualChunks: {
+            vendor: ['react', 'react-dom'],
+          },
+        },
+      },
+    },
+  },
+}));
+```
+
+---
+
+## Ringkasan Sesi 17
+
+| Konsep | Deskripsi | Contoh |
+|--------|-----------|--------|
+| **`.env`** | Environment variables | `DATABASE_URL=...` |
+| **`PUBLIC_`** | Client-accessible vars | `PUBLIC_API_URL=...` |
+| **`astro:env`** | Type-safe env API | `import { DATABASE_URL } from 'astro:env/server'` |
+| **`astro.config.mjs`** | Konfigurasi pusat | `site`, `output`, `integrations` |
+| **Vite config** | Build tool settings | `resolve.alias`, `build.minify` |
+| **Multi-env** | Different configs per environment | `isDev ? configA : configB` |
+
+### Security Best Practices:
+
+1. **Never commit secrets**: `.env.local` di `.gitignore`
+2. **Prefix public vars**: Selalu gunakan `PUBLIC_` untuk client vars
+3. **Validate env vars**: Gunakan `astro:env` schema validation
+4. **Different keys per env**: Development ≠ Production API keys
+5. **Rotate secrets regularly**: Jangan pakai key yang sama terus-menerus
+
+---
+
+**Selanjutnya:** Di Sesi 18, kita akan membahas **Integrations & Plugins** - official integrations, community plugins, dan cara membuat custom integration.

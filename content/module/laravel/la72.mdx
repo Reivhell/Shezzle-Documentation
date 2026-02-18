@@ -1,0 +1,891 @@
+---
+title: "Sesi 72: Logging & Monitoring Production"
+description: "**Structured logging** adalah pendekatan logging di mana log entries ditulis dalam format yang terstruktur (biasanya JSON) daripada plain text. Ini me..."
+category: "laravel"
+tags: ["laravel"]
+order: 72
+---
+
+## 1. Structured Logging
+
+### 1.1 Apa itu Structured Logging?
+
+**Structured logging** adalah pendekatan logging di mana log entries ditulis dalam format yang terstruktur (biasanya JSON) daripada plain text. Ini memungkinkan sistem log aggregation untuk parsing, indexing, dan querying log dengan efisien.
+
+**Plain Text Log (Traditional):**
+```
+[2024-01-30 10:15:30] production.ERROR: User login failed for email: john@example.com from IP: 192.168.1.100
+```
+
+**Structured Log (JSON):**
+```json
+{
+  "timestamp": "2024-01-30T10:15:30.123Z",
+  "level": "ERROR",
+  "message": "User login failed",
+  "context": {
+    "email": "john@example.com",
+    "ip_address": "192.168.1.100",
+    "user_agent": "Mozilla/5.0...",
+    "attempt_count": 3
+  },
+  "service": "auth-service",
+  "trace_id": "abc-123-xyz",
+  "environment": "production"
+}
+```
+
+**Keuntungan Structured Logging:**
+- **Searchable**: Field spesifik bisa di-query (contoh: `context.email:john@example.com`)
+- **Machine-readable**: Tidak perlu regex parsing yang kompleks
+- **Scalable**: Mudah diproses oleh sistem log aggregation seperti ELK atau Datadog
+- **Correlatable**: Trace ID memungkinkan tracking request across services
+
+### 1.2 Laravel JSON Logging Configuration
+
+```php
+<?php
+
+// config/logging.php
+return [
+    'default' => env('LOG_CHANNEL', 'stack'),
+    
+    'channels' => [
+        'stack' => [
+            'driver' => 'stack',
+            'channels' => ['stdout', 'stderr'],
+            'ignore_exceptions' => false,
+        ],
+        
+        // Production: JSON format untuk log aggregation
+        'stdout' => [
+            'driver' => 'monolog',
+            'handler' => StreamHandler::class,
+            'with' => [
+                'stream' => 'php://stdout',
+            ],
+            'formatter' => \Monolog\Formatter\JsonFormatter::class,
+            'processors' => [
+                \Monolog\Processor\UidProcessor::class,      // Unique request ID
+                \Monolog\Processor\WebProcessor::class,      // URL, method, IP
+                \Monolog\Processor\MemoryUsageProcessor::class,
+            ],
+        ],
+        
+        'stderr' => [
+            'driver' => 'monolog',
+            'level' => 'error',
+            'handler' => StreamHandler::class,
+            'with' => [
+                'stream' => 'php://stderr',
+            ],
+            'formatter' => \Monolog\Formatter\JsonFormatter::class,
+        ],
+        
+        // Local development: human readable
+        'daily' => [
+            'driver' => 'daily',
+            'path' => storage_path('logs/laravel.log'),
+            'level' => env('LOG_LEVEL', 'debug'),
+            'days' => 14,
+            'formatter' => \Monolog\Formatter\LineFormatter::class,
+        ],
+    ],
+];
+```
+
+### 1.3 Custom Context dan Correlation ID
+
+```php
+<?php
+
+// app/Providers/AppServiceProvider.php
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
+
+public function boot()
+{
+    // Generate correlation ID untuk setiap request
+    $correlationId = Str::uuid()->toString();
+    
+    Log::shareContext([
+        'trace_id' => $correlationId,
+        'service' => config('app.name'),
+        'environment' => app()->environment(),
+        'hostname' => gethostname(),
+    ]);
+    
+    // Tambahkan ke response header untuk client tracking
+    request()->headers->set('X-Trace-ID', $correlationId);
+}
+
+// Middleware untuk tambahan context
+class LoggingContextMiddleware
+{
+    public function handle($request, $next)
+    {
+        Log::shareContext([
+            'user_id' => auth()->id(),
+            'ip_address' => $request->ip(),
+            'user_agent' => $request->userAgent(),
+            'route' => $request->route()?->getName(),
+        ]);
+        
+        return $next($request);
+    }
+}
+```
+
+### 1.4 Contextual Logging
+
+```php
+<?php
+
+// Logging dengan context spesifik
+Log::info('Payment processed', [
+    'payment_id' => $payment->id,
+    'amount' => $payment->amount,
+    'currency' => $payment->currency,
+    'method' => $payment->method,
+    'processing_time_ms' => 150,
+]);
+
+// Channel spesifik
+Log::channel('payments')->info('Payment received', $context);
+
+// On-demand context
+Log::withContext(['order_id' => $order->id])->info('Order status updated');
+
+// Different levels
+Log::debug('Debug info for development');
+Log::info('General information');
+Log::notice('Normal but significant event');
+Log::warning('Warning conditions');
+Log::error('Error conditions');
+Log::critical('Critical conditions');
+Log::alert('Action must be taken immediately');
+Log::emergency('System is unusable');
+```
+
+## 2. Log Aggregation
+
+### 2.1 Apa itu Log Aggregation?
+
+**Log aggregation** adalah proses mengumpulkan log dari multiple sources (application servers, databases, load balancers) ke centralized system untuk storage, analysis, dan visualization. Tanpa aggregation, developer harus SSH ke individual servers untuk membaca log.
+
+**Arsitektur Log Aggregation:**
+```
+┌─────────────┐     ┌─────────────┐     ┌─────────────┐
+│   App Server 1 │     │   App Server 2 │     │  Database   │
+│   (Laravel)    │     │   (Laravel)    │     │  (MySQL)    │
+└──────┬──────┘     └──────┬──────┘     └──────┬──────┘
+       │                   │                   │
+       └───────────────────┼───────────────────┘
+                           │
+                    ┌──────▼──────┐
+                    │ Log Shipper │
+                    │  (Filebeat) │
+                    └──────┬──────┘
+                           │
+                    ┌──────▼──────┐
+                    │   Message   │
+                    │   Queue     │
+                    │  (Kafka/    │
+                    │  Redis)     │
+                    └──────┬──────┘
+                           │
+              ┌────────────┼────────────┐
+              │            │            │
+        ┌─────▼─────┐ ┌────▼────┐ ┌────▼────┐
+        │Elasticsearch│ │ Datadog │ │ New Relic│
+        │   (ELK)    │ │         │ │          │
+        └─────┬─────┘ └────┬────┘ └────┬────┘
+              │            │            │
+        ┌─────▼─────┐ ┌────▼────┐ ┌────▼────┐
+        │   Kibana   │ │ Dashboard│ │  APM     │
+        │(Visualization)│ │         │ │          │
+        └────────────┘ └─────────┘ └─────────┘
+```
+
+### 2.2 ELK Stack (Elasticsearch, Logstash, Kibana)
+
+```yaml
+# docker-compose.yml untuk local ELK setup
+version: '3.8'
+services:
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+    ports:
+      - "9200:9200"
+    volumes:
+      - elasticsearch-data:/usr/share/elasticsearch/data
+
+  logstash:
+    image: docker.elastic.co/logstash/logstash:8.11.0
+    volumes:
+      - ./logstash/pipeline:/usr/share/logstash/pipeline
+    ports:
+      - "5044:5044"
+    depends_on:
+      - elasticsearch
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.11.0
+    ports:
+      - "5601:5601"
+    depends_on:
+      - elasticsearch
+
+volumes:
+  elasticsearch-data:
+```
+
+```conf
+# logstash/pipeline/laravel.conf
+input {
+  beats {
+    port => 5044
+  }
+}
+
+filter {
+  if [fields][service] == "laravel" {
+    json {
+      source => "message"
+      target => "parsed"
+    }
+    
+    date {
+      match => ["[parsed][timestamp]", "ISO8601"]
+      target => "@timestamp"
+    }
+    
+    mutate {
+      add_field => {
+        "level" => "%{[parsed][level]}"
+        "message" => "%{[parsed][message]}"
+        "trace_id" => "%{[parsed][context][trace_id]}"
+      }
+    }
+  }
+}
+
+output {
+  elasticsearch {
+    hosts => ["elasticsearch:9200"]
+    index => "laravel-logs-%{+YYYY.MM.dd}"
+  }
+}
+```
+
+### 2.3 Filebeat Configuration
+
+```yaml
+# filebeat.yml
+filebeat.inputs:
+- type: log
+  enabled: true
+  paths:
+    - /var/www/html/storage/logs/*.log
+  fields:
+    service: laravel
+    environment: production
+  fields_under_root: true
+  json.keys_under_root: true
+  json.add_error_key: true
+
+output.logstash:
+  hosts: ["logstash:5044"]
+
+processors:
+  - add_host_metadata:
+      when.not.contains.tags: forwarded
+  - add_cloud_metadata: ~
+  - add_docker_metadata: ~
+```
+
+## 3. Application Metrics
+
+### 3.1 Business Metrics vs Technical Metrics
+
+**Business Metrics** (What matters to stakeholders):
+- Revenue per hour
+- Conversion rates
+- User signups
+- Transaction volume
+- Average order value
+- Churn rate
+
+**Technical Metrics** (What matters to engineers):
+- Response time (p50, p95, p99)
+- Error rates (4xx, 5xx)
+- Throughput (requests per second)
+- Database query time
+- Queue depth
+- Memory usage
+- CPU utilization
+
+### 3.2 Implementasi Custom Metrics
+
+```php
+<?php
+
+namespace App\Services;
+
+use Illuminate\Support\Facades\Redis;
+
+class MetricsService
+{
+    public function incrementCounter(string $metric, array $tags = []): void
+    {
+        $key = $this->buildKey($metric, $tags);
+        Redis::incr($key);
+        Redis::expire($key, 86400); // 24 hours
+    }
+
+    public function recordHistogram(string $metric, float $value, array $tags = []): void
+    {
+        $key = $this->buildKey($metric, $tags);
+        Redis::lpush($key, $value);
+        Redis::ltrim($key, 0, 999); // Keep last 1000 values
+        Redis::expire($key, 86400);
+    }
+
+    public function recordGauge(string $metric, float $value, array $tags = []): void
+    {
+        $key = $this->buildKey($metric, $tags);
+        Redis::set($key, $value);
+    }
+
+    public function recordTiming(string $metric, float $milliseconds, array $tags = []): void
+    {
+        $this->recordHistogram("{$metric}_timing", $milliseconds, $tags);
+    }
+
+    private function buildKey(string $metric, array $tags): string
+    {
+        $tagString = collect($tags)->map(fn ($v, $k) => "{$k}:{$v}")->implode(',');
+        return "metrics:{$metric}:{$tagString}:" . now()->format('Y-m-d-H');
+    }
+}
+
+// Usage
+class OrderController extends Controller
+{
+    public function store(Request $request)
+    {
+        $start = microtime(true);
+        
+        $order = DB::transaction(function () use ($request) {
+            return $this->createOrder($request->validated());
+        });
+        
+        $duration = (microtime(true) - $start) * 1000;
+        
+        // Business metrics
+        app(MetricsService::class)->incrementCounter('orders.created', [
+            'currency' => $order->currency,
+            'payment_method' => $order->payment_method,
+        ]);
+        
+        app(MetricsService::class)->recordHistogram('order.value', $order->total);
+        
+        // Technical metrics
+        app(MetricsService::class)->recordTiming('db.transaction', $duration);
+        
+        return new OrderResource($order);
+    }
+}
+```
+
+### 3.3 Laravel Telescope untuk Development
+
+```php
+<?php
+
+// config/telescope.php
+return [
+    'enabled' => env('TELESCOPE_ENABLED', true),
+    
+    'watchers' => [
+        Watchers\CacheWatcher::class => [
+            'enabled' => env('TELESCOPE_CACHE_WATCHER', true),
+            'hidden' => [],
+        ],
+        
+        Watchers\DBWatcher::class => [
+            'enabled' => env('TELESCOPE_DB_WATCHER', true),
+            'slow' => 100, // Queries slower than 100ms
+        ],
+        
+        Watchers\MailWatcher::class => true,
+        Watchers\NotificationWatcher::class => true,
+        Watchers\QueueWatcher::class => true,
+        Watchers\RequestWatcher::class => [
+            'enabled' => env('TELESCOPE_REQUEST_WATCHER', true),
+            'size_limit' => 64, // KB
+        ],
+    ],
+    
+    'ignore_commands' => [
+        'migrate',
+        'db:seed',
+    ],
+    
+    'ignore_paths' => [
+        'nova-api*',
+        'pulse*',
+    ],
+];
+```
+
+## 4. Alerting Strategies
+
+### 4.1 Apa itu Alerting yang Efektif?
+
+**Alerting yang baik harus:**
+- **Actionable**: Ada tindakan konkret yang bisa diambil
+- **Relevant**: Tidak noise/alert fatigue
+- **Timely**: Cukup cepat untuk prevent damage
+- **Prioritized**: Severity levels yang jelas
+
+**Anti-patterns:**
+- Alert pada setiap error (termasuk 404 dari bot)
+- Alert yang selalu di-ignore
+- Alert tanpa runbook/solution
+
+### 4.2 Laravel Notification untuk Alerting
+
+```php
+<?php
+
+namespace App\Notifications;
+
+use Illuminate\Bus\Queueable;
+use Illuminate\Notifications\Notification;
+use Illuminate\Notifications\Messages\SlackMessage;
+
+class HighErrorRateNotification extends Notification
+{
+    use Queueable;
+
+    public function __construct(
+        public int $errorCount,
+        public int $timeWindow,
+        public float $threshold
+    ) {}
+
+    public function via($notifiable): array
+    {
+        return ['slack', 'mail'];
+    }
+
+    public function toSlack($notifiable): SlackMessage
+    {
+        return (new SlackMessage)
+            ->error()
+            ->content('🚨 High Error Rate Detected')
+            ->attachment(function ($attachment) {
+                $attachment->title('Error Rate Alert')
+                    ->fields([
+                        'Error Count' => $this->errorCount,
+                        'Time Window' => "{$this->timeWindow} minutes",
+                        'Threshold' => "{$this->threshold}%",
+                        'Current Rate' => round(($this->errorCount / 100) * 100, 2) . '%',
+                    ])
+                    ->action('View Logs', url('/telescope'))
+                    ->color('#FF0000');
+            });
+    }
+
+    public function toMail($notifiable): MailMessage
+    {
+        return (new MailMessage)
+            ->subject('[ALERT] High Error Rate on ' . config('app.name'))
+            ->line("Error rate exceeded {$this->threshold}% threshold.")
+            ->line("Errors in last {$this->timeWindow} minutes: {$this->errorCount}")
+            ->action('Investigate', url('/telescope'))
+            ->line('Please check the logs immediately.');
+    }
+}
+
+// Alert Service
+class AlertService
+{
+    public function checkErrorRate(): void
+    {
+        $recentErrors = Log::where('level', 'error')
+            ->where('created_at', '>', now()->subMinutes(5))
+            ->count();
+        
+        $totalRequests = Cache::get('requests:last_5_minutes', 1);
+        $errorRate = ($recentErrors / $totalRequests) * 100;
+        
+        if ($errorRate > 5) { // 5% threshold
+            Notification::route('slack', config('services.slack.webhook_url'))
+                ->notify(new HighErrorRateNotification($recentErrors, 5, 5));
+        }
+    }
+}
+```
+
+### 4.3 Threshold-based Alerting
+
+```php
+<?php
+
+// app/Console/Commands/CheckSystemHealth.php
+class CheckSystemHealth extends Command
+{
+    protected $signature = 'monitor:health';
+    
+    public function handle()
+    {
+        $checks = [
+            'queue_size' => $this->checkQueueSize(),
+            'failed_jobs' => $this->checkFailedJobs(),
+            'disk_space' => $this->checkDiskSpace(),
+            'memory_usage' => $this->checkMemoryUsage(),
+        ];
+        
+        foreach ($checks as $check => $result) {
+            if (!$result['healthy']) {
+                $this->alert("{$check}: {$result['message']}");
+            }
+        }
+        
+        // Send metrics to external system
+        $this->sendToDatadog($checks);
+    }
+    
+    private function checkQueueSize(): array
+    {
+        $size = Queue::size('default');
+        $healthy = $size < 1000;
+        
+        return [
+            'healthy' => $healthy,
+            'value' => $size,
+            'message' => $healthy ? 'OK' : "Queue size critical: {$size}",
+        ];
+    }
+    
+    private function checkFailedJobs(): array
+    {
+        $count = DB::table('failed_jobs')
+            ->where('failed_at', '>', now()->subHour())
+            ->count();
+            
+        return [
+            'healthy' => $count < 10,
+            'value' => $count,
+            'message' => $count === 0 ? 'OK' : "{$count} failed jobs in last hour",
+        ];
+    }
+}
+```
+
+## 5. Distributed Tracing
+
+### 5.1 Apa itu Distributed Tracing?
+
+**Distributed tracing** adalah metode untuk memantau requests saat melewati multiple services dalam arsitektur microservices. Setiap request diberi unique trace ID yang dibawa melalui semua service calls.
+
+**Contoh Flow:**
+```
+User Request → API Gateway → Auth Service → User Service → Database
+                   │              │              │
+                [trace-123]   [trace-123]   [trace-123]
+                   │              │              │
+                15ms           45ms          120ms
+```
+
+**Span**: Unit individual work dalam trace (setiap service call adalah span)
+**Trace**: Keseluruhan request journey (collection of spans)
+
+### 5.2 OpenTelemetry Integration
+
+```php
+<?php
+
+// app/Providers/TracingServiceProvider.php
+use OpenTelemetry\API\Trace\TracerProvider;
+use OpenTelemetry\Contrib\Jaeger\Exporter as JaegerExporter;
+use OpenTelemetry\SDK\Trace\TracerProviderFactory;
+
+class TracingServiceProvider extends ServiceProvider
+{
+    public function register()
+    {
+        $this->app->singleton(Tracer::class, function () {
+            $exporter = new JaegerExporter([
+                'endpoint' => config('tracing.jaeger_endpoint'),
+            ]);
+            
+            $tracerProvider = (new TracerProviderFactory())->create([
+                'exporters' => [$exporter],
+            ]);
+            
+            return $tracerProvider->getTracer('laravel-app');
+        });
+    }
+}
+
+// Middleware untuk automatic tracing
+class TracingMiddleware
+{
+    public function handle($request, $next)
+    {
+        $tracer = app(Tracer::class);
+        $span = $tracer->spanBuilder($request->route()?->getName() ?? 'unknown')
+            ->setAttribute('http.method', $request->method())
+            ->setAttribute('http.url', $request->url())
+            ->startSpan();
+        
+        $scope = $span->activate();
+        
+        try {
+            $response = $next($request);
+            
+            $span->setAttribute('http.status_code', $response->getStatusCode());
+            $span->setStatus(StatusCode::STATUS_OK);
+            
+            return $response;
+        } catch (\Throwable $e) {
+            $span->recordException($e);
+            $span->setStatus(StatusCode::STATUS_ERROR, $e->getMessage());
+            throw $e;
+        } finally {
+            $span->end();
+            $scope->detach();
+        }
+    }
+}
+```
+
+### 5.3 Cross-service Tracing
+
+```php
+<?php
+
+// Mengirim trace ID ke downstream service
+class HttpClientService
+{
+    public function request($method, $url, $options = [])
+    {
+        $tracer = app(Tracer::class);
+        $currentSpan = Span::getCurrent();
+        
+        $traceId = $currentSpan->getContext()->getTraceId();
+        $spanId = $currentSpan->getContext()->getSpanId();
+        
+        // Propagate trace context via headers
+        $options['headers'] = array_merge($options['headers'] ?? [], [
+            'X-Trace-Id' => $traceId,
+            'X-Span-Id' => $spanId,
+            'X-Trace-Context' => base64_encode(json_encode([
+                'trace_id' => $traceId,
+                'span_id' => $spanId,
+            ])),
+        ]);
+        
+        $childSpan = $tracer->spanBuilder('http.request')
+            ->setAttribute('http.url', $url)
+            ->setAttribute('http.method', $method)
+            ->startSpan();
+        
+        try {
+            $response = Http::withHeaders($options['headers'])->$method($url);
+            $childSpan->setAttribute('http.status_code', $response->status());
+            return $response;
+        } catch (\Exception $e) {
+            $childSpan->recordException($e);
+            throw $e;
+        } finally {
+            $childSpan->end();
+        }
+    }
+}
+
+// Menerima trace ID dari upstream service
+class IncomingTraceMiddleware
+{
+    public function handle($request, $next)
+    {
+        if ($traceContext = $request->header('X-Trace-Context')) {
+            $context = json_decode(base64_decode($traceContext), true);
+            
+            // Restore trace context
+            $spanContext = SpanContext::createFromRemoteParent(
+                $context['trace_id'],
+                $context['span_id']
+            );
+            
+            // Continue trace instead of starting new
+            // Implementation depends on OpenTelemetry SDK
+        }
+        
+        return $next($request);
+    }
+}
+```
+
+## 6. Asset Versioning (What & Why)
+
+### 6.1 Apa itu Asset Versioning?
+
+**Asset versioning** adalah teknik untuk mengelola cache browser assets (CSS, JS, images) dengan memberikan unique identifier pada filename atau query string setiap kali file berubah.
+
+**Problem tanpa versioning:**
+```
+1. User mengunjungi site → download app.js (cached di browser 1 tahun)
+2. Developer deploy update ke app.js
+3. User refresh → browser tetap pakai cached app.js yang lama
+4. User experience broken karena JS outdated
+```
+
+**Solusi dengan versioning:**
+```
+app.js → app.a3f9b2c.js (hash berdasarkan content)
+        ↓
+Setiap kali content berubah → hash berbeda → browser treat sebagai file baru
+```
+
+### 6.2 Laravel Mix Versioning
+
+```javascript
+// webpack.mix.js
+const mix = require('laravel-mix');
+
+mix.js('resources/js/app.js', 'public/js')
+   .css('resources/css/app.css', 'public/css')
+   .version(); // Enable versioning
+
+// Output: public/js/app.js?id=a3f9b2c
+```
+
+```php
+<?php
+
+// Blade usage
+<script src="{{ mix('js/app.js') }}"></script>
+<link rel="stylesheet" href="{{ mix('css/app.css') }}">
+
+// Generated HTML:
+// <script src="/js/app.js?id=a3f9b2c"></script>
+// <link rel="stylesheet" href="/css/app.css?id=8d7e6f5">
+```
+
+### 6.3 Vite Versioning (Laravel 9.5+)
+
+```javascript
+// vite.config.js
+import { defineConfig } from 'vite';
+import laravel from 'laravel-vite-plugin';
+
+export default defineConfig({
+    plugins: [
+        laravel({
+            input: [
+                'resources/css/app.css',
+                'resources/js/app.js',
+            ],
+            refresh: true,
+        }),
+    ],
+    build: {
+        manifest: true, // Generate manifest.json dengan hashes
+        rollupOptions: {
+            output: {
+                entryFileNames: 'js/[name]-[hash].js',
+                chunkFileNames: 'js/[name]-[hash].js',
+                assetFileNames: (assetInfo) => {
+                    const info = assetInfo.name.split('.');
+                    const ext = info[info.length - 1];
+                    return `assets/[name]-[hash][extname]`;
+                },
+            },
+        },
+    },
+});
+```
+
+```php
+<?php
+
+// Blade dengan Vite
+@vite(['resources/css/app.css', 'resources/js/app.js'])
+
+// Generated (production):
+// <link rel="stylesheet" href="/build/assets/app-4d8e6f5a.css">
+// <script type="module" src="/build/assets/app-a3f9b2c.js"></script>
+```
+
+### 6.4 Cache Busting Strategy
+
+```nginx
+# nginx.conf untuk asset caching dengan versioning
+location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2)$ {
+    # Cache selama 1 tahun karena filename berubah saat content berubah
+    expires 1y;
+    add_header Cache-Control "public, immutable";
+    
+    # Hapus ETag untuk menghindari conditional requests
+    etag off;
+    
+    access_log off;
+}
+
+# HTML tidak di-cache agar selalu fresh
+location / {
+    try_files $uri $uri/ /index.php?$query_string;
+    
+    expires -1;
+    add_header Cache-Control "no-store, no-cache, must-revalidate";
+}
+```
+
+```php
+<?php
+
+// Service Worker untuk precaching versioned assets
+// public/sw.js
+const CACHE_NAME = 'app-v1';
+const PRECACHE_ASSETS = [
+    '/build/assets/app-a3f9b2c.js',
+    '/build/assets/app-4d8e6f5a.css',
+];
+
+self.addEventListener('install', (event) => {
+    event.waitUntil(
+        caches.open(CACHE_NAME)
+            .then((cache) => cache.addAll(PRECACHE_ASSETS))
+    );
+});
+
+// Cleanup old caches
+self.addEventListener('activate', (event) => {
+    event.waitUntil(
+        caches.keys().then((cacheNames) => {
+            return Promise.all(
+                cacheNames
+                    .filter((name) => name !== CACHE_NAME)
+                    .map((name) => caches.delete(name))
+            );
+        })
+    );
+});
+```
+
+## Kesimpulan
+
+Logging & Monitoring Production mencakup:
+- **Structured Logging**: JSON format untuk machine-readable logs dengan correlation ID
+- **Log Aggregation**: Centralized collection dengan ELK stack atau managed services
+- **Metrics**: Business dan technical metrics untuk informed decision making
+- **Alerting**: Actionable, relevant alerts dengan proper threshold management
+- **Distributed Tracing**: End-to-end request tracking dalam arsitektur microservices
+- **Asset Versioning**: Cache busting strategy untuk reliable frontend deployments

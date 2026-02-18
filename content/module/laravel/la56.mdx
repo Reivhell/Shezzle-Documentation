@@ -1,0 +1,438 @@
+---
+title: "Sesi 56: Laravel Prompts (CLI UX)"
+description: "Menguasai Laravel Prompts untuk membuat command-line interface yang interaktif dan user-friendly dengan forms, validation, dan visual feedback."
+category: "laravel"
+tags: ["laravel"]
+order: 56
+---
+
+## Tujuan Pembelajaran
+
+Menguasai Laravel Prompts untuk membuat command-line interface yang interaktif dan user-friendly dengan forms, validation, dan visual feedback.
+
+## 1. Instalasi & Dasar
+
+### 1.1 Instalasi
+
+```bash
+# Prompts sudah include di Laravel 10.17+ / 11+
+# Untuk Laravel lebih lama:
+composer require laravel/prompts
+```
+
+### 1.2 Basic Prompts
+
+```php
+<?php
+
+// app/Console/Commands/CreateUserCommand.php
+namespace App\Console\Commands;
+
+use Illuminate\Console\Command;
+use function Laravel\Prompts\text;
+use function Laravel\Prompts\password;
+use function Laravel\Prompts\confirm;
+use function Laravel\Prompts\select;
+use function Laravel\Prompts\multiselect;
+use function Laravel\Prompts\suggest;
+use function Laravel\Prompts\search;
+
+class CreateUserCommand extends Command
+{
+    protected $signature = 'user:create';
+    protected $description = 'Create a new user interactively';
+
+    public function handle(): int
+    {
+        // Text input
+        $name = text(
+            label: 'What is the user\'s name?',
+            placeholder: 'E.g. John Doe',
+            default: 'Guest User',
+            required: true,
+            validate: ['name' => 'required|min:3|max:255'],
+        );
+
+        // Email dengan validation
+        $email = text(
+            label: 'What is the user\'s email?',
+            placeholder: 'john@example.com',
+            required: true,
+            validate: fn (string $value) => match (true) {
+                !filter_var($value, FILTER_VALIDATE_EMAIL) => 'Invalid email address.',
+                User::where('email', $value)->exists() => 'Email already exists.',
+                default => null,
+            },
+        );
+
+        // Password (hidden input)
+        $password = password(
+            label: 'What is the user\'s password?',
+            placeholder: 'Minimum 8 characters',
+            required: true,
+            validate: ['password' => 'required|min:8'],
+        );
+
+        // Confirm
+        $isAdmin = confirm(
+            label: 'Should this user be an administrator?',
+            default: false,
+            yes: 'Yes, make admin',
+            no: 'No, regular user',
+        );
+
+        // Select
+        $role = select(
+            label: 'What role should the user have?',
+            options: [
+                'editor' => 'Editor - Can create and edit content',
+                'author' => 'Author - Can only create content',
+                'viewer' => 'Viewer - Read-only access',
+            ],
+            default: 'author',
+        );
+
+        // Multiselect
+        $permissions = multiselect(
+            label: 'What permissions should the user have?',
+            options: [
+                'posts.create' => 'Create Posts',
+                'posts.edit' => 'Edit Posts',
+                'posts.delete' => 'Delete Posts',
+                'users.manage' => 'Manage Users',
+                'settings.access' => 'Access Settings',
+            ],
+            required: true,
+        );
+
+        // Suggest (autocomplete)
+        $department = suggest(
+            label: 'What department does the user belong to?',
+            options: ['Engineering', 'Sales', 'Marketing', 'Support', 'HR'],
+            placeholder: 'Start typing...',
+        );
+
+        // Search (async untuk large datasets)
+        $manager = search(
+            label: 'Who is the user\'s manager?',
+            placeholder: 'Search for a user...',
+            options: fn (string $value) => strlen($value) > 0
+                ? User::where('name', 'like', "%{$value}%")
+                    ->pluck('name', 'id')
+                    ->all()
+                : [],
+        );
+
+        // Create user
+        $user = User::create([
+            'name' => $name,
+            'email' => $email,
+            'password' => bcrypt($password),
+            'is_admin' => $isAdmin,
+            'role' => $role,
+            'department' => $department,
+            'manager_id' => $manager,
+        ]);
+
+        $user->permissions()->sync($permissions);
+
+        $this->info("User {$name} created successfully!");
+
+        return self::SUCCESS;
+    }
+}
+```
+
+## 2. Advanced Prompts
+
+### 2.1 Forms (Multiple Prompts)
+
+```php
+<?php
+
+use function Laravel\Prompts\form;
+
+$form = form()
+    ->text('What is your name?', required: true, name: 'name')
+    ->password('What is your password?', validate: ['min:8'], name: 'password')
+    ->confirm('Do you accept the terms?', name: 'terms')
+    ->submit();
+
+// $form = ['name' => '...', 'password' => '...', 'terms' => true]
+```
+
+### 2.2 Tables
+
+```php
+<?php
+
+use function Laravel\Prompts\table;
+
+$users = User::limit(10)->get(['id', 'name', 'email', 'created_at']);
+
+table(
+    headers: ['ID', 'Name', 'Email', 'Created'],
+    rows: $users->map(fn ($u) => [
+        $u->id,
+        $u->name,
+        $u->email,
+        $u->created_at->format('Y-m-d'),
+    ]),
+);
+```
+
+### 2.3 Spinners (Loading)
+
+```php
+<?php
+
+use function Laravel\Prompts\spin;
+
+$result = spin(
+    fn () => Http::get('https://api.example.com/data')->json(),
+    'Fetching data from API...',
+);
+
+// Dengan try-catch
+try {
+    $data = spin(
+        fn () => $this->processLargeFile($path),
+        'Processing file...',
+    );
+} catch (\Exception $e) {
+    error("Failed to process file: {$e->getMessage()}");
+    return self::FAILURE;
+}
+```
+
+### 2.4 Progress Bars
+
+```php
+<?php
+
+use function Laravel\Prompts\progress;
+
+$users = User::all();
+
+progress(
+    label: 'Sending notifications',
+    steps: $users,
+    callback: function ($user) {
+        $user->notify(new AnnouncementNotification());
+        usleep(50000); // Simulate work
+    },
+);
+
+// Manual progress control
+$progress = progress(label: 'Processing', steps: 100);
+
+for ($i = 0; $i < 100; $i++) {
+    $progress->advance();
+    usleep(10000);
+}
+
+$progress->finish();
+```
+
+### 2.5 Notes & Alerts
+
+```php
+<?php
+
+use function Laravel\Prompts\note;
+use function Laravel\Prompts\error;
+use function Laravel\Prompts\warning;
+use function Laravel\Prompts\info;
+use function Laravel\Prompts\intro;
+use function Laravel\Prompts\outro;
+
+// Intro
+intro('Welcome to the User Management System');
+
+// Info note
+note('This will create a new user with default permissions.');
+
+// Warning
+warning('This action cannot be undone!');
+
+// Error
+error('Failed to connect to database.');
+
+// Success hint
+info('User created successfully!');
+
+// Outro
+outro('Thank you for using our application!');
+```
+
+## 3. Validation & Error Handling
+
+```php
+<?php
+
+// Inline validation
+$name = text(
+    label: 'What is your name?',
+    validate: fn (string $value) => match (true) {
+        strlen($value) < 3 => 'Name must be at least 3 characters.',
+        strlen($value) > 50 => 'Name must not exceed 50 characters.',
+        !preg_match('/^[a-zA-Z\s]+$/', $value) => 'Name may only contain letters and spaces.',
+        default => null,
+    },
+);
+
+// Laravel validation rules
+$email = text(
+    label: 'What is your email?',
+    validate: ['email' => 'required|email|unique:users,email'],
+);
+
+// Custom error messages
+$password = password(
+    label: 'Password',
+    validate: [
+        'password' => 'required|min:8|regex:/[A-Z]/|regex:/[0-9]/',
+    ],
+    hint: 'Must be at least 8 characters with uppercase and number.',
+);
+
+// Required fields
+$required = text(
+    label: 'Required field',
+    required: true, // Atau custom message
+    required: 'This field is mandatory.',
+);
+```
+
+## 4. Conditional Prompts
+
+```php
+<?php
+
+$needsDatabase = confirm('Do you want to configure a database?');
+
+if ($needsDatabase) {
+    $driver = select(
+        label: 'Which database driver?',
+        options: ['mysql', 'pgsql', 'sqlite', 'sqlsrv'],
+    );
+
+    $host = text('Database host:', default: 'localhost');
+    $port = text('Database port:', default: match ($driver) {
+        'mysql' => '3306',
+        'pgsql' => '5432',
+        default => '',
+    });
+
+    if ($driver !== 'sqlite') {
+        $username = text('Database username:');
+        $password = password('Database password:');
+    }
+}
+
+// Conditional dalam form
+$form = form()
+    ->text('Project name:', required: true, name: 'name')
+    ->confirm('Use custom namespace?', name: 'custom_namespace')
+    ->when(
+        fn ($responses) => $responses['custom_namespace'],
+        fn ($form) => $form->text('Namespace:', default: 'App', name: 'namespace'),
+    )
+    ->submit();
+```
+
+## 5. Testing Prompts
+
+```php
+<?php
+
+// tests/Feature/CreateUserCommandTest.php
+use Laravel\Prompts\Prompt;
+
+class CreateUserCommandTest extends TestCase
+{
+    protected function setUp(): void
+    {
+        parent::setUp();
+        
+        // Prevent actual prompts
+        Prompt::fake();
+    }
+
+    public function test_command_creates_user()
+    {
+        Prompt::fake([
+            'John Doe',           // name
+            'john@example.com',   // email
+            'securepassword123',  // password (hidden)
+            true,                 // isAdmin (confirm)
+            'author',             // role (select)
+            ['posts.create'],     // permissions (multiselect)
+            'Engineering',        // department (suggest)
+            1,                    // manager (search - return ID)
+        ]);
+
+        $this->artisan('user:create')
+            ->assertSuccessful();
+
+        $this->assertDatabaseHas('users', [
+            'name' => 'John Doe',
+            'email' => 'john@example.com',
+            'role' => 'author',
+        ]);
+    }
+
+    public function test_validation_errors()
+    {
+        Prompt::fake([
+            'Jo',                 // name (too short)
+            'john@example.com',
+            'short',              // password (too short)
+        ]);
+
+        // Validation akan auto-retry pada fake
+        Prompt::fake([
+            'John Doe',           // name (valid)
+            'john@example.com',
+            'securepassword123',  // password (valid)
+            // ... rest
+        ]);
+
+        $this->artisan('user:create')
+            ->assertSuccessful();
+    }
+}
+```
+
+## 6. Custom Themes
+
+```php
+<?php
+
+use Laravel\Prompts\Themes\DefaultThemeRenderer;
+
+// Custom renderer
+class CustomTheme extends DefaultThemeRenderer
+{
+    public function text(string $label, string $placeholder = '', string $default = '', bool $required = false, mixed $validate = null, string $hint = ''): string
+    {
+        // Custom styling
+        return parent::text($label, $placeholder, $default, $required, $validate, $hint);
+    }
+}
+
+// Apply theme
+Prompt::theme(CustomTheme::class);
+```
+
+## Kesimpulan
+
+Laravel Prompts menyederhanakan pembuatan CLI yang interaktif:
+- **Rich components**: Text, select, multiselect, search, password
+- **Visual feedback**: Spinners, progress bars, tables
+- **Validation**: Inline atau Laravel rules
+- **Testing**: Fake mode untuk automated testing
+- **Accessibility**: Keyboard navigation dan screen reader support
+
+Selanjutnya di **Sesi 57**, kita akan mempelajari Laravel Pail (Log Monitoring).
+```

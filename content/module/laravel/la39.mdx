@@ -1,0 +1,624 @@
+---
+title: "Sesi 39: Laravel Fortify (Headless Authentication)"
+description: "Memahami Laravel Fortify sebagai backend authentication tanpa views bawaan, mengkustomisasi logic autentikasi, dan mengintegrasikannya dengan frontend..."
+category: "laravel"
+tags: ["laravel", "authentication"]
+order: 39
+---
+
+## Tujuan Pembelajaran
+
+Memahami Laravel Fortify sebagai backend authentication tanpa views bawaan, mengkustomisasi logic autentikasi, dan mengintegrasikannya dengan frontend framework pilihan.
+
+## 1. Fortify Overview
+
+### 1.1 Fortify vs Jetstream/Breeze
+
+| Aspek | Fortify | Jetstream/Breeze |
+|-------|---------|------------------|
+| **Views** | ❌ Tidak ada | ✅ Include views |
+| **Frontend** | Headless (API/Backend only) | Full stack |
+| **Use Case** | Custom frontend (React/Vue/Angular/mobile) | Laravel monolith |
+| **Features** | Authentication backend lengkap | Full application starter |
+| **Flexibility** | Maksimal | Terbatas pada stack yang dipilih |
+
+### 1.2 Instalasi
+
+```bash
+# Install Fortify
+composer require laravel/fortify
+
+# Publish resources
+php artisan vendor:publish --provider="Laravel\Fortify\FortifyServiceProvider"
+
+# Jalankan migrasi
+php artisan migrate
+
+# Install stack frontend (opsional, untuk referensi)
+php artisan fortify:install
+```
+
+## 2. Konfigurasi Fortify
+
+### 2.1 Config File
+
+```php
+<?php
+
+// config/fortify.php
+return [
+    'guard' => 'web',
+    
+    'passwords' => 'users',
+    
+    'username' => 'email',
+    
+    'email' => 'email',
+    
+    'views' => false, // Disable views bawaan
+    
+    'home' => '/dashboard',
+    
+    'features' => [
+        Features::registration(),
+        Features::resetPasswords(),
+        Features::emailVerification(),
+        Features::updateProfileInformation(),
+        Features::updatePasswords(),
+        Features::twoFactorAuthentication([
+            'confirm' => true,
+            'confirmPassword' => true,
+        ]),
+    ],
+    
+    'limiters' => [
+        'login' => 'login',
+        'two-factor' => 'two-factor',
+    ],
+];
+```
+
+### 2.2 Service Provider Setup
+
+```php
+<?php
+
+// app/Providers/FortifyServiceProvider.php
+namespace App\Providers;
+
+use App\Actions\Fortify\CreateNewUser;
+use App\Actions\Fortify\ResetUserPassword;
+use App\Actions\Fortify\UpdateUserPassword;
+use App\Actions\Fortify\UpdateUserProfileInformation;
+use Illuminate\Cache\RateLimiting\Limit;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\RateLimiter;
+use Illuminate\Support\ServiceProvider;
+use Laravel\Fortify\Fortify;
+
+class FortifyServiceProvider extends ServiceProvider
+{
+    public function register(): void
+    {
+        //
+    }
+
+    public function boot(): void
+    {
+        // User actions
+        Fortify::createUsersUsing(CreateNewUser::class);
+        Fortify::updateUserProfileInformationUsing(UpdateUserProfileInformation::class);
+        Fortify::updateUserPasswordsUsing(UpdateUserPassword::class);
+        Fortify::resetUserPasswordsUsing(ResetUserPassword::class);
+
+        // Rate limiting
+        RateLimiter::for('login', function (Request $request) {
+            $email = (string) $request->input(Fortify::username());
+            return Limit::perMinute(5)->by($email.$request->ip());
+        });
+
+        RateLimiter::for('two-factor', function (Request $request) {
+            return Limit::perMinute(5)->by($request->session()->get('login.id'));
+        });
+
+        // Custom responses
+        $this->configureCustomResponses();
+    }
+
+    protected function configureCustomResponses(): void
+    {
+        // Login response
+        Fortify::authenticateUsing(function (Request $request) {
+            $user = User::where('email', $request->email)->first();
+
+            if ($user &&
+                Hash::check($request->password, $user->password) &&
+                $user->isActive()) {
+                return $user;
+            }
+
+            return null;
+        });
+    }
+}
+```
+
+## 3. Custom Actions
+
+### 3.1 Custom User Creation
+
+```php
+<?php
+
+// app/Actions/Fortify/CreateNewUser.php
+namespace App\Actions\Fortify;
+
+use App\Models\User;
+use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Validator;
+use Laravel\Fortify\Contracts\CreatesNewUsers;
+
+class CreateNewUser implements CreatesNewUsers
+{
+    public function create(array $input): User
+    {
+        Validator::make($input, [
+            'name' => ['required', 'string', 'max:255'],
+            'email' => ['required', 'string', 'email', 'max:255', 'unique:users'],
+            'password' => ['required', 'string', 'min:8', 'confirmed'],
+            'phone' => ['required', 'string', 'unique:users'],
+            'terms' => ['required', 'accepted'],
+        ])->validate();
+
+        return User::create([
+            'name' => $input['name'],
+            'email' => $input['email'],
+            'phone' => $input['phone'],
+            'password' => Hash::make($input['password']),
+            'email_verified_at' => null,
+        ]);
+    }
+}
+```
+
+### 3.2 Custom Password Reset
+
+```php
+<?php
+
+// app/Actions/Fortify/ResetUserPassword.php
+namespace App\Actions\Fortify;
+
+use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Validator;
+use Laravel\Fortify\Contracts\ResetsUserPasswords;
+
+class ResetUserPassword implements ResetsUserPasswords
+{
+    public function reset($user, array $input): void
+    {
+        Validator::make($input, [
+            'password' => ['required', 'string', 'min:8', 'confirmed'],
+        ])->validate();
+
+        $user->forceFill([
+            'password' => Hash::make($input['password']),
+            'password_changed_at' => now(),
+        ])->save();
+
+        // Invalidate all sessions
+        $user->tokens()->delete();
+        
+        // Send notification
+        $user->notify(new PasswordChangedNotification());
+    }
+}
+```
+
+## 4. Custom Responses
+
+### 4.1 Login Response
+
+```php
+<?php
+
+// app/Http/Responses/LoginResponse.php
+namespace App\Http\Responses;
+
+use Laravel\Fortify\Contracts\LoginResponse as LoginResponseContract;
+
+class LoginResponse implements LoginResponseContract
+{
+    public function toResponse($request)
+    {
+        $user = $request->user();
+
+        // Custom redirect berdasarkan role
+        $redirect = match($user->role) {
+            'admin' => '/admin/dashboard',
+            'vendor' => '/vendor/dashboard',
+            default => '/dashboard',
+        };
+
+        return $request->wantsJson()
+            ? response()->json([
+                'user' => $user,
+                'token' => $user->createToken('auth')->plainTextToken,
+                'redirect' => $redirect,
+            ])
+            : redirect()->intended($redirect);
+    }
+}
+```
+
+```php
+<?php
+
+// FortifyServiceProvider
+use App\Http\Responses\LoginResponse;
+use Laravel\Fortify\Contracts\LoginResponse as LoginResponseContract;
+
+public function boot(): void
+{
+    $this->app->singleton(LoginResponseContract::class, LoginResponse::class);
+}
+```
+
+### 4.2 Register Response
+
+```php
+<?php
+
+// app/Http/Responses/RegisterResponse.php
+namespace App\Http\Responses;
+
+use Laravel\Fortify\Contracts\RegisterResponse as RegisterResponseContract;
+
+class RegisterResponse implements RegisterResponseContract
+{
+    public function toResponse($request)
+    {
+        $user = $request->user();
+
+        // Auto-login atau require email verification
+        if (!$user->hasVerifiedEmail()) {
+            $user->sendEmailVerificationNotification();
+        }
+
+        return $request->wantsJson()
+            ? response()->json([
+                'message' => 'Registration successful. Please verify your email.',
+                'user' => $user,
+            ], 201)
+            : redirect()->route('verification.notice');
+    }
+}
+```
+
+### 4.3 Two-Factor Login Response
+
+```php
+<?php
+
+// app/Http/Responses/TwoFactorLoginResponse.php
+namespace App\Http\Responses;
+
+use Laravel\Fortify\Contracts\TwoFactorLoginResponse as TwoFactorLoginResponseContract;
+
+class TwoFactorLoginResponse implements TwoFactorLoginResponseContract
+{
+    public function toResponse($request)
+    {
+        $user = $request->user();
+
+        return $request->wantsJson()
+            ? response()->json([
+                'user' => $user,
+                'two_factor_enabled' => true,
+                'token' => $user->createToken('auth', ['two-factor-confirmed'])->plainTextToken,
+            ])
+            : redirect()->intended(config('fortify.home'));
+    }
+}
+```
+
+## 5. Frontend Integration
+
+### 5.1 React Integration
+
+```jsx
+// resources/js/Pages/Auth/Login.jsx
+import { useForm } from '@inertiajs/react';
+
+export default function Login() {
+    const { data, setData, post, processing, errors } = useForm({
+        email: '',
+        password: '',
+        remember: false,
+    });
+
+    const submit = (e) => {
+        e.preventDefault();
+        post('/login', {
+            onSuccess: () => {
+                // Redirect handled by Fortify LoginResponse
+            },
+        });
+    };
+
+    return (
+        <form onSubmit={submit}>
+            <div>
+                <label>Email</label>
+                <input
+                    type="email"
+                    value={data.email}
+                    onChange={e => setData('email', e.target.value)}
+                />
+                {errors.email && <span>{errors.email}</span>}
+            </div>
+
+            <div>
+                <label>Password</label>
+                <input
+                    type="password"
+                    value={data.password}
+                    onChange={e => setData('password', e.target.value)}
+                />
+                {errors.password && <span>{errors.password}</span>}
+            </div>
+
+            <div>
+                <label>
+                    <input
+                        type="checkbox"
+                        checked={data.remember}
+                        onChange={e => setData('remember', e.target.checked)}
+                    />
+                    Remember me
+                </label>
+            </div>
+
+            <button type="submit" disabled={processing}>
+                Log in
+            </button>
+        </form>
+    );
+}
+```
+
+### 5.2 Vue Integration
+
+```vue
+<!-- resources/js/Pages/Auth/Login.vue -->
+<template>
+    <form @submit.prevent="submit">
+        <div>
+            <label>Email</label>
+            <input v-model="form.email" type="email" />
+            <span v-if="form.errors.email">{{ form.errors.email }}</span>
+        </div>
+
+        <div>
+            <label>Password</label>
+            <input v-model="form.password" type="password" />
+        </div>
+
+        <div>
+            <label>
+                <input v-model="form.remember" type="checkbox" />
+                Remember me
+            </label>
+        </div>
+
+        <button type="submit" :disabled="form.processing">
+            Log in
+        </button>
+    </form>
+</template>
+
+<script setup>
+import { useForm } from '@inertiajs/vue3';
+
+const form = useForm({
+    email: '',
+    password: '',
+    remember: false,
+});
+
+const submit = () => {
+    form.post('/login');
+};
+</script>
+```
+
+### 5.3 API/Mobile Integration
+
+```php
+<?php
+
+// routes/api.php
+use Laravel\Fortify\Http\Controllers\RegisteredUserController;
+use Laravel\Fortify\Http\Controllers\AuthenticatedSessionController;
+use Laravel\Fortify\Http\Controllers\PasswordResetLinkController;
+use Laravel\Fortify\Http\Controllers\NewPasswordController;
+
+// Registration
+Route::post('/register', [RegisteredUserController::class, 'store']);
+
+// Login
+Route::post('/login', [AuthenticatedSessionController::class, 'store']);
+
+// Password reset
+Route::post('/forgot-password', [PasswordResetLinkController::class, 'store']);
+Route::post('/reset-password', [NewPasswordController::class, 'store']);
+
+// Protected routes
+Route::middleware('auth:sanctum')->group(function () {
+    Route::get('/user', fn (Request $request) => $request->user());
+    Route::post('/logout', [AuthenticatedSessionController::class, 'destroy']);
+});
+```
+
+## 6. Two-Factor Authentication Setup
+
+### 6.1 Enable 2FA Endpoint
+
+```php
+<?php
+
+// app/Http/Controllers/TwoFactorController.php
+namespace App\Http\Controllers;
+
+use Illuminate\Http\Request;
+use Laravel\Fortify\Fortify;
+use PragmaRX\Google2FA\Google2FA;
+
+class TwoFactorController extends Controller
+{
+    public function enable(Request $request)
+    {
+        $user = $request->user();
+
+        if ($user->two_factor_secret) {
+            return response()->json(['message' => '2FA already enabled'], 400);
+        }
+
+        $google2fa = new Google2FA();
+        $secret = $google2fa->generateSecretKey();
+
+        // Simpan secret (encrypted oleh Fortify)
+        $user->forceFill([
+            'two_factor_secret' => encrypt($secret),
+            'two_factor_recovery_codes' => encrypt(json_encode(
+                collect(range(1, 8))->map(fn () => str_random(10))->all()
+            )),
+        ])->save();
+
+        $qrCodeUrl = $google2fa->getQRCodeUrl(
+            config('app.name'),
+            $user->email,
+            $secret
+        );
+
+        return response()->json([
+            'secret' => $secret,
+            'qr_code_url' => $qrCodeUrl,
+        ]);
+    }
+
+    public function confirm(Request $request)
+    {
+        $request->validate(['code' => 'required|string']);
+
+        $user = $request->user();
+        $google2fa = new Google2FA();
+
+        $valid = $google2fa->verifyKey(
+            decrypt($user->two_factor_secret),
+            $request->code
+        );
+
+        if (!$valid) {
+            return response()->json(['message' => 'Invalid code'], 422);
+        }
+
+        $user->forceFill([
+            'two_factor_confirmed_at' => now(),
+        ])->save();
+
+        return response()->json(['message' => '2FA enabled successfully']);
+    }
+
+    public function disable(Request $request)
+    {
+        $request->validate(['password' => 'required|current_password']);
+
+        $request->user()->forceFill([
+            'two_factor_secret' => null,
+            'two_factor_recovery_codes' => null,
+            'two_factor_confirmed_at' => null,
+        ])->save();
+
+        return response()->json(['message' => '2FA disabled']);
+    }
+}
+```
+
+## 7. Advanced Customization
+
+### 7.1 Custom Authentication Pipeline
+
+```php
+<?php
+
+// app/Actions/Fortify/AuthenticateUser.php
+namespace App\Actions\Fortify;
+
+use App\Models\User;
+use Illuminate\Support\Facades\Hash;
+use Laravel\Fortify\Fortify;
+
+class AuthenticateUser
+{
+    public function __invoke(Request $request)
+    {
+        $user = User::where(Fortify::username(), $request->{Fortify::username()})->first();
+
+        if (!$user || !Hash::check($request->password, $user->password)) {
+            return null;
+        }
+
+        // Custom checks
+        if ($user->isBanned()) {
+            throw new AuthenticationException('Your account has been banned.');
+        }
+
+        if ($user->requiresTwoFactor() && !$request->has('two_factor_code')) {
+            session(['login.id' => $user->getKey()]);
+            return response()->json(['requires_two_factor' => true], 403);
+        }
+
+        // Log login attempt
+        $user->loginAttempts()->create([
+            'ip' => $request->ip(),
+            'user_agent' => $request->userAgent(),
+            'successful' => true,
+        ]);
+
+        return $user;
+    }
+}
+```
+
+### 7.2 Event Listening
+
+```php
+<?php
+
+// EventServiceProvider
+protected $listen = [
+    \Laravel\Fortify\Events\Registered::class => [
+        \App\Listeners\SendWelcomeNotification::class,
+    ],
+    \Laravel\Fortify\Events\Login::class => [
+        \App\Listeners\LogSuccessfulLogin::class,
+        \App\Listeners\UpdateLastLoginTimestamp::class,
+    ],
+    \Laravel\Fortify\Events\TwoFactorAuthenticationEnabled::class => [
+        \App\Listeners\NotifyTwoFactorEnabled::class,
+    ],
+];
+```
+
+## Kesimpulan
+
+Laravel Fortify menyediakan backend authentication yang powerful dan flexible:
+- **Headless design** untuk integrasi dengan frontend apapun
+- **Custom actions** untuk logic registrasi, login, dan password reset
+- **Custom responses** untuk format JSON atau redirect sesuai kebutuhan
+- **2FA integration** dengan TOTP standard
+- **Event system** untuk extend functionality
+
+Selanjutnya di **Sesi 40**, kita akan mempelajari API Authentication dengan Sanctum untuk token-based authentication.
+```

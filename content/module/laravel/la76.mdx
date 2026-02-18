@@ -1,0 +1,1082 @@
+---
+title: "Sesi 76: Domain-Driven Design (DDD) dalam Laravel"
+description: "**Domain-Driven Design** adalah approach software development yang berfokus pada modeling business domain secara eksplisit dalam code. DDD dipopulerka..."
+category: "laravel"
+tags: ["laravel"]
+order: 76
+---
+
+## 1. Apa itu Domain-Driven Design (DDD)?
+
+**Domain-Driven Design** adalah approach software development yang berfokus pada modeling business domain secara eksplisit dalam code. DDD dipopulerkan oleh Eric Evans dalam buku yang sama nama (2003).
+
+**Core Concepts:**
+
+| Konsep | Definisi | Contoh |
+|--------|----------|--------|
+| **Bounded Context** | Batasan eksplisit di mana domain model berlaku | Ordering BC, Inventory BC, Shipping BC |
+| **Aggregate** | Cluster of entities dan value objects dengan consistency boundary | Order (root) + OrderLine + ShippingAddress |
+| **Entity** | Object dengan identitas unik yang persist through changes | User, Product, Order |
+| **Value Object** | Object tanpa identitas, immutable, defined by attributes | Money, Email, Address, DateRange |
+| **Domain Event** | Something that happened in the domain yang business care about | OrderPlaced, PaymentReceived, ShipmentDispatched |
+
+**Kenapa DDD?**
+- **Business Alignment**: Code mencerminkan bahasa bisnis (ubiquitous language)
+- **Maintainability**: Clear boundaries mengurangi coupling
+- **Scalability**: Bounded contexts bisa di-scale independently
+- **Team Organization**: Teams bisa bekerja independently pada context masing-masing
+
+## 2. Bounded Contexts dalam Laravel
+
+### 2.1 Apa itu Bounded Context?
+
+**Bounded Context** adalah batasan eksplisit di mana suatu domain model berlaku. Di dalam context, terms memiliki meaning spesifik. Di luar context, terms yang sama bisa berarti berbeda.
+
+**Contoh Real-world:**
+```
+E-commerce System:
+
+┌─────────────────────────────────────────────────────────┐
+│                    Ordering Context                      │
+│  Order: Pembelian oleh customer                         │
+│  Customer: Orang yang melakukan pembelian               │
+│  Product: Item yang dibeli                              │
+└─────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────┐
+│                   Inventory Context                      │
+│  Product: Physical item di warehouse                    │
+│  Stock: Jumlah available untuk dijual                   │
+│  Reservation: Blocked stock untuk orders                │
+└─────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────┐
+│                   Shipping Context                       │
+│  Order: Package yang akan dikirim                       │
+│  Customer: Recipient address                            │
+│  Product: Physical items dalam package                  │
+└─────────────────────────────────────────────────────────┘
+```
+
+### 2.2 Struktur Folder DDD dalam Laravel
+
+```
+app/
+├── BoundedContexts/
+│   ├── Ordering/
+│   │   ├── Domain/
+│   │   │   ├── Aggregates/
+│   │   │   │   └── Order.php              # Aggregate Root
+│   │   │   ├── Entities/
+│   │   │   │   └── OrderLine.php          # Entity dalam aggregate
+│   │   │   ├── ValueObjects/
+│   │   │   │   ├── Money.php
+│   │   │   │   ├── Email.php
+│   │   │   │   └── ShippingAddress.php
+│   │   │   ├── Events/
+│   │   │   │   └── OrderPlaced.php        # Domain Event
+│   │   │   └── Repositories/
+│   │   │       └── OrderRepositoryInterface.php
+│   │   ├── Application/
+│   │   │   ├── Services/
+│   │   │   │   └── PlaceOrderService.php  # Application Service
+│   │   │   └── DTOs/
+│   │   │       └── PlaceOrderDTO.php
+│   │   └── Infrastructure/
+│   │       ├── Persistence/
+│   │       │   └── EloquentOrderRepository.php
+│   │       └── Http/
+│   │           └── OrderController.php
+│   │
+│   ├── Inventory/
+│   │   ├── Domain/
+│   │   ├── Application/
+│   │   └── Infrastructure/
+│   │
+│   └── Shipping/
+│       ├── Domain/
+│       ├── Application/
+│       └── Infrastructure/
+│
+├── Shared/                                   # Cross-cutting concerns
+│   ├── Domain/
+│   │   └── ValueObjects/
+│   │       └── Uuid.php
+│   └── Infrastructure/
+│       └── EventBus/
+│           └── InMemoryEventBus.php
+│
+└── Providers/
+    └── OrderingServiceProvider.php
+```
+
+### 2.3 Context Mapping
+
+```php
+<?php
+
+// app/BoundedContexts/Ordering/Domain/Aggregates/Order.php
+// Model "Order" dalam Ordering Context
+
+namespace App\BoundedContexts\Ordering\Domain\Aggregates;
+
+use App\BoundedContexts\Ordering\Domain\Entities\OrderLine;
+use App\BoundedContexts\Ordering\Domain\Events\OrderPlaced;
+use App\BoundedContexts\Ordering\Domain\ValueObjects\Money;
+use App\BoundedContexts\Ordering\Domain\ValueObjects\ShippingAddress;
+use App\Shared\Domain\ValueObjects\Uuid;
+
+class Order
+{
+    private Uuid $id;
+    private Uuid $customerId;
+    private array $lines = [];          // OrderLine[]
+    private ShippingAddress $shippingAddress;
+    private Money $total;
+    private string $status = 'pending'; // pending, confirmed, shipped, cancelled
+    private array $domainEvents = [];
+
+    public function __construct(
+        Uuid $id,
+        Uuid $customerId,
+        ShippingAddress $shippingAddress
+    ) {
+        $this->id = $id;
+        $this->customerId = $customerId;
+        $this->shippingAddress = $shippingAddress;
+        $this->total = Money::zero('USD');
+    }
+
+    // Factory method untuk create new order
+    public static function place(
+        Uuid $customerId,
+        ShippingAddress $shippingAddress,
+        array $lines
+    ): self {
+        $order = new self(Uuid::generate(), $customerId, $shippingAddress);
+        
+        foreach ($lines as $line) {
+            $order->addLine($line);
+        }
+        
+        $order->recalculateTotal();
+        $order->recordEvent(new OrderPlaced(
+            orderId: $order->id->toString(),
+            customerId: $customerId->toString(),
+            total: $order->total->toArray(),
+            placedAt: now()->toIso8601String()
+        ));
+        
+        return $order;
+    }
+
+    public function addLine(OrderLine $line): void
+    {
+        if ($this->status !== 'pending') {
+            throw new \DomainException('Cannot modify confirmed order');
+        }
+        
+        $this->lines[] = $line;
+        $this->recalculateTotal();
+    }
+
+    public function confirm(): void
+    {
+        if ($this->status !== 'pending') {
+            throw new \DomainException('Only pending orders can be confirmed');
+        }
+        
+        if (empty($this->lines)) {
+            throw new \DomainException('Cannot confirm empty order');
+        }
+        
+        $this->status = 'confirmed';
+    }
+
+    private function recalculateTotal(): void
+    {
+        $this->total = Money::zero('USD');
+        
+        foreach ($this->lines as $line) {
+            $this->total = $this->total->add($line->subtotal());
+        }
+    }
+
+    public function recordEvent(object $event): void
+    {
+        $this->domainEvents[] = $event;
+    }
+
+    public function pullEvents(): array
+    {
+        $events = $this->domainEvents;
+        $this->domainEvents = [];
+        return $events;
+    }
+
+    // Getters
+    public function id(): Uuid { return $this->id; }
+    public function total(): Money { return $this->total; }
+    public function status(): string { return $this->status; }
+    public function lines(): array { return $this->lines; }
+}
+
+// Beda dengan Order dalam Shipping Context!
+// app/BoundedContexts/Shipping/Domain/Aggregates/Shipment.php
+
+namespace App\BoundedContexts\Shipping\Domain\Aggregates;
+
+class Shipment
+{
+    private Uuid $id;
+    private string $orderReference;    // Hanya reference ID, bukan object
+    private Uuid $recipientId;         // Customer dalam shipping context
+    private array $packages;           // Physical packages
+    private string $carrier;           // JNE, SiCepat, etc.
+    private ?string $trackingNumber;
+    
+    // Shipment punya aturan bisnis yang berbeda!
+    public function dispatch(string $carrier): void
+    {
+        // Validation, generate tracking number, etc.
+    }
+}
+```
+
+## 3. Aggregates dan Entities
+
+### 3.1 Apa itu Aggregate?
+
+**Aggregate** adalah cluster of domain objects (entities dan value objects) yang dianggap sebagai single unit untuk data changes. Setiap aggregate memiliki **Aggregate Root** — satu entity yang menjadi entry point untuk manipulasi aggregate.
+
+**Rules:**
+- External objects hanya boleh reference Aggregate Root
+- Objects dalam aggregate boleh reference each other
+- Transaction boundary = 1 aggregate
+- Delete aggregate = delete semua objects dalamnya
+
+```
+Order Aggregate (Root: Order)
+├── Order (Entity - Root)
+│   ├── id: OrderId
+│   ├── customerId: CustomerId
+│   ├── status: OrderStatus
+│   └── placedAt: DateTime
+├── OrderLines (Collection<Entity>)
+│   └── OrderLine
+│       ├── productId: ProductId
+│       ├── quantity: int
+│       ├── unitPrice: Money
+│       └── subtotal(): Money
+└── ShippingAddress (ValueObject)
+    ├── street: string
+    ├── city: string
+    └── country: string
+```
+
+### 3.2 Implementasi Aggregate Root
+
+```php
+<?php
+
+namespace App\BoundedContexts\Ordering\Domain\Aggregates;
+
+use App\BoundedContexts\Ordering\Domain\Entities\OrderLine;
+use App\BoundedContexts\Ordering\Domain\ValueObjects\Money;
+use App\BoundedContexts\Ordering\Domain\ValueObjects\ProductId;
+
+class Order
+{
+    private array $lines = [];
+    
+    // Only way to add line is through aggregate root
+    public function addProduct(ProductId $productId, int $quantity, Money $unitPrice): void
+    {
+        $this->assertCanBeModified();
+        $this->assertValidQuantity($quantity);
+        
+        // Check if product already exists
+        foreach ($this->lines as $index => $line) {
+            if ($line->productId()->equals($productId)) {
+                // Update existing line
+                $this->lines[$index] = $line->increaseQuantity($quantity);
+                $this->recalculateTotal();
+                return;
+            }
+        }
+        
+        // Add new line
+        $this->lines[] = new OrderLine($productId, $quantity, $unitPrice);
+        $this->recalculateTotal();
+    }
+    
+    public function removeProduct(ProductId $productId): void
+    {
+        $this->assertCanBeModified();
+        
+        $this->lines = array_values(array_filter(
+            $this->lines,
+            fn ($line) => !$line->productId()->equals($productId)
+        ));
+        
+        $this->recalculateTotal();
+    }
+    
+    // Business rule: discount hanya bisa diterapkan pada order > $100
+    public function applyDiscount(float $percentage): void
+    {
+        if ($this->total->lessThan(Money::fromDecimal(100, 'USD'))) {
+            throw new \DomainException('Discount only applicable for orders over $100');
+        }
+        
+        if ($percentage > 20) {
+            throw new \DomainException('Maximum discount is 20%');
+        }
+        
+        $discountAmount = $this->total->multiply($percentage / 100);
+        $this->discount = $discountAmount;
+        $this->recalculateTotal();
+    }
+    
+    private function assertCanBeModified(): void
+    {
+        if ($this->status !== OrderStatus::PENDING) {
+            throw new \DomainException('Cannot modify non-pending order');
+        }
+    }
+}
+
+// OrderLine sebagai Entity dalam aggregate
+namespace App\BoundedContexts\Ordering\Domain\Entities;
+
+class OrderLine
+{
+    public function __construct(
+        private ProductId $productId,
+        private int $quantity,
+        private Money $unitPrice
+    ) {
+        if ($quantity < 1) {
+            throw new \InvalidArgumentException('Quantity must be at least 1');
+        }
+    }
+    
+    public function increaseQuantity(int $amount): self
+    {
+        return new self(
+            $this->productId,
+            $this->quantity + $amount,
+            $this->unitPrice
+        );
+    }
+    
+    public function subtotal(): Money
+    {
+        return $this->unitPrice->multiply($this->quantity);
+    }
+    
+    // Entities are compared by identity
+    public function equals(self $other): bool
+    {
+        return $this->productId->equals($other->productId);
+    }
+    
+    public function productId(): ProductId { return $this->productId; }
+}
+```
+
+## 4. Value Objects Implementation
+
+### 4.1 Apa itu Value Object?
+
+**Value Object** adalah object yang:
+- **Immutable**: Tidak bisa diubah setelah creation
+- **No identity**: Dua value objects dengan same attributes are equal
+- **Self-validating**: Constructor ensures valid state
+- **Side-effect free**: Methods return new instances
+
+**Contoh Value Objects:**
+- Money (amount + currency)
+- Email (validated format)
+- Address (street, city, postal code)
+- DateRange (start, end)
+
+### 4.2 Money Value Object
+
+```php
+<?php
+
+namespace App\BoundedContexts\Ordering\Domain\ValueObjects;
+
+use InvalidArgumentException;
+
+final class Money
+{
+    private int $amount;     // Stored in smallest unit (cents)
+    private string $currency; // ISO 4217 code
+    
+    public function __construct(int $amount, string $currency)
+    {
+        if (!in_array($currency, ['USD', 'EUR', 'IDR'])) {
+            throw new InvalidArgumentException("Unsupported currency: {$currency}");
+        }
+        
+        $this->amount = $amount;
+        $this->currency = $currency;
+    }
+    
+    // Factory methods
+    public static function fromDecimal(float $amount, string $currency): self
+    {
+        $cents = (int) round($amount * 100);
+        return new self($cents, $currency);
+    }
+    
+    public static function zero(string $currency): self
+    {
+        return new self(0, $currency);
+    }
+    
+    // Operations return new instances (immutable)
+    public function add(self $other): self
+    {
+        $this->assertSameCurrency($other);
+        return new self($this->amount + $other->amount, $this->currency);
+    }
+    
+    public function subtract(self $other): self
+    {
+        $this->assertSameCurrency($other);
+        return new self($this->amount - $other->amount, $this->currency);
+    }
+    
+    public function multiply(float $factor): self
+    {
+        return new self((int) round($this->amount * $factor), $this->currency);
+    }
+    
+    // Comparisons
+    public function equals(self $other): bool
+    {
+        return $this->currency === $other->currency 
+            && $this->amount === $other->amount;
+    }
+    
+    public function greaterThan(self $other): bool
+    {
+        $this->assertSameCurrency($other);
+        return $this->amount > $other->amount;
+    }
+    
+    public function lessThan(self $other): bool
+    {
+        $this->assertSameCurrency($other);
+        return $this->amount < $other->amount;
+    }
+    
+    public function isZero(): bool
+    {
+        return $this->amount === 0;
+    }
+    
+    // Formatting
+    public function toDecimal(): float
+    {
+        return $this->amount / 100;
+    }
+    
+    public function format(): string
+    {
+        $symbols = [
+            'USD' => '$',
+            'EUR' => '€',
+            'IDR' => 'Rp',
+        ];
+        
+        return $symbols[$this->currency] . number_format($this->toDecimal(), 2);
+    }
+    
+    public function toArray(): array
+    {
+        return [
+            'amount' => $this->amount,
+            'currency' => $this->currency,
+            'formatted' => $this->format(),
+        ];
+    }
+    
+    private function assertSameCurrency(self $other): void
+    {
+        if ($this->currency !== $other->currency) {
+            throw new InvalidArgumentException(
+                "Cannot operate on different currencies: {$this->currency} vs {$other->currency}"
+            );
+        }
+    }
+    
+    // No setters! Immutability ensures consistency
+    public function amount(): int { return $this->amount; }
+    public function currency(): string { return $this->currency; }
+}
+```
+
+### 4.3 Email Value Object
+
+```php
+<?php
+
+namespace App\BoundedContexts\Shared\Domain\ValueObjects;
+
+use InvalidArgumentException;
+
+final class Email
+{
+    private string $value;
+    
+    public function __construct(string $email)
+    {
+        $email = strtolower(trim($email));
+        
+        if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+            throw new InvalidArgumentException("Invalid email format: {$email}");
+        }
+        
+        $domain = substr(strrchr($email, '@'), 1);
+        if (!checkdnsrr($domain, 'MX')) {
+            throw new InvalidArgumentException("Domain has no MX record: {$domain}");
+        }
+        
+        $this->value = $email;
+    }
+    
+    public function localPart(): string
+    {
+        return substr($this->value, 0, strpos($this->value, '@'));
+    }
+    
+    public function domain(): string
+    {
+        return substr(strrchr($this->value, '@'), 1);
+    }
+    
+    public function equals(self $other): bool
+    {
+        return $this->value === $other->value;
+    }
+    
+    public function mask(): string
+    {
+        $local = $this->localPart();
+        $domain = $this->domain();
+        
+        $maskedLocal = substr($local, 0, 2) . str_repeat('*', strlen($local) - 2);
+        return $maskedLocal . '@' . $domain;
+    }
+    
+    public function __toString(): string
+    {
+        return $this->value;
+    }
+    
+    public function toString(): string
+    {
+        return $this->value;
+    }
+}
+```
+
+## 5. Domain Events dan Integration Events
+
+### 5.1 Domain Events vs Integration Events
+
+| Aspek | Domain Events | Integration Events |
+|-------|---------------|-------------------|
+| **Scope** | Within bounded context | Between bounded contexts |
+| **Synchronous?** | Usually synchronous | Usually asynchronous (queue) |
+| **Delivery** | In-process | Message bus |
+| **Schema** | Can be rich objects | Should be stable contracts |
+| **Example** | `OrderLineAdded` | `OrderPlaced` (for other contexts) |
+
+### 5.2 Domain Events Implementation
+
+```php
+<?php
+
+namespace App\BoundedContexts\Ordering\Domain\Events;
+
+// Domain Event: something that happened in the domain
+class OrderPlaced
+{
+    public function __construct(
+        public readonly string $orderId,
+        public readonly string $customerId,
+        public readonly array $total,      // ['amount' => 10000, 'currency' => 'USD']
+        public readonly string $placedAt,
+        public readonly array $lines = []   // For audit/debugging
+    ) {}
+}
+
+class OrderConfirmed
+{
+    public function __construct(
+        public readonly string $orderId,
+        public readonly string $confirmedAt,
+        public readonly ?string $confirmedBy = null
+    ) {}
+}
+
+// Aggregate dengan event dispatching
+class Order
+{
+    private array $domainEvents = [];
+    
+    public static function place(...): self
+    {
+        $order = new self(...);
+        
+        $order->recordEvent(new OrderPlaced(
+            orderId: $order->id->toString(),
+            customerId: $order->customerId->toString(),
+            total: $order->total->toArray(),
+            placedAt: now()->toIso8601String(),
+            lines: array_map(fn ($l) => $l->toArray(), $order->lines)
+        ));
+        
+        return $order;
+    }
+    
+    public function confirm(UserId $confirmedBy): void
+    {
+        // ... validation ...
+        
+        $this->status = OrderStatus::CONFIRMED;
+        
+        $this->recordEvent(new OrderConfirmed(
+            orderId: $this->id->toString(),
+            confirmedAt: now()->toIso8601String(),
+            confirmedBy: $confirmedBy->toString()
+        ));
+    }
+    
+    public function recordEvent(object $event): void
+    {
+        $this->domainEvents[] = $event;
+    }
+    
+    public function pullEvents(): array
+    {
+        $events = $this->domainEvents;
+        $this->domainEvents = [];
+        return $events;
+    }
+}
+```
+
+### 5.3 Event Dispatching dan Handling
+
+```php
+<?php
+
+// Application Service yang dispatch events
+namespace App\BoundedContexts\Ordering\Application\Services;
+
+class PlaceOrderService
+{
+    public function __construct(
+        private OrderRepositoryInterface $orderRepository,
+        private EventDispatcherInterface $eventDispatcher,
+        private InventoryServiceInterface $inventoryService
+    ) {}
+    
+    public function execute(PlaceOrderCommand $command): OrderId
+    {
+        // 1. Create aggregate
+        $order = Order::place(
+            customerId: new Uuid($command->customerId),
+            shippingAddress: ShippingAddress::fromArray($command->address),
+            lines: array_map(
+                fn ($l) => new OrderLine(
+                    new ProductId($l['productId']),
+                    $l['quantity'],
+                    Money::fromDecimal($l['price'], 'USD')
+                ),
+                $command->lines
+            )
+        );
+        
+        // 2. Check inventory (synchronous, same transaction)
+        foreach ($order->lines() as $line) {
+            $available = $this->inventoryService->checkAvailability(
+                $line->productId(),
+                $line->quantity()
+            );
+            
+            if (!$available) {
+                throw new InsufficientStockException($line->productId());
+            }
+        }
+        
+        // 3. Save aggregate
+        $this->orderRepository->save($order);
+        
+        // 4. Dispatch domain events
+        foreach ($order->pullEvents() as $event) {
+            $this->eventDispatcher->dispatch($event);
+        }
+        
+        return $order->id();
+    }
+}
+
+// Event Handlers dalam same context
+namespace App\BoundedContexts\Ordering\Application\Handlers;
+
+class ReserveInventoryOnOrderPlaced
+{
+    public function __construct(
+        private InventoryServiceInterface $inventoryService
+    ) {}
+    
+    public function handle(OrderPlaced $event): void
+    {
+        // Reserve stock untuk order ini
+        foreach ($event->lines as $line) {
+            $this->inventoryService->reserve(
+                productId: $line['productId'],
+                quantity: $line['quantity'],
+                reservationId: $event->orderId
+            );
+        }
+    }
+}
+
+class SendConfirmationEmailOnOrderPlaced
+{
+    public function __construct(
+        private NotificationServiceInterface $notificationService,
+        private CustomerRepositoryInterface $customerRepository
+    ) {}
+    
+    public function handle(OrderPlaced $event): void
+    {
+        $customer = $this->customerRepository->findById($event->customerId);
+        
+        $this->notificationService->send(
+            to: $customer->email(),
+            template: 'order-confirmation',
+            data: [
+                'orderId' => $event->orderId,
+                'total' => $event->total['formatted'],
+            ]
+        );
+    }
+}
+```
+
+### 5.4 Integration Events (Between Contexts)
+
+```php
+<?php
+
+namespace App\BoundedContexts\Ordering\IntegrationEvents;
+
+// Event yang dikirim ke message bus untuk other contexts
+// Schema harus stable dan versioned!
+
+class OrderPlacedIntegrationEvent
+{
+    public const VERSION = '1.0';
+    
+    public function __construct(
+        public readonly string $eventId,
+        public readonly string $orderId,
+        public readonly string $customerId,
+        public readonly string $customerEmail,
+        public readonly array $items,      // Simplified untuk integration
+        public readonly string $totalAmount,
+        public readonly string $currency,
+        public readonly string $occurredAt,
+        public readonly string $version = self::VERSION
+    ) {}
+    
+    public static function fromDomainEvent(
+        OrderPlaced $domainEvent,
+        Customer $customer
+    ): self {
+        return new self(
+            eventId: Uuid::generate()->toString(),
+            orderId: $domainEvent->orderId,
+            customerId: $domainEvent->customerId,
+            customerEmail: $customer->email()->toString(),
+            items: array_map(fn ($l) => [
+                'sku' => $l['productId'],
+                'quantity' => $l['quantity'],
+            ], $domainEvent->lines),
+            totalAmount: (string) $domainEvent->total['amount'],
+            currency: $domainEvent->total['currency'],
+            occurredAt: $domainEvent->placedAt,
+        );
+    }
+}
+
+// Publisher
+class OrderIntegrationEventPublisher
+{
+    public function __construct(
+        private MessageBusInterface $messageBus
+    ) {}
+    
+    public function publishOrderPlaced(OrderPlaced $event): void
+    {
+        $customer = $this->customerRepository->findById($event->customerId);
+        
+        $integrationEvent = OrderPlacedIntegrationEvent::fromDomainEvent(
+            $event,
+            $customer
+        );
+        
+        // Publish ke message bus (RabbitMQ, Kafka, etc.)
+        $this->messageBus->publish(
+            exchange: 'orders',
+            routingKey: 'order.placed',
+            message: $integrationEvent
+        );
+    }
+}
+
+// Subscriber dalam Shipping Context
+namespace App\BoundedContexts\Shipping\IntegrationHandlers;
+
+class CreateShipmentOnOrderPlaced
+{
+    public function __construct(
+        private ShipmentRepositoryInterface $shipmentRepository
+    ) {}
+    
+    public function handle(OrderPlacedIntegrationEvent $event): void
+    {
+        // Create shipment preparation dalam shipping context
+        $shipment = Shipment::prepare(
+            orderReference: $event->orderId,
+            recipientEmail: $event->customerEmail,
+            items: $event->items
+        );
+        
+        $this->shipmentRepository->save($shipment);
+    }
+}
+```
+
+## 6. Repository Pattern dengan Eloquent
+
+### 6.1 Repository Interface (Domain Layer)
+
+```php
+<?php
+
+namespace App\BoundedContexts\Ordering\Domain\Repositories;
+
+use App\BoundedContexts\Ordering\Domain\Aggregates\Order;
+use App\Shared\Domain\ValueObjects\Uuid;
+
+interface OrderRepositoryInterface
+{
+    public function findById(Uuid $id): ?Order;
+    
+    public function findByIdOrFail(Uuid $id): Order;
+    
+    public function save(Order $order): void;
+    
+    public function delete(Order $order): void;
+    
+    /**
+     * @return Order[]
+     */
+    public function findByCustomerId(Uuid $customerId, int $limit = 20): array;
+    
+    /**
+     * @return Order[]
+     */
+    public function findPendingOrdersOlderThan(\DateTimeInterface $date): array;
+}
+```
+
+### 6.2 Eloquent Implementation (Infrastructure Layer)
+
+```php
+<?php
+
+namespace App\BoundedContexts\Ordering\Infrastructure\Persistence;
+
+use App\BoundedContexts\Ordering\Domain\Aggregates\Order;
+use App\BoundedContexts\Ordering\Domain\Entities\OrderLine;
+use App\BoundedContexts\Ordering\Domain\Repositories\OrderRepositoryInterface;
+use App\BoundedContexts\Ordering\Domain\ValueObjects\Money;
+use App\BoundedContexts\Ordering\Domain\ValueObjects\OrderStatus;
+use App\BoundedContexts\Ordering\Domain\ValueObjects\ShippingAddress;
+use App\BoundedContexts\Ordering\Infrastructure\Models\EloquentOrder;
+use App\Shared\Domain\ValueObjects\Uuid;
+
+class EloquentOrderRepository implements OrderRepositoryInterface
+{
+    public function findById(Uuid $id): ?Order
+    {
+        $model = EloquentOrder::with('lines')->find($id->toString());
+        
+        if (!$model) {
+            return null;
+        }
+        
+        return $this->toDomain($model);
+    }
+    
+    public function findByIdOrFail(Uuid $id): Order
+    {
+        $order = $this->findById($id);
+        
+        if (!$order) {
+            throw new \DomainException("Order not found: {$id->toString()}");
+        }
+        
+        return $order;
+    }
+    
+    public function save(Order $order): void
+    {
+        // Persist domain events untuk dispatch later
+        $events = $order->pullEvents();
+        
+        EloquentOrder::updateOrCreate(
+            ['id' => $order->id()->toString()],
+            [
+                'customer_id' => $order->customerId()->toString(),
+                'status' => $order->status()->value,
+                'total_amount' => $order->total()->amount(),
+                'total_currency' => $order->total()->currency(),
+                'shipping_address' => json_encode($order->shippingAddress()->toArray()),
+                'placed_at' => $order->placedAt(),
+            ]
+        )->lines()->delete();
+        
+        foreach ($order->lines() as $line) {
+            EloquentOrderLine::create([
+                'order_id' => $order->id()->toString(),
+                'product_id' => $line->productId()->toString(),
+                'quantity' => $line->quantity(),
+                'unit_price_amount' => $line->unitPrice()->amount(),
+                'unit_price_currency' => $line->unitPrice()->currency(),
+            ]);
+        }
+        
+        // Dispatch events after successful persistence
+        foreach ($events as $event) {
+            event($event);
+        }
+    }
+    
+    public function delete(Order $order): void
+    {
+        EloquentOrder::destroy($order->id()->toString());
+    }
+    
+    public function findByCustomerId(Uuid $customerId, int $limit = 20): array
+    {
+        $models = EloquentOrder::with('lines')
+            ->where('customer_id', $customerId->toString())
+            ->orderBy('placed_at', 'desc')
+            ->limit($limit)
+            ->get();
+        
+        return $models->map(fn ($m) => $this->toDomain($m))->all();
+    }
+    
+    private function toDomain(EloquentOrder $model): Order
+    {
+        $lines = $model->lines->map(fn ($l) => new OrderLine(
+            new ProductId($l->product_id),
+            $l->quantity,
+            new Money($l->unit_price_amount, $l->unit_price_currency)
+        ))->all();
+        
+        return Order::reconstitute(
+            id: new Uuid($model->id),
+            customerId: new Uuid($model->customer_id),
+            status: OrderStatus::from($model->status),
+            shippingAddress: ShippingAddress::fromArray(json_decode($model->shipping_address, true)),
+            lines: $lines,
+            total: new Money($model->total_amount, $model->total_currency),
+            placedAt: new \DateTimeImmutable($model->placed_at)
+        );
+    }
+}
+```
+
+### 6.3 Eloquent Model (Infrastructure)
+
+```php
+<?php
+
+namespace App\BoundedContexts\Ordering\Infrastructure\Models;
+
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\HasMany;
+
+class EloquentOrder extends Model
+{
+    protected $table = 'orders';
+    
+    protected $primaryKey = 'id';
+    public $incrementing = false;
+    protected $keyType = 'string';
+    
+    protected $fillable = [
+        'id',
+        'customer_id',
+        'status',
+        'total_amount',
+        'total_currency',
+        'shipping_address',
+        'placed_at',
+    ];
+    
+    protected $casts = [
+        'placed_at' => 'datetime',
+        'shipping_address' => 'array',
+    ];
+    
+    public function lines(): HasMany
+    {
+        return $this->hasMany(EloquentOrderLine::class, 'order_id');
+    }
+}
+
+class EloquentOrderLine extends Model
+{
+    protected $table = 'order_lines';
+    
+    protected $fillable = [
+        'order_id',
+        'product_id',
+        'quantity',
+        'unit_price_amount',
+        'unit_price_currency',
+    ];
+    
+    public $timestamps = false;
+}
+```
+
+## Kesimpulan
+
+Domain-Driven Design dalam Laravel mencakup:
+- **Bounded Contexts**: Explicit boundaries dengan model yang berbeda per context
+- **Aggregates**: Consistency boundaries dengan aggregate root sebagai entry point
+- **Entities**: Objects dengan identity yang berubah sepanjang waktu
+- **Value Objects**: Immutable objects tanpa identity, self-validating
+- **Domain Events**: Capture business occurrences untuk reactivity dalam dan antar context
+- **Repository Pattern**: Abstract persistence dengan Eloquent implementation di infrastructure layer
+
+DDD memerlukan upfront investment dalam modeling, tetapi pays off dalam maintainability dan alignment dengan business domain.
+
+Selanjutnya di **Sesi 77**, kita akan membahas Hexagonal Architecture / Clean Architecture: ports and adapters, layer separation, dan dependency inversion.
+```

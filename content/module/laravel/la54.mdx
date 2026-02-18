@@ -1,0 +1,529 @@
+---
+title: "Sesi 54: Laravel Pennant (Feature Flags)"
+description: "Menguasai Laravel Pennant untuk mengelola feature flags dengan berbagai scope (user, team, global), rich values, dan implementasi A/B testing."
+category: "laravel"
+tags: ["laravel"]
+order: 54
+---
+
+## Tujuan Pembelajaran
+
+Menguasai Laravel Pennant untuk mengelola feature flags dengan berbagai scope (user, team, global), rich values, dan implementasi A/B testing.
+
+## 1. Instalasi & Konfigurasi
+
+### 1.1 Instalasi Pennant
+
+```bash
+# Install Pennant
+composer require laravel/pennant
+
+# Publish dan jalankan migrasi
+php artisan vendor:publish --provider="Laravel\Pennant\PennantServiceProvider"
+php artisan migrate
+```
+
+### 1.2 Konfigurasi
+
+```php
+<?php
+
+// config/pennant.php
+return [
+    'default' => env('PENNANT_STORE', 'database'),
+
+    'stores' => [
+        'array' => [
+            'driver' => 'array',
+        ],
+
+        'database' => [
+            'driver' => 'database',
+            'connection' => null,
+            'table' => 'features',
+        ],
+
+        'redis' => [
+            'driver' => 'redis',
+            'connection' => null,
+        ],
+    ],
+];
+```
+
+## 2. Defining Features
+
+### 2.1 Basic Feature Definition
+
+```php
+<?php
+
+// app/Providers/AppServiceProvider.php
+use Laravel\Pennant\Feature;
+use Illuminate\Support\Lottery;
+
+public function boot(): void
+{
+    // Simple boolean feature
+    Feature::define('new-dashboard', true);
+
+    // Feature dengan logic
+    Feature::define('beta-features', function (User $user) {
+        return $user->isBetaTester();
+    });
+
+    // Feature dengan Lottery (gradual rollout)
+    Feature::define('new-checkout', function () {
+        return Lottery::odds(1, 10); // 10% users
+    });
+
+    // Feature dengan percentage
+    Feature::define('dark-mode', function (User $user) {
+        return $user->id % 10 < 3; // 30% users
+    });
+}
+```
+
+### 2.2 Class-based Features
+
+```php
+<?php
+
+// app/Features/NewDashboard.php
+namespace App\Features;
+
+use Illuminate\Support\Lottery;
+use Laravel\Pennant\FeatureDriver;
+
+class NewDashboard
+{
+    public function resolve(User $user): bool
+    {
+        // Beta testers selalu dapat akses
+        if ($user->isBetaTester()) {
+            return true;
+        }
+
+        // Gradual rollout: 20% users
+        return Lottery::odds(2, 10);
+    }
+
+    /**
+     * Rich value untuk feature
+     */
+    public function value(User $user): array
+    {
+        return [
+            'enabled' => $this->resolve($user),
+            'variant' => $user->id % 2 === 0 ? 'A' : 'B',
+            'config' => [
+                'show_tutorial' => $user->isNew(),
+                'max_widgets' => 6,
+            ],
+        ];
+    }
+}
+```
+
+```php
+<?php
+
+// Register di AppServiceProvider
+Feature::define('new-dashboard', NewDashboard::class);
+```
+
+## 3. Checking Features
+
+### 3.1 Basic Checks
+
+```php
+<?php
+
+use Laravel\Pennant\Feature;
+
+// Check untuk current user
+if (Feature::active('new-dashboard')) {
+    return view('dashboard.new');
+}
+
+// Check untuk specific user
+if (Feature::for($user)->active('new-dashboard')) {
+    // ...
+}
+
+// Check dengan default
+if (Feature::active('experimental', false)) {
+    // ...
+}
+
+// Check multiple features
+if (Feature::allAreActive(['new-dashboard', 'dark-mode'])) {
+    // Both active
+}
+
+if (Feature::someAreActive(['feature-a', 'feature-b', 'feature-c'])) {
+    // At least one active
+}
+```
+
+### 3.2 Rich Values
+
+```php
+<?php
+
+// Dapatkan rich value
+$value = Feature::value('new-dashboard');
+// ['enabled' => true, 'variant' => 'A', 'config' => [...]]
+
+// Check specific value
+if (Feature::value('new-dashboard')['variant'] === 'A') {
+    // Show variant A
+}
+
+// Dengan default
+$config = Feature::value('new-dashboard', ['max_widgets' => 3]);
+```
+
+### 3.3 Blade Directives
+
+```blade
+{{-- Check feature --}}
+@feature('new-dashboard')
+    <x-new-dashboard />
+@endfeature
+
+@feature('dark-mode')
+    <body class="dark">
+@else
+    <body class="light">
+@endfeature
+
+{{-- Check untuk user specific --}}
+@feature('new-dashboard', $user)
+    <p>User has new dashboard</p>
+@endfeature
+
+{{-- Check all features --}}
+@features(['premium', 'beta'])
+    <p>User has all features</p>
+@endfeatures
+```
+
+## 4. Scope: User, Team, Global
+
+### 4.1 User Scope (Default)
+
+```php
+<?php
+
+// Implicit: current authenticated user
+Feature::active('new-dashboard');
+
+// Explicit: specific user
+Feature::for($user)->active('new-dashboard');
+
+// Multiple users
+$users = User::all();
+Feature::for($users)->active('new-dashboard'); // Array of results
+```
+
+### 4.2 Team/Organization Scope
+
+```php
+<?php
+
+// app/Providers/AppServiceProvider.php
+Feature::define('team-analytics', function (Team $team) {
+    return $team->plan === 'business';
+});
+
+// Check untuk team
+Feature::for($team)->active('team-analytics');
+
+// Dalam controller
+public function show(Team $team)
+{
+    if (Feature::for($team)->active('team-analytics')) {
+        return view('team.analytics');
+    }
+    
+    abort(403, 'Analytics not available for your plan');
+}
+```
+
+### 4.3 Global Scope
+
+```php
+<?php
+
+// Global feature (tidak bergantung pada user)
+Feature::define('maintenance-mode', function () {
+    return Cache::get('maintenance', false);
+});
+
+// Check global feature
+Feature::active('maintenance-mode'); // true/false
+
+// Set global value
+Feature::activate('maintenance-mode');
+Feature::deactivate('maintenance-mode');
+```
+
+## 5. Feature Storage & Retrieval
+
+### 5.1 Database Storage
+
+```php
+<?php
+
+// Simpan hasil evaluasi untuk user
+Feature::activateFor('new-dashboard', $user);
+
+// Simpan dengan value
+Feature::activateFor('new-dashboard', $user, ['variant' => 'B']);
+
+// Deactivate untuk user
+Feature::deactivateFor('new-dashboard', $user);
+
+// Hapus dari storage (kembali ke default evaluation)
+Feature::forgetFor('new-dashboard', $user);
+
+// Mass update
+Feature::activateForEveryone('maintenance-mode');
+Feature::deactivateForEveryone('maintenance-mode');
+```
+
+### 5.2 Programmatic Assignment
+
+```php
+<?php
+
+// Assign feature ke segment users
+$betaUsers = User::where('created_at', '>', now()->subMonth())->get();
+
+foreach ($betaUsers as $user) {
+    Feature::activateFor('beta-features', $user);
+}
+
+// Assign dengan scheduling
+Schedule::call(function () {
+    // Aktifkan untuk 100 users per hari
+    $users = User::whereDoesntHave('features', function ($q) {
+        $q->where('name', 'new-dashboard');
+    })->limit(100)->get();
+
+    foreach ($users as $user) {
+        Feature::activateFor('new-dashboard', $user);
+    }
+})->daily();
+```
+
+## 6. A/B Testing Implementation
+
+### 6.1 Test Definition
+
+```php
+<?php
+
+// app/Features/CheckoutFlow.php
+namespace App\Features;
+
+use Illuminate\Support\Lottery;
+
+class CheckoutFlow
+{
+    public function resolve(User $user): string
+    {
+        // Consistent assignment berdasarkan user ID
+        $variants = ['control', 'variant-a', 'variant-b'];
+        return $variants[$user->id % count($variants)];
+    }
+}
+```
+
+### 6.2 Test Execution
+
+```php
+<?php
+
+// Controller
+public function checkout(Request $request)
+{
+    $variant = Feature::value('checkout-flow', 'control');
+
+    return match($variant) {
+        'control' => view('checkout.control'),
+        'variant-a' => view('checkout.variant-a'),
+        'variant-b' => view('checkout.variant-b'),
+    };
+}
+
+// Track conversion
+public function completeOrder(Request $request)
+{
+    $variant = Feature::value('checkout-flow', 'control');
+    
+    // Log conversion untuk analysis
+    ExperimentLog::create([
+        'user_id' => auth()->id(),
+        'experiment' => 'checkout-flow',
+        'variant' => $variant,
+        'converted' => true,
+        'revenue' => $request->input('total'),
+    ]);
+
+    return redirect()->route('order.success');
+}
+```
+
+### 6.3 Analysis
+
+```php
+<?php
+
+// app/Console/Commands/AnalyzeExperiment.php
+class AnalyzeExperiment extends Command
+{
+    public function handle()
+    {
+        $experiment = 'checkout-flow';
+        
+        $results = ExperimentLog::where('experiment', $experiment)
+            ->selectRaw('
+                variant,
+                COUNT(*) as total_users,
+                SUM(converted) as conversions,
+                AVG(converted) as conversion_rate,
+                SUM(revenue) as total_revenue
+            ')
+            ->groupBy('variant')
+            ->get();
+
+        $this->table(
+            ['Variant', 'Users', 'Conversions', 'Rate', 'Revenue'],
+            $results->map(fn ($r) => [
+                $r->variant,
+                $r->total_users,
+                $r->conversions,
+                number_format($r->conversion_rate * 100, 2) . '%',
+                '$' . number_format($r->total_revenue, 2),
+            ])
+        );
+    }
+}
+```
+
+## 7. Feature Middleware
+
+```php
+<?php
+
+// app/Http/Middleware/EnsureFeatureIsActive.php
+namespace App\Http\Middleware;
+
+use Closure;
+use Illuminate\Http\Request;
+use Laravel\Pennant\Feature;
+use Symfony\Component\HttpFoundation\Response;
+
+class EnsureFeatureIsActive
+{
+    public function handle(Request $request, Closure $next, string $feature): Response
+    {
+        if (!Feature::active($feature)) {
+            abort(404); // Atau redirect
+        }
+
+        return $next($request);
+    }
+}
+```
+
+```php
+<?php
+
+// Kernel.php
+protected $routeMiddleware = [
+    'feature' => \App\Http\Middleware\EnsureFeatureIsActive::class,
+];
+
+// Routes
+Route::middleware(['feature:new-dashboard'])->group(function () {
+    Route::get('/dashboard/new', [DashboardController::class, 'new']);
+});
+
+// Multiple features
+Route::middleware(['feature:premium', 'feature:beta'])->group(function () {
+    Route::get('/experimental', [ExperimentalController::class, 'index']);
+});
+```
+
+## 8. Testing Features
+
+```php
+<?php
+
+// tests/Feature/PennantTest.php
+use Laravel\Pennant\Feature;
+
+class PennantTest extends TestCase
+{
+    protected function setUp(): void
+    {
+        parent::setUp();
+        
+        // Use array driver untuk testing
+        Feature::swap(new FeatureManager(app(), 'array'));
+    }
+
+    public function test_feature_can_be_activated()
+    {
+        Feature::activate('new-feature');
+        
+        $this->assertTrue(Feature::active('new-feature'));
+    }
+
+    public function test_feature_uses_defined_logic()
+    {
+        Feature::define('beta', fn (User $user) => $user->isBetaTester());
+        
+        $betaUser = User::factory()->create(['is_beta' => true]);
+        $regularUser = User::factory()->create(['is_beta' => false]);
+        
+        $this->assertTrue(Feature::for($betaUser)->active('beta'));
+        $this->assertFalse(Feature::for($regularUser)->active('beta'));
+    }
+
+    public function test_feature_value_can_be_retrieved()
+    {
+        Feature::define('configurable', fn () => ['key' => 'value']);
+        
+        $this->assertEquals(['key' => 'value'], Feature::value('configurable'));
+    }
+
+    public function test_blade_directive()
+    {
+        Feature::activate('show-banner');
+        
+        $view = $this->blade('
+            @feature("show-banner")
+                Banner shown
+            @endfeature
+        ');
+        
+        $view->assertSee('Banner shown');
+    }
+}
+```
+
+## Kesimpulan
+
+Laravel Pennant menyederhanakan feature flag management:
+- **Multiple scopes**: User, team, global
+- **Rich values**: Beyond boolean flags
+- **Consistent assignment**: Untuk A/B testing valid
+- **Storage flexibility**: Database, Redis, atau array
+- **Blade integration**: Clean syntax di views
+
+Selanjutnya di **Sesi 55**, kita akan mempelajari Laravel Pulse (Application Monitoring).
+```

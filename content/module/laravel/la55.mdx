@@ -1,0 +1,423 @@
+---
+title: "Sesi 55: Laravel Pulse (Application Monitoring)"
+description: "Menguasai Laravel Pulse untuk monitoring application performance real-time, mengkonfigurasi recorders, dan membuat custom cards untuk metrics spesifik..."
+category: "laravel"
+tags: ["laravel"]
+order: 55
+---
+
+## Tujuan Pembelajaran
+
+Menguasai Laravel Pulse untuk monitoring application performance real-time, mengkonfigurasi recorders, dan membuat custom cards untuk metrics spesifik.
+
+## 1. Instalasi & Konfigurasi
+
+### 1.1 Instalasi Pulse
+
+```bash
+# Install Pulse
+composer require laravel/pulse
+
+# Publish dan jalankan migrasi
+php artisan vendor:publish --provider="Laravel\Pulse\PulseServiceProvider"
+php artisan migrate
+```
+
+### 1.2 Konfigurasi
+
+```php
+<?php
+
+// config/pulse.php
+return [
+    'enabled' => env('PULSE_ENABLED', true),
+
+    'domain' => env('PULSE_DOMAIN'),
+    
+    'path' => env('PULSE_PATH', 'pulse'),
+
+    'middleware' => [
+        'web',
+        'auth',
+        'can:viewPulse',
+    ],
+
+    'storage' => [
+        'driver' => 'database',
+        'database' => [
+            'connection' => null,
+            'chunk' => 1000,
+        ],
+    ],
+
+    'ingest' => [
+        'driver' => env('PULSE_INGEST_DRIVER', 'storage'),
+        'buffer' => env('PULSE_INGEST_BUFFER', 100),
+        'trim' => [
+            'keep' => '7 days',
+        ],
+        'redis' => [
+            'connection' => null,
+            'chunk' => 1000,
+        ],
+    ],
+
+    'cache' => env('PULSE_CACHE', null),
+
+    'theme' => 'auto',
+
+    'recorders' => [
+        \Laravel\Pulse\Recorders\CacheInteractions::class => [
+            'enabled' => env('PULSE_CACHE_INTERACTIONS_ENABLED', true),
+            'sample_rate' => env('PULSE_CACHE_INTERACTIONS_SAMPLE_RATE', 1),
+            'ignore' => [
+                '/^illuminate:.*/',
+                '/^pulse:.*/',
+            ],
+            'groups' => [
+                '/^job-exceptions:.*/' => 'job-exceptions:*',
+            ],
+        ],
+
+        \Laravel\Pulse\Recorders\Exceptions::class => [
+            'enabled' => env('PULSE_EXCEPTIONS_ENABLED', true),
+            'sample_rate' => env('PULSE_EXCEPTIONS_SAMPLE_RATE', 1),
+            'location' => true,
+            'ignore' => [],
+        ],
+
+        \Laravel\Pulse\Recorders\Queues::class => [
+            'enabled' => env('PULSE_QUEUES_ENABLED', true),
+            'sample_rate' => env('PULSE_QUEUES_SAMPLE_RATE', 1),
+            'ignore' => [],
+        ],
+
+        \Laravel\Pulse\Recorders\SlowJobs::class => [
+            'enabled' => env('PULSE_SLOW_JOBS_ENABLED', true),
+            'sample_rate' => env('PULSE_SLOW_JOBS_SAMPLE_RATE', 1),
+            'threshold' => env('PULSE_SLOW_JOBS_THRESHOLD', 1000),
+            'ignore' => [],
+        ],
+
+        \Laravel\Pulse\Recorders\SlowOutgoingRequests::class => [
+            'enabled' => env('PULSE_SLOW_OUTGOING_REQUESTS_ENABLED', true),
+            'sample_rate' => env('PULSE_SLOW_OUTGOING_REQUESTS_SAMPLE_RATE', 1),
+            'threshold' => env('PULSE_SLOW_OUTGOING_REQUESTS_THRESHOLD', 1000),
+            'ignore' => [],
+            'groups' => [],
+        ],
+
+        \Laravel\Pulse\Recorders\SlowQueries::class => [
+            'enabled' => env('PULSE_SLOW_QUERIES_ENABLED', true),
+            'sample_rate' => env('PULSE_SLOW_QUERIES_SAMPLE_RATE', 1),
+            'threshold' => env('PULSE_SLOW_QUERIES_THRESHOLD', 1000),
+            'location' => true,
+            'ignore' => [
+                '/(["`])pulse_[\w]+?\1/', // Pulse tables
+            ],
+        ],
+
+        \Laravel\Pulse\Recorders\SlowRequests::class => [
+            'enabled' => env('PULSE_SLOW_REQUESTS_ENABLED', true),
+            'sample_rate' => env('PULSE_SLOW_REQUESTS_SAMPLE_RATE', 1),
+            'threshold' => env('PULSE_SLOW_REQUESTS_THRESHOLD', 1000),
+            'ignore' => [
+                '#^/pulse$#', // Pulse dashboard
+                '#^/horizon#', // Horizon dashboard
+                '#^/telescope#', // Telescope dashboard
+            ],
+        ],
+
+        \Laravel\Pulse\Recorders\UserJobs::class => [
+            'enabled' => env('PULSE_USER_JOBS_ENABLED', true),
+            'sample_rate' => env('PULSE_USER_JOBS_SAMPLE_RATE', 1),
+            'ignore' => [],
+        ],
+
+        \Laravel\Pulse\Recorders\UserRequests::class => [
+            'enabled' => env('PULSE_USER_REQUESTS_ENABLED', true),
+            'sample_rate' => env('PULSE_USER_REQUESTS_SAMPLE_RATE', 1),
+            'ignore' => [
+                '#^/pulse$#',
+                '#^/horizon#',
+                '#^/telescope#',
+            ],
+        ],
+
+        \Laravel\Pulse\Recorders\Servers::class => [
+            'enabled' => env('PULSE_SERVERS_ENABLED', true),
+            'server_name' => env('PULSE_SERVER_NAME', gethostname()),
+        ],
+    ],
+];
+```
+
+## 2. Server Monitoring
+
+### 2.1 Setup Server Monitoring
+
+```bash
+# Tambahkan ke crontab untuk server metrics
+* * * * * cd /var/www/html && php artisan pulse:check >> /dev/null 2>&1
+```
+
+```php
+<?php
+
+// Atau gunakan scheduler
+// app/Console/Kernel.php
+protected function schedule(Schedule $schedule): void
+{
+    $schedule->command('pulse:check')->everyMinute();
+}
+```
+
+### 2.2 Multiple Servers
+
+```env
+# .env untuk server 1
+PULSE_SERVER_NAME=web-01
+
+# .env untuk server 2
+PULSE_SERVER_NAME=web-02
+
+# .env untuk worker server
+PULSE_SERVER_NAME=worker-01
+```
+
+## 3. Dashboard Access
+
+```php
+<?php
+
+// app/Providers/AppServiceProvider.php
+use Illuminate\Support\Facades\Gate;
+
+public function boot(): void
+{
+    Gate::define('viewPulse', function (User $user) {
+        return $user->isAdmin() || $user->isDevOps();
+    });
+}
+```
+
+```php
+<?php
+
+// Atau dengan closure di config
+'middleware' => [
+    'web',
+    function ($request, $next) {
+        if (!auth()->user()?->canViewPulse()) {
+            abort(403);
+        }
+        return $next($request);
+    },
+],
+```
+
+## 4. Custom Cards
+
+### 4.1 Creating Custom Card
+
+```php
+<?php
+
+// app/Livewire/Pulse/OrderStats.php
+namespace App\Livewire\Pulse;
+
+use App\Models\Order;
+use Carbon\CarbonInterval;
+use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
+use Laravel\Pulse\Livewire\Card;
+use Livewire\Attributes\Lazy;
+
+#[Lazy]
+class OrderStats extends Card
+{
+    public function render()
+    {
+        $stats = $this->aggregate(
+            'order_stats',
+            ['created', 'completed', 'cancelled'],
+            CarbonInterval::hour(),
+            Carbon::now()->subDays(7),
+        );
+
+        return view('livewire.pulse.order-stats', [
+            'stats' => $stats,
+        ]);
+    }
+
+    /**
+     * Record order stat
+     */
+    public static function record(string $status): void
+    {
+        DB::table('pulse_entries')->insert([
+            'timestamp' => now()->timestamp,
+            'type' => 'order_stats',
+            'key' => $status,
+            'value' => 1,
+        ]);
+    }
+}
+```
+
+```blade
+{{-- resources/views/livewire/pulse/order-stats.blade.php --}}
+<x-pulse::card :cols="$cols" :rows="$rows" :class="$class">
+    <x-pulse::card-header name="Order Statistics">
+        <x-slot:icon>
+            <svg class="h-5 w-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z"/>
+            </svg>
+        </x-slot:icon>
+    </x-pulse::card-header>
+
+    <div class="grid grid-cols-3 gap-4">
+        <div class="text-center">
+            <div class="text-2xl font-bold text-green-600">
+                {{ $stats['created'] ?? 0 }}
+            </div>
+            <div class="text-sm text-gray-500">Created</div>
+        </div>
+        <div class="text-center">
+            <div class="text-2xl font-bold text-blue-600">
+                {{ $stats['completed'] ?? 0 }}
+            </div>
+            <div class="text-sm text-gray-500">Completed</div>
+        </div>
+        <div class="text-center">
+            <div class="text-2xl font-bold text-red-600">
+                {{ $stats['cancelled'] ?? 0 }}
+            </div>
+            <div class="text-sm text-gray-500">Cancelled</div>
+        </div>
+    </div>
+</x-pulse::card>
+```
+
+```php
+<?php
+
+// Register di AppServiceProvider
+use Laravel\Pulse\Facades\Pulse;
+
+public function boot(): void
+{
+    Pulse::user(fn ($user) => [
+        'name' => $user->name,
+        'extra' => $user->email,
+        'avatar' => $user->avatar_url,
+    ]);
+}
+```
+
+### 4.2 Custom Recorder
+
+```php
+<?php
+
+// app/Pulse/Recorders/ApiUsage.php
+namespace App\Pulse\Recorders;
+
+use Illuminate\Config\Repository;
+use Illuminate\Contracts\Events\Dispatcher;
+use Illuminate\Support\Carbon;
+use Laravel\Pulse\Pulse;
+use Laravel\Pulse\Recorders\Recorder;
+
+class ApiUsage extends Recorder
+{
+    public string $listen = ApiCalled::class;
+
+    public function __construct(
+        protected Pulse $pulse,
+        protected Repository $config,
+    ) {}
+
+    public function record(ApiCalled $event): void
+    {
+        $this->pulse->record(
+            type: 'api_usage',
+            key: $event->endpoint,
+            value: $event->duration,
+            timestamp: Carbon::now(),
+        )->count()->max()->avg();
+    }
+}
+```
+
+```php
+<?php
+
+// Event
+class ApiCalled
+{
+    public function __construct(
+        public string $endpoint,
+        public int $duration,
+        public ?int $userId = null,
+    ) {}
+}
+```
+
+```php
+<?php
+
+// Trigger event
+event(new ApiCalled(
+    endpoint: 'stripe/charges',
+    duration: $responseTime,
+    userId: auth()->id(),
+));
+```
+
+## 5. Alerting & Notifications
+
+```php
+<?php
+
+// app/Console/Commands/CheckPulseAlerts.php
+class CheckPulseAlerts extends Command
+{
+    public function handle()
+    {
+        // Check slow queries
+        $slowQueries = DB::table('pulse_entries')
+            ->where('type', 'slow_query')
+            ->where('timestamp', '>', now()->subMinutes(5)->timestamp)
+            ->count();
+
+        if ($slowQueries > 10) {
+            Notification::route('slack', config('services.slack.webhook'))
+                ->notify(new SlowQueryAlert($slowQueries));
+        }
+
+        // Check error rate
+        $errors = DB::table('pulse_entries')
+            ->where('type', 'exception')
+            ->where('timestamp', '>', now()->subMinutes(5)->timestamp)
+            ->count();
+
+        if ($errors > 50) {
+            Notification::route('slack', config('services.slack.webhook'))
+                ->notify(new HighErrorRateAlert($errors));
+        }
+    }
+}
+```
+
+## Kesimpulan
+
+Laravel Pulse menyediakan application monitoring real-time:
+- **Built-in recorders**: Slow queries, requests, jobs, exceptions, cache
+- **Server metrics**: CPU, memory, disk usage
+- **Custom cards**: Untuk business metrics spesifik
+- **Lightweight**: Minimal performance impact dengan sampling
+- **Self-hosted**: Data tetap dalam kontrol Anda
+
+Selanjutnya di **Sesi 56**, kita akan mempelajari Laravel Prompts (CLI UX).
+```

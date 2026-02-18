@@ -1,0 +1,557 @@
+---
+title: "Sesi 3: Struktur Direktori Laravel 12"
+description: "Laravel 11 dan 12 membawa simplifikasi struktur direktori yang signifikan. Bayangkan ini seperti pindah dari rumah besar dengan banyak ruangan kosong ke apartemen modern yang efisien."
+category: "laravel"
+tags: ["laravel"]
+order: 3
+---
+
+## 3.1 Perubahan Struktur Laravel 11/12
+
+Laravel 11 dan 12 membawa **simplifikasi struktur direktori** yang signifikan. Bayangkan ini seperti pindah dari rumah besar dengan banyak ruangan kosong ke apartemen modern yang efisien—semua yang Anda butuhkan ada, tanpa clutter.
+
+> **tip**
+>
+  Laravel 12 mewarisi struktur Laravel 11 dengan penambahan default `app/Models` dan file `bootstrap/app.php` yang baru.
+
+### Perbandingan Struktur: Laravel 10 vs Laravel 12
+
+<div class="tabs-container">
+  
+### Laravel 10 (Legacy)
+
+    ```
+
+    - laravel-10-project/
+      - app/
+        - Console/
+          - Kernel.php
+        - Exceptions/
+          - Handler.php
+        - Http/
+          - Controllers/
+          - Kernel.php
+          - Middleware/
+        - Models/ (tidak default, buat manual)
+        - Providers/
+      - bootstrap/
+        - app.php (sederhana)
+      - config/
+        - app.php
+        - auth.php
+        - (15+ file config)
+      - database/
+      - routes/
+        - api.php
+        - channels.php
+        - console.php
+        - web.php
+    ```
+
+  
+
+  
+  
+### Laravel 12 (Modern)
+
+    ```
+
+    - laravel-12-project/
+      - app/
+        - Models/ (✅ default)
+        - Providers/
+      - bootstrap/
+        - app.php (✅ konfigurasi sentral)
+        - providers.php (✅ terpisah)
+      - config/
+        - (hanya yang diperlukan)
+      - routes/
+        - console.php
+        - web.php
+    ```
+
+  
+
+</div>
+
+> **note**
+>
+  Laravel 12 menghapus beberapa file "ceremonial" yang jarang dimodifikasi, mengurangi cognitive load untuk developer baru.
+
+---
+
+## 3.2 Deep Dive: Direktori Utama
+
+### 3.2.1 Direktori `app/`
+
+Direktori `app/` adalah jantung aplikasi Anda—seperti dapur di restoran, tempat semua "masakan" (logika bisnis) dibuat.
+
+```
+
+- app/
+  - Models/ (✨ Laravel 12 default)
+    - User.php
+  - Providers/
+    - AppServiceProvider.php
+  - Http/
+    - Controllers/ (jika menggunakan controllers)
+  - Console/
+    - Commands/ (custom artisan commands)
+```
+
+1. **app/Models/** — Sekarang default! Semua Eloquent models Anda di sini.
+   ```php
+   // app/Models/User.php
+   namespace App\Models;
+   
+   use Illuminate\Database\Eloquent\Factories\HasFactory;
+   use Illuminate\Foundation\Auth\User as Authenticatable;
+   
+   class User extends Authenticatable
+   {
+       use HasFactory;
+       
+       protected $fillable = ['name', 'email', 'password'];
+   }
+   ```
+
+2. **app/Providers/** — Service providers untuk bootstrapping aplikasi.
+   ```php
+   // app/Providers/AppServiceProvider.php
+   public function boot(): void
+   {
+       // Boot logic di sini
+   }
+   ```
+
+3. **app/Http/Controllers/** — Controllers (opsional, bisa gunakan Folio atau invokable controllers).
+
+### 3.2.2 Direktori `bootstrap/`
+
+> **caution**
+>
+  `bootstrap/app.php` di Laravel 12 adalah file konfigurasi sentral yang menggantikan banyak file di versi sebelumnya.
+
+```
+
+- bootstrap/
+  - app.php (konfigurasi aplikasi)
+  - cache/ (compiled files)
+  - providers.php (registrasi providers)
+```
+
+```php
+// bootstrap/app.php — Konfigurasi sentral Laravel 12
+<?php
+
+use Illuminate\Foundation\Application;
+use Illuminate\Foundation\Configuration\Exceptions;
+use Illuminate\Foundation\Configuration\Middleware;
+
+return Application::configure(basePath: dirname(__DIR__))
+    ->withRouting(
+        web: __DIR__.'/../routes/web.php',
+        api: __DIR__.'/../routes/api.php',
+        commands: __DIR__.'/../routes/console.php',
+        channels: __DIR__.'/../routes/channels.php',
+        health: '/up',  // Health check endpoint
+    )
+    ->withMiddleware(function (Middleware $middleware) {
+        // Global middleware
+        $middleware->trustProxies(at: '*');
+    })
+    ->withExceptions(function (Exceptions $exceptions) {
+        // Exception handling
+    })->create();
+```
+
+```php
+// bootstrap/providers.php — Registrasi service providers
+<?php
+
+return [
+    App\Providers\AppServiceProvider::class,
+    // Tambahkan providers di sini
+];
+```
+
+### 3.2.3 Direktori `config/`
+
+Laravel 12 menyederhanakan config—hanya file yang benar-benar Anda modifikasi yang perlu ada.
+
+```
+
+- config/
+  - app.php (konfigurasi aplikasi)
+  - database.php (konfigurasi database)
+  - (file lain di-publish sesuai kebutuhan)
+```
+
+> **tip**
+>
+  Untuk publish config file tambahan:
+  ```bash
+  php artisan config:publish cors
+  php artisan config:publish queue
+  ```
+
+### 3.2.4 Direktori `database/`
+
+```
+
+- database/
+  - factories/
+    - UserFactory.php
+  - migrations/
+    - 2024_01_01_000000_create_users_table.php
+  - seeders/
+    - DatabaseSeeder.php
+```
+
+```php
+// database/migrations/2024_01_01_000000_create_users_table.php
+<?php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+return new class extends Migration
+{
+    public function up(): void
+    {
+        Schema::create('users', function (Blueprint $table) {
+            $table->id();
+            $table->string('name');
+            $table->string('email')->unique();
+            $table->timestamp('email_verified_at')->nullable();
+            $table->string('password');
+            $table->rememberToken();
+            $table->timestamps();
+        });
+    }
+
+    public function down(): void
+    {
+        Schema::dropIfExists('users');
+    }
+};
+```
+
+### 3.2.5 Direktori `resources/`
+
+```
+
+- resources/
+  - css/
+    - app.css
+  - js/
+    - app.js
+  - views/
+    - welcome.blade.php
+    - components/ (Blade components)
+  - lang/ (localization files)
+```
+
+```blade
+{{-- resources/views/welcome.blade.php --}}
+<!DOCTYPE html>
+<html lang="{{ str_replace('_', '-', app()->getLocale()) }}">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    @vite(['resources/css/app.css', 'resources/js/app.js'])
+    <title>Laravel 12</title>
+</head>
+<body class="antialiased">
+    <div class="relative flex items-center justify-center min-h-screen">
+        <h1>Welcome to Laravel 12</h1>
+    </div>
+</body>
+</html>
+```
+
+### 3.2.6 Direktori `routes/`
+
+<div class="tabs-container">
+  
+### web.php
+
+    ```php
+    <?php
+    
+    use Illuminate\Support\Facades\Route;
+    use App\Http\Controllers\HomeController;
+    
+    // Route dengan closure
+    Route::get('/', function () {
+        return view('welcome');
+    });
+    
+    // Route dengan controller
+    Route::get('/dashboard', [HomeController::class, 'index'])
+        ->name('dashboard');
+    ```
+  
+
+  
+  
+### api.php
+
+    ```php
+    <?php
+    
+    use Illuminate\Support\Facades\Route;
+    use App\Http\Controllers\Api\UserController;
+    
+    Route::middleware('auth:sanctum')->group(function () {
+        Route::apiResource('users', UserController::class);
+    });
+    ```
+  
+
+  
+  
+### console.php
+
+    ```php
+    <?php
+    
+    use Illuminate\Foundation\Inspiring;
+    use Illuminate\Support\Facades\Artisan;
+    
+    Artisan::command('inspire', function () {
+        $this->comment(Inspiring::quote());
+    })->purpose('Display an inspiring quote');
+    ```
+  
+
+</div>
+
+---
+
+## 3.3 File Penting: composer.json, vite.config.js, artisan
+
+### 3.3.1 `composer.json`
+
+File ini adalah "daftar belanja" PHP dependencies Anda.
+
+```json
+{
+    "name": "laravel/laravel",
+    "type": "project",
+    "description": "The skeleton application for the Laravel framework.",
+    "keywords": ["laravel", "framework"],
+    "license": "MIT",
+    "require": {
+        "php": "^8.2",
+        "laravel/framework": "^12.0",
+        "laravel/tinker": "^2.9"
+    },
+    "require-dev": {
+        "fakerphp/faker": "^1.23",
+        "laravel/pail": "^1.2",
+        "laravel/pint": "^1.13",
+        "laravel/sail": "^1.41",
+        "mockery/mockery": "^1.6",
+        "nunomaduro/collision": "^8.6",
+        "pestphp/pest": "^3.0",
+        "pestphp/pest-plugin-laravel": "^3.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "App\\": "app/",
+            "Database\\Factories\\": "database/factories/",
+            "Database\\Seeders\\": "database/seeders/"
+        }
+    },
+    "scripts": {
+        "post-autoload-dump": [
+            "Illuminate\\Foundation\\ComposerScripts::postAutoloadDump",
+            "@php artisan package:discover --ansi"
+        ],
+        "post-update-cmd": [
+            "@php artisan vendor:publish --tag=laravel-assets --ansi --force"
+        ],
+        "post-root-package-install": [
+            "@php -r \"file_exists('.env') || copy('.env.example', '.env');\""
+        ],
+        "post-create-project-cmd": [
+            "@php artisan key:generate --ansi",
+            "@php -r \"file_exists('database/database.sqlite') || touch('database/database.sqlite');\"",
+            "@php artisan migrate --graceful --ansi"
+        ]
+    }
+}
+```
+
+> **note**
+>
+  - `post-autoload-dump`: Auto-discover packages
+  - `post-create-project-cmd`: Setup awal project (generate key, buat sqlite, migrate)
+
+### 3.3.2 `vite.config.js`
+
+Konfigurasi build tool modern Laravel (menggantikan Laravel Mix).
+
+```javascript
+import { defineConfig } from 'vite';
+import laravel from 'laravel-vite-plugin';
+import tailwindcss from '@tailwindcss/vite';
+
+export default defineConfig({
+    plugins: [
+        laravel({
+            input: ['resources/css/app.css', 'resources/js/app.js'],
+            refresh: true,
+        }),
+        tailwindcss(),
+    ],
+    server: {
+        hmr: {
+            host: 'localhost',
+        },
+    },
+});
+```
+
+### 3.3.3 `artisan`
+
+Artisan adalah command-line interface Laravel—Swiss Army knife untuk development.
+
+```bash
+# Melihat semua command
+php artisan list
+
+# Command yang sering digunakan
+php artisan serve              # Development server
+php artisan tinker             # Interactive shell
+php artisan make:model Post    # Buat model
+php artisan make:controller Api/PostController --api  # API controller
+php artisan migrate            # Jalankan migrations
+php artisan db:seed            # Jalankan seeders
+php artisan cache:clear        # Clear cache
+php artisan route:list         # Lihat semua routes
+php artisan optimize           # Cache config, routes, views
+```
+
+---
+
+## 3.4 App Structure: Domain-Driven Design Preparation
+
+Laravel 12 dengan struktur yang ramping sangat cocok untuk menerapkan **Domain-Driven Design (DDD)**.
+
+### 3.4.1 Struktur DDD dalam Laravel
+
+```
+
+- app/
+  - Domain/ (Core business logic)
+    - User/
+      - Models/
+        - User.php
+      - Repositories/
+        - UserRepository.php
+      - Services/
+        - UserService.php
+      - Events/
+        - UserRegistered.php
+      - ValueObjects/
+        - Email.php
+    - Post/
+      - Models/
+        - Post.php
+      - Services/
+        - PostService.php
+  - Application/ (Use cases)
+    - User/
+      - CreateUser/
+        - CreateUserCommand.php
+        - CreateUserHandler.php
+  - Infrastructure/ (External concerns)
+    - Persistence/
+    - Http/
+    - Mail/
+  - Support/ (Shared helpers)
+```
+
+### 3.4.2 Konfigurasi Autoloading untuk DDD
+
+```json
+// composer.json
+{
+    "autoload": {
+        "psr-4": {
+            "App\\": "app/",
+            "Domain\\": "app/Domain/",
+            "Application\\": "app/Application/",
+            "Infrastructure\\": "app/Infrastructure/",
+            "Database\\Factories\\": "database/factories/",
+            "Database\\Seeders\\": "database/seeders/"
+        }
+    }
+}
+```
+
+Setelah mengubah `composer.json`, jalankan:
+```bash
+composer dump-autoload
+```
+
+### 3.4.3 Contoh Implementasi DDD
+
+```php
+// app/Domain/User/ValueObjects/Email.php
+namespace Domain\User\ValueObjects;
+
+use InvalidArgumentException;
+
+final readonly class Email
+{
+    public function __construct(
+        public string $value
+    ) {
+        if (!filter_var($value, FILTER_VALIDATE_EMAIL)) {
+            throw new InvalidArgumentException("Invalid email format");
+        }
+    }
+}
+```
+
+```php
+// app/Domain/User/Models/User.php
+namespace Domain\User\Models;
+
+use Domain\User\ValueObjects\Email;
+use Illuminate\Database\Eloquent\Model;
+
+class User extends Model
+{
+    protected $fillable = ['name', 'email', 'password'];
+    
+    public function setEmailAttribute(Email $email): void
+    {
+        $this->attributes['email'] = $email->value;
+    }
+}
+```
+
+---
+
+## 3.5 Kesimpulan
+
+Struktur Laravel 12 dirancang untuk **kesederhanaan tanpa mengorbankan fleksibilitas**:
+
+| Aspek | Laravel 12 Approach |
+|-------|---------------------|
+| **Default Structure** | Minimal, unopinionated |
+| **Configuration** | Sentral di `bootstrap/app.php` |
+| **Models** | Default di `app/Models/` |
+| **Extensibility** | Siap untuk DDD, Hexagonal, atau Clean Architecture |
+| **Developer Experience** | Reduced cognitive load, faster onboarding |
+
+> **tip**
+>
+  Di sesi berikutnya, kita akan mempelajari **Request Lifecycle**—bagaimana Laravel menangani HTTP request dari awal hingga akhir.
+
+```

@@ -1,0 +1,669 @@
+---
+title: "Sesi 40: API Authentication dengan Sanctum"
+description: "Menguasai Laravel Sanctum untuk berbagai skenario autentikasi API, termasuk token-based, SPA, dan mobile app authentication dengan best practices secu..."
+category: "laravel"
+tags: ["laravel", "authentication", "api"]
+order: 40
+---
+
+## Tujuan Pembelajaran
+
+Menguasai Laravel Sanctum untuk berbagai skenario autentikasi API, termasuk token-based, SPA, dan mobile app authentication dengan best practices security.
+
+## 1. Sanctum Overview
+
+### 1.1 Sanctum vs Passport
+
+| Fitur | Sanctum | Passport |
+|-------|---------|----------|
+| **Complexity** | Simple | Complex (OAuth2) |
+| **Token Type** | Simple token / SPA cookie | OAuth2 tokens |
+| **Use Case** | Internal APIs, SPAs, Mobile | Third-party OAuth |
+| **Setup** | Minimal configuration | Extensive setup |
+| **Performance** | Lightweight | Heavier |
+| **Scopes** | Simple abilities | Full OAuth scopes |
+
+### 1.2 Instalasi & Konfigurasi
+
+```bash
+composer require laravel/sanctum
+
+php artisan vendor:publish --provider="Laravel\Sanctum\SanctumServiceProvider"
+
+php artisan migrate
+```
+
+```php
+<?php
+
+// config/sanctum.php
+return [
+    'stateful' => explode(',', env('SANCTUM_STATEFUL_DOMAINS', sprintf(
+        '%s%s',
+        'localhost,localhost:3000,127.0.0.1,127.0.0.1:8000,::1',
+        Sanctum::currentApplicationUrlWithPort()
+    ))),
+
+    'guard' => ['web'],
+
+    'expiration' => null, // Token lifetime (null = never expire)
+
+    'token_prefix' => env('SANCTUM_TOKEN_PREFIX', ''),
+
+    'middleware' => [
+        'authenticate_session' => Laravel\Sanctum\Http\Middleware\AuthenticateSession::class,
+        'encrypt_cookies' => Illuminate\Cookie\Middleware\EncryptCookies::class,
+        'validate_csrf_token' => Illuminate\Foundation\Http\Middleware\ValidateCsrfToken::class,
+    ],
+];
+```
+
+## 2. Token-Based Authentication
+
+### 2.1 Creating Tokens
+
+```php
+<?php
+
+// app/Models/User.php
+use Laravel\Sanctum\HasApiTokens;
+
+class User extends Authenticatable
+{
+    use HasApiTokens, HasFactory, Notifiable;
+
+    /**
+     * Create token with specific abilities
+     */
+    public function createApiToken(string $name, array $abilities = ['*']): string
+    {
+        return $this->createToken($name, $abilities)->plainTextToken;
+    }
+}
+```
+
+```php
+<?php
+
+// app/Http/Controllers/Api/AuthController.php
+namespace App\Http\Controllers\Api;
+
+use App\Http\Controllers\Controller;
+use App\Models\User;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Hash;
+use Illuminate\Validation\ValidationException;
+
+class AuthController extends Controller
+{
+    /**
+     * Login dan create token
+     */
+    public function login(Request $request)
+    {
+        $request->validate([
+            'email' => 'required|email',
+            'password' => 'required',
+            'device_name' => 'required|string',
+        ]);
+
+        $user = User::where('email', $request->email)->first();
+
+        if (!$user || !Hash::check($request->password, $user->password)) {
+            throw ValidationException::withMessages([
+                'email' => ['The provided credentials are incorrect.'],
+            ]);
+        }
+
+        // Create token dengan abilities spesifik
+        $token = $user->createToken($request->device_name, [
+            'read',
+            'write',
+        ])->plainTextToken;
+
+        return response()->json([
+            'token' => $token,
+            'token_type' => 'Bearer',
+            'expires_at' => null, // atau timestamp jika ada expiration
+        ]);
+    }
+
+    /**
+     * Register new user
+     */
+    public function register(Request $request)
+    {
+        $request->validate([
+            'name' => 'required|string|max:255',
+            'email' => 'required|string|email|max:255|unique:users',
+            'password' => 'required|string|min:8|confirmed',
+            'device_name' => 'required|string',
+        ]);
+
+        $user = User::create([
+            'name' => $request->name,
+            'email' => $request->email,
+            'password' => Hash::make($request->password),
+        ]);
+
+        $token = $user->createToken($request->device_name)->plainTextToken;
+
+        return response()->json([
+            'user' => $user,
+            'token' => $token,
+        ], 201);
+    }
+
+    /**
+     * Logout - revoke token
+     */
+    public function logout(Request $request)
+    {
+        // Revoke current token
+        $request->user()->currentAccessToken()->delete();
+
+        // Atau revoke semua tokens
+        // $request->user()->tokens()->delete();
+
+        return response()->noContent();
+    }
+}
+```
+
+### 2.2 Token Abilities (Scopes)
+
+```php
+<?php
+
+// Membuat token dengan abilities
+$token = $user->createToken('mobile-app', [
+    'orders:read',
+    'orders:write',
+    'profile:read',
+    'profile:write',
+]);
+
+// Check ability dalam controller
+public function store(Request $request)
+{
+    if (!$request->user()->tokenCan('orders:write')) {
+        abort(403, 'Unauthorized');
+    }
+
+    // atau dengan middleware
+}
+
+// Routes dengan ability middleware
+Route::middleware('auth:sanctum')->group(function () {
+    Route::get('/orders', [OrderController::class, 'index'])
+        ->middleware('abilities:orders:read');
+    
+    Route::post('/orders', [OrderController::class, 'store'])
+        ->middleware('abilities:orders:write');
+    
+    Route::delete('/orders/{order}', [OrderController::class, 'destroy'])
+        ->middleware('abilities:orders:delete');
+});
+```
+
+### 2.3 Token Management
+
+```php
+<?php
+
+// app/Http/Controllers/Api/TokenController.php
+class TokenController extends Controller
+{
+    /**
+     * List all active tokens
+     */
+    public function index(Request $request)
+    {
+        return $request->user()->tokens->map(function ($token) {
+            return [
+                'id' => $token->id,
+                'name' => $token->name,
+                'abilities' => $token->abilities,
+                'last_used_at' => $token->last_used_at,
+                'created_at' => $token->created_at,
+            ];
+        });
+    }
+
+    /**
+     * Revoke specific token
+     */
+    public function destroy(Request $request, $tokenId)
+    {
+        $token = $request->user()->tokens()->findOrFail($tokenId);
+        $token->delete();
+
+        return response()->noContent();
+    }
+
+    /**
+     * Revoke all tokens except current
+     */
+    public function destroyOthers(Request $request)
+    {
+        $request->user()->tokens()
+            ->where('id', '!=', $request->user()->currentAccessToken()->id)
+            ->delete();
+
+        return response()->noContent();
+    }
+}
+```
+
+## 3. SPA Authentication (Cookie-Based)
+
+### 3.1 Setup SPA
+
+```php
+<?php
+
+// config/cors.php
+return [
+    'paths' => ['api/*', 'sanctum/csrf-cookie', 'login', 'logout'],
+    'allowed_methods' => ['*'],
+    'allowed_origins' => [env('FRONTEND_URL', 'http://localhost:3000')],
+    'allowed_origins_patterns' => [],
+    'allowed_headers' => ['*'],
+    'exposed_headers' => [],
+    'max_age' => 0,
+    'supports_credentials' => true, // Penting untuk cookies
+];
+```
+
+```php
+<?php
+
+// config/session.php
+'secure' => env('SESSION_SECURE_COOKIE', true),
+'same_site' => 'lax', // atau 'strict'
+```
+
+### 3.2 SPA Auth Flow
+
+```javascript
+// Frontend (React/Vue) - Login flow
+
+// 1. Get CSRF cookie
+axios.get('/sanctum/csrf-cookie', { withCredentials: true });
+
+// 2. Login
+axios.post('/login', {
+    email: 'user@example.com',
+    password: 'password',
+}, { withCredentials: true });
+
+// 3. Subsequent requests (cookie auto-sent)
+axios.get('/api/user', { withCredentials: true });
+```
+
+```php
+<?php
+
+// routes/api.php
+Route::middleware('auth:sanctum')->get('/user', function (Request $request) {
+    return $request->user();
+});
+
+// routes/web.php
+Route::post('/login', [AuthenticatedSessionController::class, 'store']);
+Route::post('/logout', [AuthenticatedSessionController::class, 'destroy']);
+```
+
+### 3.3 Protecting Routes
+
+```php
+<?php
+
+// routes/api.php
+Route::middleware(['auth:sanctum'])->group(function () {
+    // Token atau cookie authentication
+    Route::get('/user', fn (Request $request) => $request->user());
+});
+
+// Khusus token only
+Route::middleware(['auth:sanctum', 'abilities:*'])->group(function () {
+    Route::post('/webhook', [WebhookController::class, 'handle']);
+});
+```
+
+## 4. Mobile App Token Management
+
+### 4.1 Device-Specific Tokens
+
+```php
+<?php
+
+// app/Http/Controllers/Api/MobileAuthController.php
+class MobileAuthController extends Controller
+{
+    public function login(Request $request)
+    {
+        $request->validate([
+            'email' => 'required|email',
+            'password' => 'required',
+            'device_id' => 'required|string',
+            'device_name' => 'required|string',
+            'platform' => 'required|in:ios,android',
+        ]);
+
+        $user = User::where('email', $request->email)->first();
+
+        if (!$user || !Hash::check($request->password, $user->password)) {
+            throw ValidationException::withMessages([
+                'email' => ['Invalid credentials'],
+            ]);
+        }
+
+        // Hapus token lama dari device yang sama
+        $user->tokens()
+            ->where('name', $request->device_id)
+            ->delete();
+
+        // Buat token baru
+        $token = $user->createToken($request->device_id, [
+            'platform:' . $request->platform,
+            'mobile',
+        ])->plainTextToken;
+
+        return response()->json([
+            'token' => $token,
+            'user' => $user,
+        ]);
+    }
+
+    public function refresh(Request $request)
+    {
+        $user = $request->user();
+        $currentToken = $user->currentAccessToken();
+
+        // Revoke current
+        $currentToken->delete();
+
+        // Create new
+        $newToken = $user->createToken($currentToken->name, $currentToken->abilities)->plainTextToken;
+
+        return response()->json(['token' => $newToken]);
+    }
+}
+```
+
+### 4.2 Push Notification Tokens
+
+```php
+<?php
+
+// Migration untuk device tokens
+Schema::create('device_tokens', function (Blueprint $table) {
+    $table->id();
+    $table->foreignId('user_id')->constrained()->cascadeOnDelete();
+    $table->string('device_id')->unique();
+    $table->string('push_token');
+    $table->string('platform'); // ios, android
+    $table->timestamp('last_used_at');
+    $table->timestamps();
+});
+
+// Model
+class DeviceToken extends Model
+{
+    protected $fillable = ['device_id', 'push_token', 'platform', 'last_used_at'];
+
+    public function user()
+    {
+        return $this->belongsTo(User::class);
+    }
+}
+
+// Controller
+class DeviceTokenController extends Controller
+{
+    public function register(Request $request)
+    {
+        $request->validate([
+            'device_id' => 'required|string',
+            'push_token' => 'required|string',
+            'platform' => 'required|in:ios,android',
+        ]);
+
+        $request->user()->deviceTokens()->updateOrCreate(
+            ['device_id' => $request->device_id],
+            [
+                'push_token' => $request->push_token,
+                'platform' => $request->platform,
+                'last_used_at' => now(),
+            ]
+        );
+
+        return response()->noContent();
+    }
+}
+```
+
+## 5. Token Expiration & Security
+
+### 5.1 Token Expiration
+
+```php
+<?php
+
+// config/sanctum.php
+'expiration' => 4320, // 3 days in minutes
+
+// Atau per-token expiration
+$token = $user->createToken('temp-token', ['*'], now()->addHours(2));
+
+// Check expiration dalam middleware
+class CheckTokenExpiration
+{
+    public function handle($request, Closure $next)
+    {
+        $token = $request->user()->currentAccessToken();
+        
+        if ($token->expires_at && $token->expires_at->isPast()) {
+            $token->delete();
+            return response()->json(['message' => 'Token expired'], 401);
+        }
+
+        return $next($request);
+    }
+}
+```
+
+### 5.2 Token Rotation
+
+```php
+<?php
+
+// Middleware untuk auto-rotation
+class RotateToken
+{
+    public function handle($request, Closure $next)
+    {
+        $response = $next($request);
+        
+        if ($request->user() && $request->bearerToken()) {
+            $token = $request->user()->currentAccessToken();
+            
+            // Rotate jika token sudah setengah umurnya
+            if ($token->expires_at && $token->expires_at->diffInHours(now()) < 24) {
+                $newToken = $request->user()->createToken(
+                    $token->name,
+                    $token->abilities,
+                    now()->addDays(3)
+                );
+                
+                $response->headers->set('X-New-Token', $newToken->plainTextToken);
+            }
+        }
+
+        return $response;
+    }
+}
+```
+
+## 6. Protecting Routes
+
+### 6.1 Middleware Configuration
+
+```php
+<?php
+
+// routes/api.php
+use Illuminate\Routing\Middleware\ThrottleRequests;
+
+// Basic protection
+Route::middleware('auth:sanctum')->group(function () {
+    Route::get('/user', fn (Request $request) => $request->user());
+});
+
+// With throttling
+Route::middleware(['auth:sanctum', ThrottleRequests::class . ':60,1'])->group(function () {
+    Route::post('/orders', [OrderController::class, 'store']);
+});
+
+// Ensure frontend requests (SPA)
+Route::middleware(['auth:sanctum', 'abilities:*'])->group(function () {
+    Route::post('/sensitive-action', [SensitiveController::class, 'store']);
+});
+```
+
+### 6.2 Custom Middleware
+
+```php
+<?php
+
+// app/Http/Middleware/EnsureApiTokenIsValid.php
+namespace App\Http\Middleware;
+
+use Closure;
+use Illuminate\Http\Request;
+
+class EnsureApiTokenIsValid
+{
+    public function handle(Request $request, Closure $next)
+    {
+        $user = $request->user();
+
+        if (!$user) {
+            return response()->json(['message' => 'Unauthenticated'], 401);
+        }
+
+        $token = $user->currentAccessToken();
+
+        // Check custom conditions
+        if ($token && $token->name === 'suspended') {
+            return response()->json(['message' => 'Account suspended'], 403);
+        }
+
+        // Update last used
+        if ($token) {
+            $token->forceFill(['last_used_at' => now()])->save();
+        }
+
+        return $next($request);
+    }
+}
+```
+
+## 7. Testing Sanctum
+
+```php
+<?php
+
+// tests/Feature/Api/AuthenticationTest.php
+namespace Tests\Feature\Api;
+
+use App\Models\User;
+use Illuminate\Foundation\Testing\RefreshDatabase;
+use Laravel\Sanctum\Sanctum;
+use Tests\TestCase;
+
+class AuthenticationTest extends TestCase
+{
+    use RefreshDatabase;
+
+    public function test_user_can_login_with_valid_credentials()
+    {
+        $user = User::factory()->create([
+            'password' => bcrypt('password123'),
+        ]);
+
+        $response = $this->postJson('/api/login', [
+            'email' => $user->email,
+            'password' => 'password123',
+            'device_name' => 'test-device',
+        ]);
+
+        $response->assertOk()
+            ->assertJsonStructure(['token', 'token_type']);
+        
+        $this->assertDatabaseHas('personal_access_tokens', [
+            'tokenable_id' => $user->id,
+            'name' => 'test-device',
+        ]);
+    }
+
+    public function test_protected_route_requires_authentication()
+    {
+        $response = $this->getJson('/api/user');
+        $response->assertUnauthorized();
+    }
+
+    public function test_authenticated_user_can_access_protected_route()
+    {
+        $user = User::factory()->create();
+        
+        Sanctum::actingAs($user, ['*']);
+
+        $response = $this->getJson('/api/user');
+        
+        $response->assertOk()
+            ->assertJson(['id' => $user->id]);
+    }
+
+    public function test_user_can_logout()
+    {
+        $user = User::factory()->create();
+        $token = $user->createToken('test')->plainTextToken;
+
+        $response = $this->withHeader('Authorization', 'Bearer ' . $token)
+            ->postJson('/api/logout');
+
+        $response->assertNoContent();
+        
+        $this->assertDatabaseCount('personal_access_tokens', 0);
+    }
+
+    public function test_token_abilities_restrict_access()
+    {
+        $user = User::factory()->create();
+        
+        Sanctum::actingAs($user, ['orders:read']);
+
+        // Allowed
+        $response = $this->getJson('/api/orders');
+        $response->assertOk();
+
+        // Forbidden
+        $response = $this->postJson('/api/orders', []);
+        $response->assertForbidden();
+    }
+}
+```
+
+## Kesimpulan
+
+Laravel Sanctum menyediakan solusi API authentication yang sederhana namun powerful:
+- **Token-based** untuk mobile dan third-party integrations
+- **Cookie-based SPA authentication** untuk seamless frontend experience
+- **Token abilities** untuk granular permission control
+- **Easy management** dengan built-in token lifecycle methods
+- **Secure defaults** dengan configurable expiration dan rotation
+
+Selanjutnya di **Sesi 41**, kita akan mempelajari OAuth & Social Authentication dengan Laravel Socialite.
+```

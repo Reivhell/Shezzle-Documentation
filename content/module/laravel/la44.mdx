@@ -1,0 +1,662 @@
+---
+title: "Sesi 44: Security Hardening"
+description: "Mengimplementasikan security best practices untuk melindungi aplikasi dari ancaman umum, termasuk password security, session management, dan audit log..."
+category: "laravel"
+tags: ["laravel", "security"]
+order: 44
+---
+
+## Tujuan Pembelajaran
+
+Mengimplementasikan security best practices untuk melindungi aplikasi dari ancaman umum, termasuk password security, session management, dan audit logging.
+
+## 1. Password Strength Validation
+
+### 1.1 Laravel Password Rules
+
+```php
+<?php
+
+use Illuminate\Validation\Rules\Password;
+
+// Basic validation
+$request->validate([
+    'password' => ['required', 'confirmed', Password::min(8)],
+]);
+
+// Advanced validation
+$request->validate([
+    'password' => [
+        'required',
+        'confirmed',
+        Password::min(12)                    // Minimum 12 karakter
+            ->mixedCase()                     // Huruf besar & kecil
+            ->numbers()                       // Minimal 1 angka
+            ->symbols()                       // Minimal 1 symbol
+            ->uncompromised(),                // Check Have I Been Pwned
+    ],
+]);
+
+// Custom error messages
+Password::min(12)
+    ->mixedCase()
+    ->numbers()
+    ->symbols()
+    ->uncompromised(3)                       // Allow 3 breaches in HIBP
+    ->rules(['not_in:password,123456,qwerty']); // Custom rules
+```
+
+### 1.2 Custom Password Validator
+
+```php
+<?php
+
+// app/Validators/PasswordValidator.php
+namespace App\Validators;
+
+use Illuminate\Support\Facades\Validator;
+
+class PasswordValidator
+{
+    public static function register(): void
+    {
+        Validator::extend('strong_password', function ($attribute, $value, $parameters) {
+            // Minimum 12 chars
+            if (strlen($value) < 12) return false;
+            
+            // Complexity requirements
+            $hasUpper = preg_match('/[A-Z]/', $value);
+            $hasLower = preg_match('/[a-z]/', $value);
+            $hasDigit = preg_match('/[0-9]/', $value);
+            $hasSpecial = preg_match('/[^A-Za-z0-9]/', $value);
+            
+            // At least 3 of 4 categories
+            $score = $hasUpper + $hasLower + $hasDigit + $hasSpecial;
+            
+            return $score >= 3;
+        }, 'Password must be at least 12 characters and contain at least 3 of: uppercase, lowercase, numbers, symbols.');
+
+        Validator::extend('not_common', function ($attribute, $value) {
+            $common = ['password', '123456', 'qwerty', 'admin', 'letmein'];
+            return !in_array(strtolower($value), $common);
+        }, 'This password is too common.');
+    }
+}
+```
+
+```php
+<?php
+
+// AppServiceProvider
+public function boot(): void
+{
+    PasswordValidator::register();
+}
+
+// Usage
+$request->validate([
+    'password' => 'required|confirmed|strong_password|not_common',
+]);
+```
+
+## 2. Breached Password Detection
+
+### 2.1 Have I Been Pwned Integration
+
+```php
+<?php
+
+// app/Services/BreachChecker.php
+namespace App\Services;
+
+use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Str;
+
+class BreachChecker
+{
+    public function isBreached(string $password): bool
+    {
+        $hash = strtoupper(sha1($password));
+        $prefix = substr($hash, 0, 5);
+        $suffix = substr($hash, 5);
+
+        $response = Http::timeout(5)
+            ->get("https://api.pwnedpasswords.com/range/{$prefix}");
+
+        if (!$response->successful()) {
+            // Fail open atau closed tergantung kebutuhan
+            return false;
+        }
+
+        // Check apakah suffix ada dalam response
+        foreach (explode("\n", $response->body()) as $line) {
+            [$hashSuffix, $count] = explode(':', $line);
+            if (Str::upper($hashSuffix) === $suffix) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    public function getBreachCount(string $password): int
+    {
+        $hash = strtoupper(sha1($password));
+        $prefix = substr($hash, 0, 5);
+        $suffix = substr($hash, 5);
+
+        $response = Http::timeout(5)
+            ->get("https://api.pwnedpasswords.com/range/{$prefix}");
+
+        foreach (explode("\n", $response->body()) as $line) {
+            [$hashSuffix, $count] = explode(':', $line);
+            if (Str::upper($hashSuffix) === $suffix) {
+                return (int) $count;
+            }
+        }
+
+        return 0;
+    }
+}
+```
+
+```php
+<?php
+
+// Custom validation rule
+use Illuminate\Contracts\Validation\InvokableRule;
+
+class NotBreached implements InvokableRule
+{
+    public function __invoke($attribute, $value, $fail): void
+    {
+        $checker = app(BreachChecker::class);
+        
+        if ($checker->isBreached($value)) {
+            $count = $checker->getBreachCount($value);
+            $fail("This password has been found in {$count} data breaches. Please choose a different password.");
+        }
+    }
+}
+
+// Usage
+$request->validate([
+    'password' => ['required', new NotBreached()],
+]);
+```
+
+### 2.2 Password History
+
+```php
+<?php
+
+// Migration
+Schema::create('password_histories', function (Blueprint $table) {
+    $table->id();
+    $table->foreignId('user_id')->constrained()->cascadeOnDelete();
+    $table->string('password_hash'); // Hash dari password lama
+    $table->timestamp('created_at');
+});
+
+// app/Models/User.php
+public function passwordHistories()
+{
+    return $this->hasMany(PasswordHistory::class)->latest();
+}
+
+public function passwordWasUsed(string $password): bool
+{
+    $history = $this->passwordHistories()
+        ->take(5) // Check 5 password terakhir
+        ->get();
+
+    foreach ($history as $record) {
+        if (Hash::check($password, $record->password_hash)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+// Observer
+class UserObserver
+{
+    public function updating(User $user): void
+    {
+        if ($user->isDirty('password')) {
+            // Simpan password lama ke history
+            $user->passwordHistories()->create([
+                'password_hash' => $user->getOriginal('password'),
+            ]);
+
+            // Batasi history (keep last 10)
+            $user->passwordHistories()
+                ->skip(10)
+                ->take(PHP_INT_MAX)
+                ->delete();
+        }
+    }
+}
+```
+
+## 3. Session Security
+
+### 3.1 Session Configuration
+
+```php
+<?php
+
+// config/session.php
+return [
+    'driver' => env('SESSION_DRIVER', 'database'), // database/redis untuk production
+    
+    'lifetime' => env('SESSION_LIFETIME', 120),    // 2 jam
+    
+    'expire_on_close' => true,                      // Hapus saat browser close
+    
+    'encrypt' => true,                              // Encrypt session data
+    
+    'files' => storage_path('framework/sessions'),
+    
+    'connection' => env('SESSION_CONNECTION'),
+    
+    'table' => 'sessions',
+    
+    'store' => env('SESSION_STORE'),
+    
+    'lottery' => [2, 100],                         // Garbage collection
+    
+    'cookie' => env('SESSION_COOKIE', 'laravel_session'),
+    
+    'path' => '/',
+    
+    'domain' => env('SESSION_DOMAIN'),
+    
+    'secure' => env('SESSION_SECURE_COOKIE', true), // HTTPS only
+    
+    'http_only' => true,                            // No JavaScript access
+    
+    'same_site' => 'strict',                        // CSRF protection
+];
+```
+
+### 3.2 Session Security Middleware
+
+```php
+<?php
+
+// app/Http/Middleware/SecureSession.php
+namespace App\Http\Middleware;
+
+use Closure;
+use Illuminate\Http\Request;
+
+class SecureSession
+{
+    public function handle(Request $request, Closure $next)
+    {
+        $response = $next($request);
+
+        // Security headers
+        $response->headers->set('X-Frame-Options', 'DENY');
+        $response->headers->set('X-Content-Type-Options', 'nosniff');
+        $response->headers->set('X-XSS-Protection', '1; mode=block');
+        $response->headers->set('Referrer-Policy', 'strict-origin-when-cross-origin');
+
+        // Prevent caching sensitive pages
+        if (auth()->check()) {
+            $response->headers->set('Cache-Control', 'private, no-cache, no-store, must-revalidate');
+        }
+
+        return $response;
+    }
+}
+```
+
+### 3.3 Session Regeneration
+
+```php
+<?php
+
+// Login - regenerate session ID
+public function login(Request $request)
+{
+    $request->authenticate();
+    $request->session()->regenerate(); // Prevent session fixation
+    
+    return redirect()->intended();
+}
+
+// Password change - invalidate other sessions
+public function updatePassword(Request $request)
+{
+    $request->user()->update([
+        'password' => Hash::make($request->password),
+    ]);
+
+    // Invalidate semua session lain
+    Auth::logoutOtherDevices($request->password);
+
+    // Regenerate current session
+    $request->session()->regenerate();
+
+    return back()->with('status', 'Password updated.');
+}
+```
+
+## 4. Concurrent Session Limiting
+
+### 4.1 Database Session Store
+
+```php
+<?php
+
+// app/Http/Middleware/LimitConcurrentSessions.php
+namespace App\Http\Middleware;
+
+use Closure;
+use Illuminate\Support\Facades\DB;
+
+class LimitConcurrentSessions
+{
+    public function handle($request, Closure $next)
+    {
+        if (!auth()->check()) {
+            return $next($request);
+        }
+
+        $userId = auth()->id();
+        $currentSessionId = session()->getId();
+
+        // Hitung active sessions
+        $activeSessions = DB::table('sessions')
+            ->where('user_id', $userId)
+            ->where('last_activity', '>', now()->subMinutes(30)->timestamp)
+            ->count();
+
+        // Limit: 3 sessions per user
+        if ($activeSessions > 3) {
+            // Hapus session terlama (kecuali current)
+            DB::table('sessions')
+                ->where('user_id', $userId)
+                ->where('id', '!=', $currentSessionId)
+                ->orderBy('last_activity')
+                ->limit($activeSessions - 3)
+                ->delete();
+        }
+
+        return $next($request);
+    }
+}
+```
+
+### 4.2 Device-based Session Management
+
+```php
+<?php
+
+// app/Models/Session.php
+namespace App\Models;
+
+use Illuminate\Database\Eloquent\Model;
+
+class Session extends Model
+{
+    protected $primaryKey = 'id';
+    public $incrementing = false;
+    protected $keyType = 'string';
+
+    protected $fillable = [
+        'user_id',
+        'ip_address',
+        'user_agent',
+        'payload',
+        'last_activity',
+    ];
+
+    public function getDeviceAttribute(): string
+    {
+        $agent = new Agent();
+        $agent->setUserAgent($this->user_agent);
+
+        return $agent->device() . ' (' . $agent->platform() . ')';
+    }
+
+    public function getLocationAttribute(): string
+    {
+        // Gunakan IP geolocation service
+        return Cache::remember("ip:{$this->ip_address}", 3600, function () {
+            // Return location dari service
+            return 'Unknown';
+        });
+    }
+}
+```
+
+```php
+<?php
+
+// Controller untuk manage sessions
+class SessionController extends Controller
+{
+    public function index()
+    {
+        $sessions = DB::table('sessions')
+            ->where('user_id', auth()->id())
+            ->orderBy('last_activity', 'desc')
+            ->get()
+            ->map(function ($session) {
+                return (object) [
+                    'id' => $session->id,
+                    'device' => $this->getDevice($session->user_agent),
+                    'ip' => $session->ip_address,
+                    'location' => $this->getLocation($session->ip_address),
+                    'is_current' => $session->id === session()->getId(),
+                    'last_active' => Carbon::createFromTimestamp($session->last_activity)->diffForHumans(),
+                ];
+            });
+
+        return view('sessions.index', compact('sessions'));
+    }
+
+    public function destroy($sessionId)
+    {
+        DB::table('sessions')
+            ->where('id', $sessionId)
+            ->where('user_id', auth()->id())
+            ->delete();
+
+        return back()->with('status', 'Session terminated.');
+    }
+
+    public function destroyOthers()
+    {
+        DB::table('sessions')
+            ->where('user_id', auth()->id())
+            ->where('id', '!=', session()->getId())
+            ->delete();
+
+        return back()->with('status', 'Other sessions terminated.');
+    }
+}
+```
+
+## 5. Security Audit Logging
+
+### 5.1 Audit Model
+
+```php
+<?php
+
+// Migration
+Schema::create('security_audits', function (Blueprint $table) {
+    $table->id();
+    $table->foreignId('user_id')->nullable()->constrained();
+    $table->string('event'); // login, logout, password_change, failed_login, etc.
+    $table->string('ip_address', 45);
+    $table->text('user_agent');
+    $table->json('metadata')->nullable(); // additional context
+    $table->timestamp('created_at');
+});
+
+// Model
+class SecurityAudit extends Model
+{
+    public const EVENT_LOGIN = 'login';
+    public const EVENT_LOGOUT = 'logout';
+    public const EVENT_FAILED_LOGIN = 'failed_login';
+    public const EVENT_PASSWORD_CHANGE = 'password_change';
+    public const EVENT_PASSWORD_RESET = 'password_reset';
+    public const EVENT_SUSPICIOUS_ACTIVITY = 'suspicious_activity';
+
+    protected $fillable = ['user_id', 'event', 'ip_address', 'user_agent', 'metadata'];
+    protected $casts = ['metadata' => 'array'];
+}
+```
+
+### 5.2 Audit Logging Service
+
+```php
+<?php
+
+// app/Services/SecurityAuditService.php
+namespace App\Services;
+
+use App\Models\SecurityAudit;
+use Illuminate\Http\Request;
+
+class SecurityAuditService
+{
+    public function log(
+        string $event,
+        ?int $userId = null,
+        ?array $metadata = null
+    ): void {
+        SecurityAudit::create([
+            'user_id' => $userId,
+            'event' => $event,
+            'ip_address' => request()->ip(),
+            'user_agent' => request()->userAgent(),
+            'metadata' => $metadata,
+        ]);
+    }
+
+    public function detectSuspiciousActivity(int $userId): bool
+    {
+        $recentFailures = SecurityAudit::where('user_id', $userId)
+            ->where('event', SecurityAudit::EVENT_FAILED_LOGIN)
+            ->where('created_at', '>', now()->subHour())
+            ->count();
+
+        if ($recentFailures > 5) {
+            $this->log(
+                SecurityAudit::EVENT_SUSPICIOUS_ACTIVITY,
+                $userId,
+                ['reason' => 'multiple_failed_logins', 'count' => $recentFailures]
+            );
+            return true;
+        }
+
+        // Check login dari lokasi berbeda dalam waktu singkat
+        $recentLogins = SecurityAudit::where('user_id', $userId)
+            ->where('event', SecurityAudit::EVENT_LOGIN)
+            ->where('created_at', '>', now()->subDay())
+            ->get();
+
+        if ($recentLogins->count() > 1) {
+            $ips = $recentLogins->pluck('ip_address')->unique();
+            if ($ips->count() > 2) {
+                $this->log(
+                    SecurityAudit::EVENT_SUSPICIOUS_ACTIVITY,
+                    $userId,
+                    ['reason' => 'multiple_locations', 'ips' => $ips->toArray()]
+                );
+                return true;
+            }
+        }
+
+        return false;
+    }
+}
+```
+
+### 5.3 Event Listeners
+
+```php
+<?php
+
+// app/Listeners/LogSecurityEvent.php
+class LogSecurityEvent
+{
+    public function handle($event): void
+    {
+        $audit = app(SecurityAuditService::class);
+
+        match(get_class($event)) {
+            Login::class => $audit->log(
+                SecurityAudit::EVENT_LOGIN,
+                $event->user->id
+            ),
+            Failed::class => $audit->log(
+                SecurityAudit::EVENT_FAILED_LOGIN,
+                null,
+                ['email' => $event->credentials['email'] ?? null]
+            ),
+            PasswordReset::class => $audit->log(
+                SecurityAudit::EVENT_PASSWORD_RESET,
+                $event->user->id
+            ),
+        };
+
+        // Check suspicious activity
+        if (isset($event->user)) {
+            $audit->detectSuspiciousActivity($event->user->id);
+        }
+    }
+}
+```
+
+## 6. Content Security Policy (CSP)
+
+```php
+<?php
+
+// app/Http/Middleware/ContentSecurityPolicy.php
+namespace App\Http\Middleware;
+
+use Closure;
+
+class ContentSecurityPolicy
+{
+    public function handle($request, Closure $next)
+    {
+        $response = $next($request);
+
+        $csp = "default-src 'self'; " .
+               "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net; " .
+               "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " .
+               "font-src 'self' https://fonts.gstatic.com; " .
+               "img-src 'self' data: https:; " .
+               "connect-src 'self'; " .
+               "frame-ancestors 'none'; " .
+               "base-uri 'self'; " .
+               "form-action 'self';";
+
+        $response->headers->set('Content-Security-Policy', $csp);
+
+        return $response;
+    }
+}
+```
+
+## Kesimpulan
+
+Security hardening melindungi aplikasi dari ancaman umum:
+- **Password validation** dengan complexity rules dan breach detection
+- **Session security** dengan encryption, regeneration, dan concurrent limiting
+- **Audit logging** untuk deteksi dan investigasi suspicious activity
+- **Security headers** untuk mitigate common attacks
+
+Selanjutnya di **Sesi 45**, kita akan mempelajari Rate Limiting & Throttling.
+```

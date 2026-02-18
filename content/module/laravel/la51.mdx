@@ -1,0 +1,635 @@
+---
+title: "Sesi 51: Laravel Dusk (Browser Testing)"
+description: "Menguasai Laravel Dusk untuk automated browser testing, mengimplementasikan Page Object Pattern, dan mengkonfigurasi testing dalam CI/CD pipeline."
+category: "laravel"
+tags: ["laravel", "testing"]
+order: 51
+---
+
+## Tujuan Pembelajaran
+
+Menguasai Laravel Dusk untuk automated browser testing, mengimplementasikan Page Object Pattern, dan mengkonfigurasi testing dalam CI/CD pipeline.
+
+## 1. Instalasi & Setup
+
+### 1.1 Instalasi Dusk
+
+```bash
+# Install Dusk (development dependency)
+composer require --dev laravel/dusk
+
+# Install Dusk
+php artisan dusk:install
+
+# Setup environment file
+cp .env .env.dusk.local
+```
+
+### 1.2 Konfigurasi Environment
+
+```env
+# .env.dusk.local
+APP_URL=http://127.0.0.1:8000
+DB_CONNECTION=sqlite
+DB_DATABASE=:memory:
+CACHE_DRIVER=array
+SESSION_DRIVER=array
+QUEUE_CONNECTION=sync
+```
+
+```php
+<?php
+
+// tests/DuskTestCase.php
+namespace Tests;
+
+use Facebook\WebDriver\Chrome\ChromeOptions;
+use Facebook\WebDriver\Remote\DesiredCapabilities;
+use Facebook\WebDriver\Remote\RemoteWebDriver;
+use Illuminate\Foundation\Testing\DatabaseMigrations;
+use Laravel\Dusk\TestCase as BaseTestCase;
+
+abstract class DuskTestCase extends BaseTestCase
+{
+    use CreatesApplication;
+    use DatabaseMigrations;
+
+    protected function driver(): RemoteWebDriver
+    {
+        $options = (new ChromeOptions)->addArguments([
+            '--disable-gpu',
+            '--headless', // Run tanpa GUI
+            '--window-size=1920,1080',
+            '--no-sandbox',
+            '--disable-dev-shm-usage',
+        ]);
+
+        return RemoteWebDriver::create(
+            'http://localhost:9515',
+            DesiredCapabilities::chrome()->setCapability(
+                ChromeOptions::CAPABILITY, $options
+            )
+        );
+    }
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+        
+        // Seed database untuk testing
+        $this->seed(TestDatabaseSeeder::class);
+    }
+}
+```
+
+## 2. Basic Browser Tests
+
+### 2.1 First Dusk Test
+
+```php
+<?php
+
+// tests/Browser/ExampleTest.php
+namespace Tests\Browser;
+
+use Illuminate\Foundation\Testing\DatabaseMigrations;
+use Laravel\Dusk\Browser;
+use Tests\DuskTestCase;
+
+class ExampleTest extends DuskTestCase
+{
+    public function test_basic_navigation(): void
+    {
+        $this->browse(function (Browser $browser) {
+            $browser->visit('/')
+                    ->assertSee('Laravel');
+        });
+    }
+
+    public function test_login_page(): void
+    {
+        $this->browse(function (Browser $browser) {
+            $browser->visit('/login')
+                    ->assertSee('Email')
+                    ->assertSee('Password')
+                    ->assertPresent('input[name="email"]')
+                    ->assertPresent('input[name="password"]');
+        });
+    }
+}
+```
+
+### 2.2 Interacting with Elements
+
+```php
+<?php
+
+// tests/Browser/LoginTest.php
+class LoginTest extends DuskTestCase
+{
+    public function test_user_can_login(): void
+    {
+        $user = User::factory()->create([
+            'email' => 'test@example.com',
+            'password' => bcrypt('password123'),
+        ]);
+
+        $this->browse(function (Browser $browser) use ($user) {
+            $browser->visit('/login')
+                    ->type('email', $user->email)
+                    ->type('password', 'password123')
+                    ->press('Log in')
+                    ->assertPathIs('/dashboard')
+                    ->assertSee('Dashboard')
+                    ->assertAuthenticatedAs($user);
+        });
+    }
+
+    public function test_login_with_invalid_credentials(): void
+    {
+        $this->browse(function (Browser $browser) {
+            $browser->visit('/login')
+                    ->type('email', 'wrong@example.com')
+                    ->type('password', 'wrongpassword')
+                    ->press('Log in')
+                    ->assertPathIs('/login')
+                    ->assertSee('These credentials do not match');
+        });
+    }
+
+    public function test_login_validation_errors(): void
+    {
+        $this->browse(function (Browser $browser) {
+            $browser->visit('/login')
+                    ->press('Log in')
+                    ->assertSee('The email field is required')
+                    ->assertSee('The password field is required');
+        });
+    }
+}
+```
+
+## 3. Page Objects
+
+### 3.1 Creating Page Objects
+
+```php
+<?php
+
+// tests/Browser/Pages/LoginPage.php
+namespace Tests\Browser\Pages;
+
+use Laravel\Dusk\Browser;
+use Laravel\Dusk\Page;
+
+class LoginPage extends Page
+{
+    public function url(): string
+    {
+        return '/login';
+    }
+
+    public function assert(Browser $browser): void
+    {
+        $browser->assertPathIs($this->url())
+                ->assertSee('Log in');
+    }
+
+    public function elements(): array
+    {
+        return [
+            '@email' => 'input[name="email"]',
+            '@password' => 'input[name="password"]',
+            '@submit' => 'button[type="submit"]',
+            '@forgot-password' => 'a[href*="password/reset"]',
+        ];
+    }
+
+    /**
+     * Login dengan credentials
+     */
+    public function login(Browser $browser, string $email, string $password): void
+    {
+        $browser->type('@email', $email)
+                ->type('@password', $password)
+                ->press('@submit');
+    }
+
+    /**
+     * Navigate to forgot password
+     */
+    public function navigateToForgotPassword(Browser $browser): void
+    {
+        $browser->click('@forgot-password');
+    }
+}
+```
+
+### 3.2 Using Page Objects
+
+```php
+<?php
+
+// tests/Browser/LoginWithPageObjectTest.php
+use Tests\Browser\Pages\LoginPage;
+use Tests\Browser\Pages\DashboardPage;
+
+class LoginWithPageObjectTest extends DuskTestCase
+{
+    public function test_login_using_page_object(): void
+    {
+        $user = User::factory()->create([
+            'password' => bcrypt('secret'),
+        ]);
+
+        $this->browse(function (Browser $browser) use ($user) {
+            $browser->visit(new LoginPage)
+                    ->on(new LoginPage)
+                    ->login($user->email, 'secret')
+                    ->on(new DashboardPage);
+        });
+    }
+
+    public function test_forgot_password_link(): void
+    {
+        $this->browse(function (Browser $browser) {
+            $browser->visit(new LoginPage)
+                    ->navigateToForgotPassword()
+                    ->assertPathIs('/forgot-password');
+        });
+    }
+}
+```
+
+## 4. Components
+
+### 4.1 Creating Components
+
+```php
+<?php
+
+// tests/Browser/Components/DatePicker.php
+namespace Tests\Browser\Components;
+
+use Laravel\Dusk\Browser;
+use Laravel\Dusk\Component as BaseComponent;
+
+class DatePicker extends BaseComponent
+{
+    public function selector(): string
+    {
+        return '.date-picker';
+    }
+
+    public function assert(Browser $browser): void
+    {
+        $browser->assertVisible($this->selector());
+    }
+
+    public function elements(): array
+    {
+        return [
+            '@input' => 'input.date-input',
+            '@calendar' => '.calendar-popup',
+            '@prev-month' => '.prev-month',
+            '@next-month' => '.next-month',
+        ];
+    }
+
+    /**
+     * Select date
+     */
+    public function selectDate(Browser $browser, int $day, int $month, int $year): void
+    {
+        $browser->click('@input')
+                ->within('@calendar', function ($calendar) use ($day, $month, $year) {
+                    // Navigate to correct month/year
+                    $target = now()->setDate($year, $month, 1);
+                    $current = now();
+
+                    $diff = $target->diffInMonths($current);
+
+                    for ($i = 0; $i < abs($diff); $i++) {
+                        $calendar->click($diff > 0 ? '@next-month' : '@prev-month');
+                    }
+
+                    // Click day
+                    $calendar->click(".day[data-day='{$day}']");
+                });
+    }
+}
+```
+
+### 4.2 Using Components
+
+```php
+<?php
+
+// tests/Browser/BookingTest.php
+use Tests\Browser\Components\DatePicker;
+
+class BookingTest extends DuskTestCase
+{
+    public function test_user_can_select_booking_date(): void
+    {
+        $this->browse(function (Browser $browser) {
+            $browser->visit('/bookings/create')
+                    ->within(new DatePicker, function ($datePicker) {
+                        $datePicker->selectDate(15, 12, 2024);
+                    })
+                    ->press('Continue')
+                    ->assertPathIs('/bookings/confirm');
+        });
+    }
+}
+```
+
+## 5. JavaScript Testing
+
+### 5.1 Waiting for JavaScript
+
+```php
+<?php
+
+class JavaScriptTest extends DuskTestCase
+{
+    public function test_dynamic_content_loading(): void
+    {
+        $this->browse(function (Browser $browser) {
+            $browser->visit('/products')
+                    // Wait for AJAX
+                    ->waitFor('.product-list', 5)
+                    ->assertSee('Product 1')
+                    
+                    // Wait for text
+                    ->waitForText('Loading complete', 10)
+                    
+                    // Wait using JavaScript
+                    ->waitUntil('window.appLoaded === true', 10)
+                    
+                    // Pause untuk debugging
+                    ->pause(1000);
+        });
+    }
+
+    public function test_infinite_scroll(): void
+    {
+        $this->browse(function (Browser $browser) {
+            $browser->visit('/feed')
+                    ->assertCount('.post', 10)
+                    
+                    // Scroll to bottom
+                    ->scrollTo('.loading-trigger')
+                    
+                    // Wait for new content
+                    ->waitFor('.post:nth-child(20)', 5)
+                    ->assertCount('.post', 20);
+        });
+    }
+
+    public function test_modal_interaction(): void
+    {
+        $this->browse(function (Browser $browser) {
+            $browser->visit('/dashboard')
+                    ->click('@open-modal')
+                    ->whenAvailable('.modal', function ($modal) {
+                        $modal->assertSee('Confirm Action')
+                              ->press('Confirm')
+                              ->waitUntilMissing('.modal');
+                    })
+                    ->assertSee('Action completed');
+        });
+    }
+}
+```
+
+### 5.2 JavaScript Execution
+
+```php
+<?php
+
+public function test_javascript_execution(): void
+{
+    $this->browse(function (Browser $browser) {
+        $browser->visit('/calculator')
+                // Execute JavaScript
+                ->script([
+                    'document.getElementById("num1").value = 10',
+                    'document.getElementById("num2").value = 20',
+                    'document.getElementById("calculate").click()',
+                ])
+                
+                // Get JavaScript result
+                ->assertSee('30');
+        
+        // Execute and get return value
+        $result = $browser->driver->executeScript('return window.calculationResult');
+        $this->assertEquals(30, $result);
+    });
+}
+```
+
+## 6. Authentication Testing
+
+### 6.1 Acting As User
+
+```php
+<?php
+
+class AuthenticatedTest extends DuskTestCase
+{
+    public function test_authenticated_user_can_access_dashboard(): void
+    {
+        $user = User::factory()->create();
+
+        $this->browse(function (Browser $browser) use ($user) {
+            $browser->loginAs($user)
+                    ->visit('/dashboard')
+                    ->assertSee($user->name)
+                    ->assertSee('Welcome back');
+        });
+    }
+
+    public function test_user_can_logout(): void
+    {
+        $user = User::factory()->create();
+
+        $this->browse(function (Browser $browser) use ($user) {
+            $browser->loginAs($user)
+                    ->visit('/dashboard')
+                    ->click('@user-menu')
+                    ->click('@logout')
+                    ->assertPathIs('/')
+                    ->assertGuest();
+        });
+    }
+
+    public function test_guest_redirected_to_login(): void
+    {
+        $this->browse(function (Browser $browser) {
+            $browser->visit('/dashboard')
+                    ->assertPathIs('/login');
+        });
+    }
+}
+```
+
+## 7. File Uploads & Downloads
+
+```php
+<?php
+
+class FileTest extends DuskTestCase
+{
+    public function test_user_can_upload_avatar(): void
+    {
+        Storage::fake('public');
+
+        $user = User::factory()->create();
+
+        $this->browse(function (Browser $browser) use ($user) {
+            $browser->loginAs($user)
+                    ->visit('/profile')
+                    ->attach('avatar', __DIR__.'/fixtures/avatar.png')
+                    ->press('Upload')
+                    ->assertSee('Avatar updated');
+        });
+
+        Storage::disk('public')->assertExists('avatars/'.$user->fresh()->avatar);
+    }
+
+    public function test_file_download(): void
+    {
+        $this->browse(function (Browser $browser) {
+            $browser->visit('/reports')
+                    ->click('@download-report')
+                    ->pause(2000); // Wait for download
+        });
+
+        $this->assertFileExists('/home/user/Downloads/report.pdf');
+    }
+}
+```
+
+## 8. Continuous Integration
+
+### 8.1 GitHub Actions
+
+```yaml
+# .github/workflows/dusk.yml
+name: Dusk Tests
+
+on: [push, pull_request]
+
+jobs:
+  dusk:
+    runs-on: ubuntu-latest
+    
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: testing
+        ports:
+          - 3306:3306
+        options: --health-cmd="mysqladmin ping" --health-interval=10s --health-timeout=5s --health-retries=3
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Setup PHP
+      uses: shivammathur/setup-php@v2
+      with:
+        php-version: '8.2'
+        extensions: mbstring, mysql, gd
+        coverage: none
+
+    - name: Install Dependencies
+      run: composer install --no-interaction --prefer-dist
+
+    - name: Setup Chrome
+      run: |
+        wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
+        sudo sh -c 'echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google.list'
+        sudo apt-get update
+        sudo apt-get install -y google-chrome-stable
+
+    - name: Start ChromeDriver
+      run: |
+        google-chrome-stable --version
+        php artisan dusk:chrome-driver --detect
+        ./vendor/laravel/dusk/bin/chromedriver-linux &
+
+    - name: Run Laravel Server
+      run: php artisan serve --no-reload &
+      env:
+        APP_ENV: testing
+        DB_CONNECTION: mysql
+        DB_HOST: 127.0.0.1
+        DB_PORT: 3306
+        DB_DATABASE: testing
+        DB_USERNAME: root
+        DB_PASSWORD: root
+
+    - name: Run Dusk Tests
+      run: php artisan dusk
+
+    - name: Upload Screenshots
+      if: failure()
+      uses: actions/upload-artifact@v3
+      with:
+        name: screenshots
+        path: tests/Browser/screenshots
+
+    - name: Upload Console Logs
+      if: failure()
+      uses: actions/upload-artifact@v3
+      with:
+        name: console
+        path: tests/Browser/console
+```
+
+## 9. Best Practices
+
+### 9.1 Test Organization
+
+```php
+<?php
+
+// tests/Browser/Traits/InteractsWithStripe.php
+trait InteractsWithStripe
+{
+    protected function fillStripeCard(Browser $browser, string $number = '4242424242424242'): void
+    {
+        $browser->withinFrame('.stripe-card-frame', function ($frame) use ($number) {
+            $frame->type('cardnumber', $number)
+                  ->type('exp-date', '1225')
+                  ->type('cvc', '123')
+                  ->type('postal', '12345');
+        });
+    }
+}
+
+// tests/Browser/Concerns/HasWaitForToast.php
+trait HasWaitForToast
+{
+    public function waitForToast(Browser $browser, string $message): void
+    {
+        $browser->waitFor('.toast-notification', 5)
+                ->assertSeeIn('.toast-notification', $message);
+    }
+}
+```
+
+## Kesimpulan
+
+Laravel Dusk menyediakan tools lengkap untuk browser automation:
+- **ChromeDriver integration** untuk headless testing
+- **Page Objects** untuk maintainable test structure
+- **Components** untuk reusable UI interactions
+- **JavaScript testing** dengan wait conditions
+- **CI/CD integration** dengan screenshot artifacts
+
+Selanjutnya di **Sesi 52**, kita akan mempelajari Laravel Echo & Broadcasting.
+```

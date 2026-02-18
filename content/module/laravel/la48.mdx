@@ -1,0 +1,466 @@
+---
+title: "Sesi 48: Laravel Telescope (Debugging)"
+description: "Menguasai Laravel Telescope untuk debugging dan monitoring aplikasi, mengkonfigurasi entry types, filtering, dan production pruning."
+category: "laravel"
+tags: ["laravel"]
+order: 48
+---
+
+## Tujuan Pembelajaran
+
+Menguasai Laravel Telescope untuk debugging dan monitoring aplikasi, mengkonfigurasi entry types, filtering, dan production pruning.
+
+## 1. Instalasi & Konfigurasi
+
+### 1.1 Instalasi Telescope
+
+```bash
+# Install Telescope (development only)
+composer require laravel/telescope --dev
+
+# Install Telescope
+php artisan telescope:install
+
+# Jalankan migrasi
+php artisan migrate
+
+# Publish config (opsional)
+php artisan vendor:publish --tag=telescope-config
+```
+
+### 1.2 Konfigurasi
+
+```php
+<?php
+
+// config/telescope.php
+return [
+    'domain' => env('TELESCOPE_DOMAIN', null),
+    
+    'path' => env('TELESCOPE_PATH', 'telescope'),
+    
+    'driver' => env('TELESCOPE_DRIVER', 'database'),
+    
+    'storage' => [
+        'database' => [
+            'connection' => env('DB_CONNECTION', 'mysql'),
+            'chunk' => 1000,
+        ],
+    ],
+    
+    'enabled' => env('TELESCOPE_ENABLED', true),
+    
+    'middleware' => [
+        'web',
+        'auth',
+        'can:viewTelescope',
+    ],
+    
+    'only_paths' => [
+        // 'api/*',
+    ],
+    
+    'ignore_paths' => [
+        'nova-api*',
+        'horizon*',
+        'telescope*',
+    ],
+    
+    'ignore_commands' => [
+        'migrate',
+        'db:seed',
+    ],
+    
+    'watchers' => [
+        Watchers\CacheWatcher::class => [
+            'enabled' => env('TELESCOPE_CACHE_WATCHER', true),
+            'hidden' => [],
+        ],
+        
+        Watchers\CommandWatcher::class => [
+            'enabled' => env('TELESCOPE_COMMAND_WATCHER', true),
+        ],
+        
+        Watchers\DumpWatcher::class => [
+            'enabled' => env('TELESCOPE_DUMP_WATCHER', true),
+        ],
+        
+        Watchers\EventWatcher::class => [
+            'enabled' => env('TELESCOPE_EVENT_WATCHER', true),
+            'ignore' => [],
+        ],
+        
+        Watchers\ExceptionWatcher::class => [
+            'enabled' => env('TELESCOPE_EXCEPTION_WATCHER', true),
+        ],
+        
+        Watchers\GateWatcher::class => [
+            'enabled' => env('TELESCOPE_GATE_WATCHER', true),
+            'ignore_abilities' => [],
+            'ignore_packages' => true,
+        ],
+        
+        Watchers\JobWatcher::class => [
+            'enabled' => env('TELESCOPE_JOB_WATCHER', true),
+        ],
+        
+        Watchers\LogWatcher::class => [
+            'enabled' => env('TELESCOPE_LOG_WATCHER', true),
+        ],
+        
+        Watchers\MailWatcher::class => [
+            'enabled' => env('TELESCOPE_MAIL_WATCHER', true),
+        ],
+        
+        Watchers\ModelWatcher::class => [
+            'enabled' => env('TELESCOPE_MODEL_WATCHER', true),
+            'events' => ['eloquent.*'],
+            'hydrations' => true,
+        ],
+        
+        Watchers\NotificationWatcher::class => [
+            'enabled' => env('TELESCOPE_NOTIFICATION_WATCHER', true),
+        ],
+        
+        Watchers\QueryWatcher::class => [
+            'enabled' => env('TELESCOPE_QUERY_WATCHER', true),
+            'ignore_packages' => true,
+            'slow' => 100, // ms
+        ],
+        
+        Watchers\RedisWatcher::class => [
+            'enabled' => env('TELESCOPE_REDIS_WATCHER', true),
+        ],
+        
+        Watchers\RequestWatcher::class => [
+            'enabled' => env('TELESCOPE_REQUEST_WATCHER', true),
+            'size_limit' => 64, // KB
+            'ignore_http_methods' => [],
+        ],
+        
+        Watchers\ScheduleWatcher::class => [
+            'enabled' => env('TELESCOPE_SCHEDULE_WATCHER', true),
+        ],
+        
+        Watchers\ViewWatcher::class => [
+            'enabled' => env('TELESCOPE_VIEW_WATCHER', true),
+        ],
+    ],
+];
+```
+
+## 2. Entry Types
+
+### 2.1 Requests Monitoring
+
+```php
+<?php
+
+// Telescope otomatis merekam:
+// - HTTP method & URL
+// - Headers & payload
+// - Response status & body
+// - Duration & memory usage
+// - Authenticated user
+
+// Custom filtering di TelescopeServiceProvider
+Telescope::filter(function (IncomingEntry $entry) {
+    if ($entry->isRequest()) {
+        // Hanya record requests yang slow (>500ms)
+        return $entry->content['duration'] > 500;
+    }
+    return true;
+});
+```
+
+### 2.2 Exception Tracking
+
+```php
+<?php
+
+// Telescope merekam otomatis semua exceptions
+// Dengan stack trace, context, dan user info
+
+// Custom exception dengan tags
+try {
+    // Risky operation
+} catch (PaymentException $e) {
+    // Telescope otomatis capture
+    report($e);
+    
+    // Atau manual logging dengan context
+    Log::error('Payment failed', [
+        'order_id' => $order->id,
+        'amount' => $order->total,
+        'gateway' => $gateway->name,
+    ]);
+}
+```
+
+### 2.3 Database Queries
+
+```php
+<?php
+
+// Telescope merekam:
+// - SQL query
+// - Bindings
+// - Duration (highlight slow queries)
+// - Caller (file & line number)
+
+// Identifikasi N+1 problems
+// - Queries tab menunjukkan duplicate queries
+// - Duration highlighting untuk slow queries (>100ms default)
+
+// Optimalisasi berdasarkan data Telescope
+User::with('posts') // Hindari N+1 dengan eager loading
+    ->get();
+```
+
+### 2.4 Logs
+
+```php
+<?php
+
+// Semua log masuk ke Telescope
+Log::info('User logged in', ['user_id' => $user->id]);
+Log::warning('Low inventory', ['product_id' => $product->id]);
+Log::error('Payment gateway timeout');
+
+// Context untuk debugging
+Log::debug('API Response', [
+    'endpoint' => $url,
+    'status' => $response->status(),
+    'body' => $response->json(),
+]);
+```
+
+## 3. Filtering & Tagging
+
+### 3.1 Custom Filtering
+
+```php
+<?php
+
+// app/Providers/TelescopeServiceProvider.php
+use Laravel\Telescope\IncomingEntry;
+use Laravel\Telescope\Telescope;
+
+public function register(): void
+{
+    Telescope::night();
+
+    $this->hideSensitiveRequestDetails();
+
+    // Filter entries
+    Telescope::filter(function (IncomingEntry $entry) {
+        // Hanya record di local environment
+        if ($this->app->environment('local')) {
+            return true;
+        }
+
+        // Production: hanya record errors dan slow queries
+        return $entry->isReportableException() ||
+               $entry->isFailedRequest() ||
+               $entry->isFailedJob() ||
+               ($entry->isQuery() && $entry->content['slow'] ?? false);
+    });
+}
+
+protected function hideSensitiveRequestDetails(): void
+{
+    if ($this->app->environment('local')) {
+        return;
+    }
+
+    Telescope::hideRequestParameters(['_token', 'password', 'password_confirmation']);
+    Telescope::hideRequestHeaders(['cookie', 'x-csrf-token', 'x-xsrf-token']);
+}
+```
+
+### 3.2 Custom Tags
+
+```php
+<?php
+
+// Menambah tags ke entries
+Telescope::tag(function (IncomingEntry $entry) {
+    if ($entry->type === 'request') {
+        return ['status:' . $entry->content['response_status']];
+    }
+    
+    if ($entry->type === 'query') {
+        return $entry->content['slow'] ? ['slow-query'] : [];
+    }
+    
+    return [];
+});
+```
+
+## 4. Production Pruning
+
+### 4.1 Automatic Pruning
+
+```php
+<?php
+
+// app/Console/Kernel.php
+protected function schedule(Schedule $schedule): void
+{
+    // Prune records older than 24 hours
+    $schedule->command('telescope:prune --hours=24')->daily();
+    
+    // Atau prune dengan chunk untuk large datasets
+    $schedule->command('telescope:prune --hours=48')->weekly();
+}
+```
+
+### 4.2 Manual Pruning
+
+```bash
+# Prune records older than 48 hours
+php artisan telescope:prune --hours=48
+
+# Prune semua records
+php artisan telescope:clear
+```
+
+## 5. Custom Watchers
+
+### 5.1 Creating Custom Watcher
+
+```php
+<?php
+
+// app/Telescope/Watchers/CustomApiWatcher.php
+namespace App\Telescope\Watchers;
+
+use Illuminate\Support\Facades\Event;
+use Laravel\Telescope\IncomingEntry;
+use Laravel\Telescope\Telescope;
+use Laravel\Telescope\Watchers\Watcher;
+
+class CustomApiWatcher extends Watcher
+{
+    public function register($app): void
+    {
+        Event::listen('api.request', function ($endpoint, $payload, $response) {
+            if (!Telescope::isRecording()) {
+                return;
+            }
+
+            Telescope::recordApi(IncomingEntry::make([
+                'endpoint' => $endpoint,
+                'payload' => $payload,
+                'response' => $response,
+                'duration' => $this->getDuration(),
+            ]));
+        });
+    }
+}
+```
+
+### 5.2 Recording Custom Entries
+
+```php
+<?php
+
+use Laravel\Telescope\IncomingEntry;
+use Laravel\Telescope\Telescope;
+
+// Manual recording
+Telescope::recordLog(IncomingEntry::make([
+    'level' => 'info',
+    'message' => 'Custom log message',
+    'context' => ['key' => 'value'],
+]));
+
+// Record dengan tags
+$entry = IncomingEntry::make([
+    'type' => 'custom',
+    'content' => $data,
+])->tags(['important', 'api']);
+
+Telescope::record($entry);
+```
+
+## 6. Authorization
+
+```php
+<?php
+
+// app/Providers/TelescopeServiceProvider.php
+use App\Models\User;
+
+public function boot(): void
+{
+    Telescope::auth(function ($request) {
+        // Hanya admin yang bisa akses
+        return $request->user() && $request->user()->isAdmin();
+        
+        // Atau dengan gate
+        // return Gate::check('viewTelescope', [$request->user()]);
+    });
+}
+```
+
+```php
+<?php
+
+// Gate definition
+Gate::define('viewTelescope', function (User $user) {
+    return $user->isAdmin() || $user->isDeveloper();
+});
+```
+
+## 7. Integration dengan Tools Lain
+
+### 7.1 Telescope + Horizon
+
+```php
+<?php
+
+// Monitor jobs di Telescope
+// Horizon dashboard untuk queue metrics
+// Telescope untuk detail job execution
+
+// Job dengan tags untuk tracking
+class ProcessOrder implements ShouldQueue
+{
+    public function tags(): array
+    {
+        return ['order:' . $this->order->id, 'customer:' . $this->order->user_id];
+    }
+}
+```
+
+### 7.2 Telescope + Bugsnag/Sentry
+
+```php
+<?php
+
+// app/Exceptions/Handler.php
+public function register(): void
+{
+    $this->reportable(function (Throwable $e) {
+        // Telescope otomatis record
+        
+        // Send ke external service untuk production
+        if (app()->environment('production')) {
+            app('sentry')->captureException($e);
+        }
+    });
+}
+```
+
+## Kesimpulan
+
+Laravel Telescope menyediakan debugging dan introspection yang powerful:
+- **Real-time monitoring** untuk requests, exceptions, queries, dan logs
+- **Performance insights** dengan slow query detection
+- **Filtering** untuk production data management
+- **Pruning** untuk automatic cleanup
+- **Custom watchers** untuk application-specific monitoring
+
+Selanjutnya di **Sesi 49**, kita akan mempelajari Laravel Scout untuk full-text search.
+```

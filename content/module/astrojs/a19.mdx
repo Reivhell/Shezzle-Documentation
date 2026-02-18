@@ -1,0 +1,720 @@
+---
+title: "Sesi 19: Adapters & Deployment"
+description: "Adapters adalah bridge antara Astro dan platform deployment target. Mereka mengkonversi output Astro menjadi format yang bisa dijalankan di platform t..."
+category: "astrojs"
+tags: ["astrojs", "deployment"]
+order: 19
+---
+
+# Sesi 19: Adapters & Deployment
+
+## 19.1 Adapter Overview
+
+Adapters adalah bridge antara Astro dan platform deployment target. Mereka mengkonversi output Astro menjadi format yang bisa dijalankan di platform tertentu.
+
+### Analogi Sederhana:
+
+> Bayangkan adapters seperti **konverter colokan listrik**. Astro adalah perangkat elektronik, platform deployment adalah stop kontak di berbagai negara (US, Eropa, UK). Adapter mengkonversi "output" Astro agar bisa "terpasang" dengan sempurna di platform target.
+
+### Daftar Official Adapters:
+
+| Adapter | Platform | Use Case | Mode |
+|---------|----------|----------|------|
+| `@astrojs/vercel` | Vercel | Edge/Serverless | Edge, Serverless, Static |
+| `@astrojs/netlify` | Netlify | Edge/Serverless | Edge, Functions, Static |
+| `@astrojs/cloudflare` | Cloudflare | Workers/Pages | Workers, Pages |
+| `@astrojs/node` | Node.js | Self-hosted | Standalone, Middleware |
+| `@astrojs/deno` | Deno | Edge runtime | Server |
+| `@astrojs/aws` | AWS | Lambda/Amplify | Lambda, Amplify |
+
+---
+
+## 19.2 Official Adapters
+
+### Vercel Adapter:
+
+```bash
+# Instalasi
+npx astro add vercel
+# atau
+npm install @astrojs/vercel
+```
+
+```javascript
+// astro.config.mjs
+import { defineConfig } from 'astro/config';
+import vercel from '@astrojs/vercel/serverless';
+
+export default defineConfig({
+  output: 'server',
+  adapter: vercel({
+    // Mode: 'static' | 'serverless' | 'edge'
+    mode: 'serverless',
+    
+    // Edge Middleware (Vercel-specific)
+    edgeMiddleware: true,
+    
+    // Function configuration
+    functionPerRoute: false, // Single function vs per-route
+    
+    // Max duration (seconds)
+    maxDuration: 60,
+    
+    // Include files dalam deployment
+    includeFiles: ['./data/*.json'],
+    
+    // Exclude files
+    excludeFiles: ['./tests/**/*'],
+  }),
+});
+```
+
+**Vercel Edge Mode:**
+
+```javascript
+// astro.config.mjs
+import vercel from '@astrojs/vercel/edge';
+
+export default defineConfig({
+  output: 'server',
+  adapter: vercel({
+    mode: 'edge',
+    edgeMiddleware: true,
+  }),
+});
+```
+
+**Vercel Static:**
+
+```javascript
+// astro.config.mjs
+import vercel from '@astrojs/vercel/static';
+
+export default defineConfig({
+  output: 'static',
+  adapter: vercel({
+    webAnalytics: {
+      enabled: true,
+    },
+    speedInsights: {
+      enabled: true,
+    },
+    imageService: true, // Use Vercel's image optimization
+  }),
+});
+```
+
+### Netlify Adapter:
+
+```bash
+npx astro add netlify
+```
+
+```javascript
+// astro.config.mjs
+import { defineConfig } from 'astro/config';
+import netlify from '@astrojs/netlify';
+
+export default defineConfig({
+  output: 'server',
+  adapter: netlify({
+    // Edge Functions vs Netlify Functions
+    edgeMiddleware: true,
+    
+    // Cache configuration
+    cacheOnDemandPages: true,
+    
+    // Binary media types
+    binaryMediaTypes: ['image/avif', 'image/webp'],
+  }),
+});
+```
+
+**Netlify Edge Functions:**
+
+```javascript
+// netlify/edge-functions/hello.js
+export default async (request, context) => {
+  return new Response(`Hello from ${context.geo.city}!`);
+};
+
+export const config = {
+  path: '/api/hello',
+};
+```
+
+### Cloudflare Adapter:
+
+```bash
+npx astro add cloudflare
+```
+
+```javascript
+// astro.config.mjs
+import { defineConfig } from 'astro/config';
+import cloudflare from '@astrojs/cloudflare';
+
+export default defineConfig({
+  output: 'server',
+  adapter: cloudflare({
+    // Mode: 'advanced' (Workers) | 'directory' (Pages)
+    mode: 'advanced',
+    
+    // Function invocation mode
+    functionPerRoute: true,
+    
+    // Wrangler configuration
+    wrangler: true,
+    
+    // Runtime compat
+    runtime: {
+      mode: 'local', // 'local' | 'remote'
+      type: 'pages', // 'pages' | 'workers'
+    },
+  }),
+});
+```
+
+**Cloudflare Bindings:**
+
+```javascript
+// astro.config.mjs
+export default defineConfig({
+  adapter: cloudflare({
+    runtime: {
+      mode: 'local',
+      type: 'pages',
+      bindings: {
+        // KV Namespace
+        CACHE: {
+          type: 'kv',
+        },
+        // D1 Database
+        DB: {
+          type: 'd1',
+        },
+        // R2 Storage
+        BUCKET: {
+          type: 'r2',
+        },
+      },
+    },
+  }),
+});
+```
+
+```astro
+---
+// src/pages/api/data.astro
+// Akses Cloudflare bindings
+
+const env = Astro.locals.runtime.env;
+
+// KV
+await env.CACHE.put('key', 'value');
+const value = await env.CACHE.get('key');
+
+// D1
+const result = await env.DB.prepare('SELECT * FROM users').all();
+
+// R2
+const object = await env.BUCKET.get('file.txt');
+---
+
+<pre>{JSON.stringify(result, null, 2)}</pre>
+```
+
+### Node.js Adapter:
+
+```bash
+npx astro add node
+```
+
+```javascript
+// astro.config.mjs
+import { defineConfig } from 'astro/config';
+import node from '@astrojs/node';
+
+export default defineConfig({
+  output: 'server',
+  adapter: node({
+    // Mode: 'standalone' | 'middleware'
+    mode: 'standalone',
+    
+    // Server entry point (untuk middleware mode)
+    // serverEntry: 'server/entry.mjs',
+  }),
+});
+```
+
+**Standalone Mode:**
+
+```bash
+# Build
+npm run build
+
+# Run
+node dist/server/entry.mjs
+# Server listening on http://localhost:4321
+```
+
+**Middleware Mode (Express/Fastify):**
+
+```javascript
+// server.js
+import express from 'express';
+import { handler as ssrHandler } from './dist/server/entry.mjs';
+
+const app = express();
+app.use(express.static('dist/client/'));
+app.use(ssrHandler);
+
+app.listen(8080);
+```
+
+### Deno Adapter:
+
+```bash
+npx astro add deno
+```
+
+```javascript
+// astro.config.mjs
+import { defineConfig } from 'astro/config';
+import deno from '@astrojs/deno';
+
+export default defineConfig({
+  output: 'server',
+  adapter: deno(),
+});
+```
+
+```bash
+# Build
+npm run build
+
+# Run with Deno
+deno run --allow-net --allow-read --allow-env dist/server/entry.mjs
+```
+
+---
+
+## 19.3 Custom Adapters
+
+Membuat adapter untuk platform yang tidak didukung officially.
+
+### Struktur Custom Adapter:
+
+```javascript
+// my-custom-adapter.mjs
+import { writeFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+
+/**
+ * Custom Astro Adapter
+ * @param {Object} options
+ * @returns {AstroIntegration}
+ */
+export default function myCustomAdapter(options = {}) {
+  const {
+    outputDirectory = 'dist',
+    customConfig = {},
+  } = options;
+
+  return {
+    name: 'my-custom-adapter',
+    hooks: {
+      'astro:config:done': ({ config, setAdapter }) => {
+        setAdapter({
+          name: 'my-custom-adapter',
+          serverEntrypoint: 'my-custom-adapter/entrypoint.mjs',
+          exports: ['handler'],
+          args: options,
+        });
+      },
+
+      'astro:build:done': async ({ routes, dir }) => {
+        // Generate server entry point
+        const entryPoint = generateEntryPoint(routes, customConfig);
+        
+        writeFileSync(
+          new URL('server/entry.mjs', dir),
+          entryPoint
+        );
+
+        // Generate deployment config
+        const deployConfig = generateDeployConfig(routes);
+        
+        writeFileSync(
+          new URL('deploy.json', dir),
+          JSON.stringify(deployConfig, null, 2)
+        );
+
+        console.log(`✅ Build complete for custom platform`);
+        console.log(`   Server entry: ${dir}server/entry.mjs`);
+        console.log(`   Deploy config: ${dir}deploy.json`);
+      },
+    },
+  };
+}
+
+function generateEntryPoint(routes, config) {
+  return `
+import { App } from 'astro/app';
+import { manifest } from './manifest.mjs';
+
+const app = new App(manifest);
+
+export async function handler(request, context) {
+  // Adapt request ke Astro format
+  const url = new URL(request.url);
+  
+  const renderContext = {
+    request,
+    url,
+    props: {},
+    routeData: manifest.routes.find(r => r.pattern.test(url.pathname)),
+  };
+
+  // Render dengan Astro
+  const response = await app.render(renderContext);
+  
+  // Adapt response ke platform format
+  return {
+    status: response.status,
+    headers: Object.fromEntries(response.headers),
+    body: await response.text(),
+  };
+}
+`;
+}
+
+function generateDeployConfig(routes) {
+  return {
+    version: '1.0',
+    routes: routes.map(r => ({
+      pattern: r.route,
+      type: r.type,
+      prerender: r.prerender,
+    })),
+  };
+}
+```
+
+### Penggunaan Custom Adapter:
+
+```javascript
+// astro.config.mjs
+import { defineConfig } from 'astro/config';
+import myCustomAdapter from './my-custom-adapter.mjs';
+
+export default defineConfig({
+  output: 'server',
+  adapter: myCustomAdapter({
+    outputDirectory: 'build',
+    customConfig: {
+      region: 'us-east-1',
+      runtime: 'nodejs18.x',
+    },
+  }),
+});
+```
+
+---
+
+## 19.4 Deployment Strategies
+
+Strategi deploy untuk berbagai skenario.
+
+### Static Deployment:
+
+```javascript
+// astro.config.mjs
+export default defineConfig({
+  output: 'static',
+  // No adapter needed for static
+});
+```
+
+**Deploy ke GitHub Pages:**
+
+```yaml
+# .github/workflows/deploy.yml
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      
+      - name: Install dependencies
+        run: npm ci
+      
+      - name: Build
+        run: npm run build
+      
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4
+```
+
+**Deploy ke Vercel (Static):**
+
+```bash
+# vercel.json
+{
+  "buildCommand": "npm run build",
+  "outputDirectory": "dist",
+  "installCommand": "npm ci",
+  "framework": "astro"
+}
+```
+
+### SSR Deployment dengan Docker:
+
+```dockerfile
+# Dockerfile
+FROM node:20-alpine AS base
+
+# Dependencies
+FROM base AS deps
+RUN apk add --no-cache libc6-compat
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci
+
+# Build
+FROM base AS builder
+WORKDIR /app
+COPY --from=deps /app/node_modules ./node_modules
+COPY . .
+RUN npm run build
+
+# Production
+FROM base AS runner
+WORKDIR /app
+ENV NODE_ENV=production
+
+RUN addgroup --system --gid 1001 nodejs
+RUN adduser --system --uid 1001 astrojs
+
+COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/node_modules ./node_modules
+COPY package.json ./
+
+USER astrojs
+
+EXPOSE 4321
+
+ENV PORT=4321
+ENV HOSTNAME="0.0.0.0"
+
+CMD ["node", "dist/server/entry.mjs"]
+```
+
+```yaml
+# docker-compose.yml
+version: '3.8'
+services:
+  astro:
+    build: .
+    ports:
+      - "4321:4321"
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=${DATABASE_URL}
+    restart: unless-stopped
+```
+
+### Multi-Environment Deployment:
+
+```javascript
+// astro.config.mjs
+import { defineConfig } from 'astro/config';
+import vercel from '@astrojs/vercel/serverless';
+import netlify from '@astrojs/netlify';
+import node from '@astrojs/node';
+
+const platform = process.env.DEPLOY_PLATFORM || 'node';
+
+const adapters = {
+  vercel: vercel({ mode: 'serverless' }),
+  netlify: netlify({ edgeMiddleware: true }),
+  node: node({ mode: 'standalone' }),
+};
+
+export default defineConfig({
+  output: 'server',
+  adapter: adapters[platform],
+  
+  // Environment-specific settings
+  site: process.env.DEPLOY_URL || 'http://localhost:4321',
+  
+  vite: {
+    define: {
+      __PLATFORM__: JSON.stringify(platform),
+    },
+  },
+});
+```
+
+---
+
+## 19.5 Platform-Specific Features
+
+Menggunakan fitur unik dari setiap platform.
+
+### Vercel Features:
+
+```astro
+---
+// src/pages/api/edge.astro
+export const config = {
+  runtime: 'edge', // Edge Runtime
+  regions: ['sin1', 'hkg1'], // Specific regions
+};
+
+// Akses Edge Context
+const geo = Astro.request.geo; // Geo data
+const ip = Astro.request.ip;
+---
+
+<pre>{JSON.stringify({ geo, ip }, null, 2)}</pre>
+```
+
+### Netlify Features:
+
+```astro
+---
+// src/pages/index.astro
+// Netlify On-Demand Builders
+
+export const config = {
+  type: 'ondemand', // ISR dengan Netlify
+  revalidate: 60, // Revalidate setiap 60 detik
+};
+
+// Netlify Context
+const context = Astro.locals.netlify?.context;
+const geo = context?.geo;
+---
+
+<p>Location: {geo?.city}, {geo?.country}</p>
+```
+
+### Cloudflare Features:
+
+```astro
+---
+// src/pages/index.astro
+// Cloudflare Durable Objects, KV, D1, R2
+
+const env = Astro.locals.runtime.env;
+
+// D1 Query
+const { results } = await env.DB.prepare(
+  'SELECT * FROM posts WHERE published = 1 LIMIT 10'
+).all();
+
+// KV Cache
+const cached = await env.CACHE.get('posts');
+if (!cached) {
+  await env.CACHE.put('posts', JSON.stringify(results), {
+    expirationTtl: 3600,
+  });
+}
+---
+
+<ul>
+  {results.map(post => <li>{post.title}</li>)}
+</ul>
+```
+
+---
+
+## 19.6 astro preview Command
+
+Testing production build secara lokal.
+
+### Penggunaan:
+
+```bash
+# Build untuk production
+npm run build
+
+# Preview production build
+npm run preview
+# atau
+astro preview
+
+# Dengan custom port
+astro preview --port 4000
+
+# Dengan host
+astro preview --host
+```
+
+### Preview dengan Adapter:
+
+```bash
+# Node adapter
+npm run build
+node dist/server/entry.mjs
+
+# Atau
+npm run preview # Menjalankan entry.mjs
+```
+
+---
+
+## Ringkasan Sesi 19
+
+| Platform | Adapter | Best For | Key Features |
+|----------|---------|----------|--------------|
+| **Vercel** | `@astrojs/vercel` | Edge/Serverless | Edge Functions, Analytics, Speed Insights |
+| **Netlify** | `@astrojs/netlify` | JAMstack | Edge Functions, Forms, Identity |
+| **Cloudflare** | `@astrojs/cloudflare` | Global edge | Workers, KV, D1, R2 |
+| **Node.js** | `@astrojs/node` | Self-hosted | Express integration, Docker |
+| **Deno** | `@astrojs/deno` | Modern runtime | Secure by default, TypeScript native |
+
+### Deployment Checklist:
+
+- [ ] Pilih adapter sesuai platform
+- [ ] Konfigurasi environment variables
+- [ ] Setup CI/CD pipeline
+- [ ] Configure custom domains
+- [ ] Enable analytics/monitoring
+- [ ] Test dengan `astro preview`
+- [ ] Setup error tracking (Sentry, etc)
+- [ ] Configure caching strategies
+
+---
+
+**Selanjutnya:** Di Sesi 20, kita akan membahas **Security Features** - CSP, XSS protection, CSRF, secure headers, dan authentication.

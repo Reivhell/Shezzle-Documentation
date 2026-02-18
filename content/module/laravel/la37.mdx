@@ -1,0 +1,706 @@
+---
+title: "Sesi 37: Laravel Breeze (Starter Kit)"
+description: "Menguasai Laravel Breeze sebagai starter kit autentikasi, memahami struktur dan komponennya, serta melakukan kustomisasi untuk kebutuhan spesifik."
+category: "laravel"
+tags: ["laravel"]
+order: 37
+---
+
+## Tujuan Pembelajaran
+
+Menguasai Laravel Breeze sebagai starter kit autentikasi, memahami struktur dan komponennya, serta melakukan kustomisasi untuk kebutuhan spesifik.
+
+## 1. Instalasi Laravel Breeze
+
+### 1.1 Livewire Stack
+
+```bash
+# Install Laravel baru
+laravel new my-app
+cd my-app
+
+# Install Breeze
+composer require laravel/breeze --dev
+
+# Install dengan Livewire (Blade components)
+php artisan breeze:install livewire
+
+# Atau Livewire dengan functional API
+php artisan breeze:install livewire-functional
+
+# Jalankan migrasi dan build
+php artisan migrate
+npm install
+npm run dev
+```
+
+### 1.2 Inertia Stacks
+
+<div class="tabs-container">
+
+### Vue
+
+```bash
+# Install Breeze dengan Inertia + Vue
+php artisan breeze:install vue
+
+# Struktur yang di-generate:
+# resources/js/Pages/Auth/
+#   Login.vue, Register.vue, ForgotPassword.vue
+#   ResetPassword.vue, VerifyEmail.vue, ConfirmPassword.vue
+# resources/js/Pages/Profile/
+#   Edit.vue, Partials/DeleteUserForm.vue, etc.
+
+npm install
+npm run dev
+```
+
+### React
+
+```bash
+# Install Breeze dengan Inertia + React
+php artisan breeze:install react
+
+# Struktur yang di-generate:
+# resources/js/Pages/Auth/
+#   Login.tsx, Register.tsx, ForgotPassword.tsx
+#   ResetPassword.tsx, VerifyEmail.tsx, ConfirmPassword.tsx
+
+npm install
+npm run dev
+```
+
+</div>
+
+## 2. Struktur Breeze
+
+### 2.1 Controllers
+
+```php
+<?php
+
+// app/Http/Controllers/Auth/AuthenticatedSessionController.php
+namespace App\Http\Controllers\Auth;
+
+use App\Http\Controllers\Controller;
+use App\Http\Requests\Auth\LoginRequest;
+use Illuminate\Http\RedirectResponse;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\View\View;
+
+class AuthenticatedSessionController extends Controller
+{
+    /**
+     * Display the login view.
+     */
+    public function create(): View
+    {
+        return view('auth.login');
+    }
+
+    /**
+     * Handle an incoming authentication request.
+     */
+    public function store(LoginRequest $request): RedirectResponse
+    {
+        $request->authenticate();
+
+        $request->session()->regenerate();
+
+        return redirect()->intended(route('dashboard', absolute: false));
+    }
+
+    /**
+     * Destroy an authenticated session.
+     */
+    public function destroy(Request $request): RedirectResponse
+    {
+        Auth::guard('web')->logout();
+
+        $request->session()->invalidate();
+
+        $request->session()->regenerateToken();
+
+        return redirect('/');
+    }
+}
+```
+
+### 2.2 Form Requests
+
+```php
+<?php
+
+// app/Http/Requests/Auth/LoginRequest.php
+namespace App\Http\Requests\Auth;
+
+use Illuminate\Auth\Events\Lockout;
+use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\RateLimiter;
+use Illuminate\Support\Str;
+use Illuminate\Validation\ValidationException;
+
+class LoginRequest extends FormRequest
+{
+    public function authorize(): bool
+    {
+        return true;
+    }
+
+    public function rules(): array
+    {
+        return [
+            'email' => ['required', 'string', 'email'],
+            'password' => ['required', 'string'],
+        ];
+    }
+
+    public function authenticate(): void
+    {
+        $this->ensureIsNotRateLimited();
+
+        if (! Auth::attempt($this->only('email', 'password'), $this->boolean('remember'))) {
+            RateLimiter::hit($this->throttleKey());
+
+            throw ValidationException::withMessages([
+                'email' => trans('auth.failed'),
+            ]);
+        }
+
+        RateLimiter::clear($this->throttleKey());
+    }
+
+    public function ensureIsNotRateLimited(): void
+    {
+        if (! RateLimiter::tooManyAttempts($this->throttleKey(), 5)) {
+            return;
+        }
+
+        event(new Lockout($this));
+
+        $seconds = RateLimiter::availableIn($this->throttleKey());
+
+        throw ValidationException::withMessages([
+            'email' => trans('auth.throttle', [
+                'seconds' => $seconds,
+                'minutes' => ceil($seconds / 60),
+            ]),
+        ]);
+    }
+
+    public function throttleKey(): string
+    {
+        return Str::transliterate(Str::lower($this->string('email')).'|'.$this->ip());
+    }
+}
+```
+
+### 2.3 Views (Livewire Stack)
+
+```php
+<?php
+
+// resources/views/auth/login.blade.php
+<x-guest-layout>
+    <!-- Session Status -->
+    <x-auth-session-status class="mb-4" :status="session('status')" />
+
+    <form method="POST" action="{{ route('login') }}">
+        @csrf
+
+        <!-- Email Address -->
+        <div>
+            <x-input-label for="email" :value="__('Email')" />
+            <x-text-input id="email" class="block mt-1 w-full" type="email" name="email" :value="old('email')" required autofocus autocomplete="username" />
+            <x-input-error :messages="$errors->get('email')" class="mt-2" />
+        </div>
+
+        <!-- Password -->
+        <div class="mt-4">
+            <x-input-label for="password" :value="__('Password')" />
+
+            <x-text-input id="password" class="block mt-1 w-full"
+                            type="password"
+                            name="password"
+                            required autocomplete="current-password" />
+
+            <x-input-error :messages="$errors->get('password')" class="mt-2" />
+        </div>
+
+        <!-- Remember Me -->
+        <div class="block mt-4">
+            <label for="remember_me" class="inline-flex items-center">
+                <input id="remember_me" type="checkbox" class="rounded border-gray-300 text-indigo-600 shadow-sm focus:ring-indigo-500" name="remember">
+                <span class="ms-2 text-sm text-gray-600">{{ __('Remember me') }}</span>
+            </label>
+        </div>
+
+        <div class="flex items-center justify-end mt-4">
+            @if (Route::has('password.request'))
+                <a class="underline text-sm text-gray-600 hover:text-gray-900 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500" href="{{ route('password.request') }}">
+                    {{ __('Forgot your password?') }}
+                </a>
+            @endif
+
+            <x-primary-button class="ms-3">
+                {{ __('Log in') }}
+            </x-primary-button>
+        </div>
+    </form>
+</x-guest-layout>
+```
+
+## 3. Customizing Breeze Components
+
+### 3.1 Customizing Blade Components
+
+```php
+<?php
+
+// app/View/Components/TextInput.php
+namespace App\View\Components;
+
+use Illuminate\View\Component;
+
+class TextInput extends Component
+{
+    public function __construct(
+        public string $name,
+        public ?string $value = null,
+        public string $type = 'text',
+        public ?string $label = null,
+        public bool $required = false,
+    ) {}
+
+    public function render()
+    {
+        return view('components.text-input');
+    }
+}
+```
+
+```php
+<?php
+
+// resources/views/components/text-input.blade.php
+@props(['disabled' => false])
+
+<div class="mb-4">
+    @if($label)
+        <label for="{{ $name }}" class="block text-sm font-medium text-gray-700">
+            {{ $label }}
+            @if($required)
+                <span class="text-red-500">*</span>
+            @endif
+        </label>
+    @endif
+    
+    <input 
+        type="{{ $type }}"
+        name="{{ $name }}"
+        id="{{ $name }}"
+        value="{{ old($name, $value) }}"
+        @if($required) required @endif
+        @disabled($disabled)
+        {{ $attributes->merge(['class' => 'mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm']) }}
+    >
+    
+    @error($name)
+        <p class="mt-1 text-sm text-red-600">{{ $message }}</p>
+    @enderror
+</div>
+```
+
+### 3.2 Customizing Inertia Components (Vue)
+
+```vue
+<!-- resources/js/Pages/Auth/Login.vue -->
+<script setup>
+import GuestLayout from '@/Layouts/GuestLayout.vue';
+import InputError from '@/Components/InputError.vue';
+import InputLabel from '@/Components/InputLabel.vue';
+import PrimaryButton from '@/Components/PrimaryButton.vue';
+import TextInput from '@/Components/TextInput.vue';
+import { Head, useForm } from '@inertiajs/vue3';
+
+defineProps({
+    canResetPassword: {
+        type: Boolean,
+    },
+    status: {
+        type: String,
+    },
+});
+
+const form = useForm({
+    email: '',
+    password: '',
+    remember: false,
+});
+
+const submit = () => {
+    form.post(route('login'), {
+        onFinish: () => form.reset('password'),
+    });
+};
+</script>
+
+<template>
+    <GuestLayout>
+        <Head title="Log in" />
+
+        <div v-if="status" class="mb-4 font-medium text-sm text-green-600">
+            {{ status }}
+        </div>
+
+        <form @submit.prevent="submit">
+            <div>
+                <InputLabel for="email" value="Email" />
+
+                <TextInput
+                    id="email"
+                    type="email"
+                    class="mt-1 block w-full"
+                    v-model="form.email"
+                    required
+                    autofocus
+                    autocomplete="username"
+                />
+
+                <InputError class="mt-2" :message="form.errors.email" />
+            </div>
+
+            <div class="mt-4">
+                <InputLabel for="password" value="Password" />
+
+                <TextInput
+                    id="password"
+                    type="password"
+                    class="mt-1 block w-full"
+                    v-model="form.password"
+                    required
+                    autocomplete="current-password"
+                />
+
+                <InputError class="mt-2" :message="form.errors.password" />
+            </div>
+
+            <div class="block mt-4">
+                <label class="flex items-center">
+                    <Checkbox name="remember" v-model:checked="form.remember" />
+                    <span class="ms-2 text-sm text-gray-600">Remember me</span>
+                </label>
+            </div>
+
+            <div class="flex items-center justify-end mt-4">
+                <Link
+                    v-if="canResetPassword"
+                    :href="route('password.request')"
+                    class="underline text-sm text-gray-600 hover:text-gray-900 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                >
+                    Forgot your password?
+                </Link>
+
+                <PrimaryButton class="ms-4" :class="{ 'opacity-25': form.processing }" :disabled="form.processing">
+                    Log in
+                </PrimaryButton>
+            </div>
+        </form>
+    </GuestLayout>
+</template>
+```
+
+## 4. Email Verification Implementation
+
+### 4.1 Setup Verification
+
+```php
+<?php
+
+// app/Models/User.php
+use Illuminate\Contracts\Auth\MustVerifyEmail;
+
+class User extends Authenticatable implements MustVerifyEmail
+{
+    // ...
+}
+```
+
+```php
+<?php
+
+// routes/web.php
+use Illuminate\Foundation\Auth\EmailVerificationRequest;
+
+Route::get('/email/verify', function () {
+    return view('auth.verify-email');
+})->middleware('auth')->name('verification.notice');
+
+Route::get('/email/verify/{id}/{hash}', function (EmailVerificationRequest $request) {
+    $request->fulfill();
+    return redirect('/dashboard');
+})->middleware(['auth', 'signed'])->name('verification.verify');
+
+Route::post('/email/verification-notification', function (Request $request) {
+    $request->user()->sendEmailVerificationNotification();
+    return back()->with('message', 'Verification link sent!');
+})->middleware(['auth', 'throttle:6,1'])->name('verification.send');
+```
+
+### 4.2 Custom Verification Notification
+
+```php
+<?php
+
+namespace App\Notifications;
+
+use Illuminate\Auth\Notifications\VerifyEmail as VerifyEmailBase;
+use Illuminate\Notifications\Messages\MailMessage;
+
+class CustomVerifyEmail extends VerifyEmailBase
+{
+    protected function buildMailMessage($url): MailMessage
+    {
+        return (new MailMessage)
+            ->subject('Verify Your Email Address - ' . config('app.name'))
+            ->greeting('Hello!')
+            ->line('Please click the button below to verify your email address.')
+            ->action('Verify Email Address', $url)
+            ->line('If you did not create an account, no further action is required.')
+            ->salutation('Regards, ' . config('app.name') . ' Team');
+    }
+}
+```
+
+```php
+<?php
+
+// app/Models/User.php
+use App\Notifications\CustomVerifyEmail;
+
+class User extends Authenticatable implements MustVerifyEmail
+{
+    public function sendEmailVerificationNotification()
+    {
+        $this->notify(new CustomVerifyEmail);
+    }
+}
+```
+
+## 5. Password Confirmation Flows
+
+### 5.1 Password Confirmation Middleware
+
+```php
+<?php
+
+// routes/web.php
+Route::middleware(['auth', 'password.confirm'])->group(function () {
+    Route::get('/settings/security', [SecurityController::class, 'edit']);
+    Route::put('/settings/security', [SecurityController::class, 'update']);
+    Route::delete('/account', [AccountController::class, 'destroy']);
+});
+
+// Password confirmation akan di-reset setelah config('auth.password_timeout')
+// Default: 3 jam
+```
+
+### 5.2 Custom Confirmation Views
+
+```php
+<?php
+
+// resources/views/auth/confirm-password.blade.php
+<x-guest-layout>
+    <div class="mb-4 text-sm text-gray-600">
+        {{ __('This is a secure area of the application. Please confirm your password before continuing.') }}
+    </div>
+
+    <form method="POST" action="{{ route('password.confirm') }}">
+        @csrf
+
+        <!-- Password -->
+        <div>
+            <x-input-label for="password" :value="__('Password')" />
+
+            <x-text-input id="password" class="block mt-1 w-full"
+                            type="password"
+                            name="password"
+                            required autocomplete="current-password" />
+
+            <x-input-error :messages="$errors->get('password')" class="mt-2" />
+        </div>
+
+        <div class="flex justify-end mt-4">
+            <x-primary-button>
+                {{ __('Confirm') }}
+            </x-primary-button>
+        </div>
+    </form>
+</x-guest-layout>
+```
+
+## 6. Testing Breeze Components
+
+### 6.1 Authentication Tests
+
+```php
+<?php
+
+// tests/Feature/Auth/AuthenticationTest.php
+namespace Tests\Feature\Auth;
+
+use App\Models\User;
+use Illuminate\Foundation\Testing\RefreshDatabase;
+use Tests\TestCase;
+
+class AuthenticationTest extends TestCase
+{
+    use RefreshDatabase;
+
+    public function test_login_screen_can_be_rendered(): void
+    {
+        $response = $this->get('/login');
+
+        $response->assertStatus(200);
+    }
+
+    public function test_users_can_authenticate_using_the_login_screen(): void
+    {
+        $user = User::factory()->create();
+
+        $response = $this->post('/login', [
+            'email' => $user->email,
+            'password' => 'password',
+        ]);
+
+        $this->assertAuthenticated();
+        $response->assertRedirect(route('dashboard', absolute: false));
+    }
+
+    public function test_users_can_not_authenticate_with_invalid_password(): void
+    {
+        $user = User::factory()->create();
+
+        $this->post('/login', [
+            'email' => $user->email,
+            'password' => 'wrong-password',
+        ]);
+
+        $this->assertGuest();
+    }
+
+    public function test_users_can_logout(): void
+    {
+        $user = User::factory()->create();
+
+        $response = $this->actingAs($user)->post('/logout');
+
+        $this->assertGuest();
+        $response->assertRedirect('/');
+    }
+}
+```
+
+### 6.2 Password Reset Tests
+
+```php
+<?php
+
+// tests/Feature/Auth/PasswordResetTest.php
+class PasswordResetTest extends TestCase
+{
+    use RefreshDatabase;
+
+    public function test_reset_password_link_screen_can_be_rendered(): void
+    {
+        $response = $this->get('/forgot-password');
+
+        $response->assertStatus(200);
+    }
+
+    public function test_reset_password_link_can_be_requested(): void
+    {
+        Notification::fake();
+
+        $user = User::factory()->create();
+
+        $this->post('/forgot-password', ['email' => $user->email]);
+
+        Notification::assertSentTo($user, ResetPassword::class);
+    }
+}
+```
+
+## 7. Extending Breeze
+
+### 7.1 Adding Social Login
+
+```php
+<?php
+
+// routes/auth.php
+use Laravel\Socialite\Facades\Socialite;
+
+Route::get('/auth/{provider}/redirect', function ($provider) {
+    return Socialite::driver($provider)->redirect();
+})->name('social.redirect');
+
+Route::get('/auth/{provider}/callback', function ($provider) {
+    $socialUser = Socialite::driver($provider)->user();
+    
+    $user = User::updateOrCreate([
+        'email' => $socialUser->getEmail(),
+    ], [
+        'name' => $socialUser->getName(),
+        'provider' => $provider,
+        'provider_id' => $socialUser->getId(),
+        'email_verified_at' => now(),
+    ]);
+
+    Auth::login($user);
+
+    return redirect('/dashboard');
+})->name('social.callback');
+```
+
+### 7.2 Two-Factor Authentication (2FA) Extension
+
+```php
+<?php
+
+// app/Models/User.php
+use Illuminate\Database\Eloquent\Casts\Attribute;
+
+class User extends Authenticatable
+{
+    protected function twoFactorSecret(): Attribute
+    {
+        return Attribute::make(
+            get: fn ($value) => $value ? decrypt($value) : null,
+            set: fn ($value) => ['two_factor_secret' => encrypt($value)],
+        );
+    }
+
+    public function generateTwoFactorSecret(): string
+    {
+        $secret = app(TwoFactorAuthService::class)->generateSecret();
+        $this->forceFill(['two_factor_secret' => $secret])->save();
+        return $secret;
+    }
+}
+```
+
+## Kesimpulan
+
+Laravel Breeze menyediakan foundation autentikasi yang solid:
+- **Multiple stacks**: Livewire (Blade), Inertia+Vue, Inertia+React
+- **Complete features**: Login, Register, Password Reset, Email Verification, Password Confirmation
+- **Tested**: Semua komponen sudah include feature tests
+- **Customizable**: Components dapat di-extend sesuai kebutuhan
+- **Modern**: Menggunakan Tailwind CSS dan approach terkini
+
+Selanjutnya di **Sesi 38**, kita akan mempelajari Laravel Jetstream untuk fitur autentikasi yang lebih advanced termasuk team management dan 2FA.
+```

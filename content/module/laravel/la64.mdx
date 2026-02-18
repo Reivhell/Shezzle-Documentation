@@ -1,0 +1,1253 @@
+---
+title: "Sesi 64: Alpine.js Essentials"
+description: "Menguasai Alpine.js sebagai solusi lightweight untuk reactive UI di Laravel tanpa memerlukan build step seperti Webpack atau Vite, mencakup data bindi..."
+category: "laravel"
+tags: ["laravel"]
+order: 64
+---
+
+## Tujuan Pembelajaran
+
+Menguasai Alpine.js sebagai solusi lightweight untuk reactive UI di Laravel tanpa memerlukan build step seperti Webpack atau Vite, mencakup data binding, directives, lifecycle, dan integrasi optimal dengan Blade.
+
+## 1. Alpine.js Fundamentals
+
+### 1.1 Installation & Setup
+
+<div class="tabs-container">
+
+### CDN (Development)
+
+```html
+<!-- Include di layout Blade -->
+<!DOCTYPE html>
+<html>
+<head>
+    <!-- Alpine.js CDN -->
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    
+    <!-- Atau dengan specific version -->
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.13.3/dist/cdn.min.js"></script>
+</head>
+<body>
+    <!-- Alpine components here -->
+</body>
+</html>
+```
+
+### NPM (Production)
+
+```bash
+# Install via NPM
+npm install alpinejs
+
+# Import di app.js
+import Alpine from 'alpinejs'
+window.Alpine = Alpine
+Alpine.start()
+```
+
+### Laravel Mix
+
+```javascript
+// webpack.mix.js
+mix.js('resources/js/app.js', 'public/js')
+   .postCss('resources/css/app.css', 'public/css', [
+       require('tailwindcss'),
+   ]);
+
+// resources/js/app.js
+import Alpine from 'alpinejs';
+window.Alpine = Alpine;
+Alpine.start();
+```
+
+</div>
+
+### 1.2 x-data: Component State
+
+```html
+<!-- Basic component -->
+<div x-data="{ open: false }">
+    <button @click="open = !open">Toggle</button>
+    <div x-show="open">Content</div>
+</div>
+
+<!-- With methods -->
+<div x-data="{
+    open: false,
+    toggle() {
+        this.open = !this.open
+    },
+    close() {
+        this.open = false
+    }
+}">
+    <button @click="toggle()">Toggle</button>
+    <div x-show="open" @click.away="close()">Dropdown content</div>
+</div>
+
+<!-- Reusable data object -->
+<script>
+document.addEventListener('alpine:init', () => {
+    Alpine.data('dropdown', () => ({
+        open: false,
+        toggle() {
+            this.open = !this.open
+        },
+        init() {
+            console.log('Dropdown initialized')
+        }
+    }))
+})
+</script>
+
+<div x-data="dropdown">
+    <button @click="toggle">Toggle</button>
+    <div x-show="open">Content</div>
+</div>
+```
+
+### 1.3 Data Types & Reactivity
+
+```html
+<!-- Primitive types -->
+<div x-data="{ 
+    count: 0, 
+    price: 19.99, 
+    name: 'John',
+    isActive: true,
+    items: ['apple', 'banana'],
+    user: { name: 'Jane', age: 25 }
+}">
+    <!-- Numbers -->
+    <button @click="count++">Increment: <span x-text="count"></span></button>
+    
+    <!-- Strings -->
+    <input x-model="name" type="text">
+    <p x-text="'Hello, ' + name"></p>
+    
+    <!-- Booleans -->
+    <div x-show="isActive">Active content</div>
+    <button @click="isActive = !isActive">Toggle</button>
+    
+    <!-- Arrays -->
+    <template x-for="item in items" :key="item">
+        <li x-text="item"></li>
+    </template>
+    <button @click="items.push('orange')">Add</button>
+    
+    <!-- Objects -->
+    <p x-text="user.name + ' is ' + user.age + ' years old'"></p>
+    <button @click="user.age++">Birthday</button>
+</div>
+
+<!-- Computed properties -->
+<div x-data="{
+    firstName: 'John',
+    lastName: 'Doe',
+    get fullName() {
+        return this.firstName + ' ' + this.lastName
+    }
+}">
+    <input x-model="firstName">
+    <input x-model="lastName">
+    <p x-text="fullName"></p>
+</div>
+```
+
+## 2. Core Directives
+
+### 2.1 x-show & x-transition
+
+```html
+<!-- Basic show/hide -->
+<div x-data="{ open: false }">
+    <button @click="open = !open">Toggle</button>
+    <div x-show="open" style="display: none;">
+        This content toggles
+    </div>
+</div>
+
+<!-- With transitions -->
+<div x-data="{ open: false }">
+    <button @click="open = !open">Toggle Modal</button>
+    
+    <div 
+        x-show="open"
+        x-transition:enter="transition ease-out duration-300"
+        x-transition:enter-start="opacity-0 scale-90"
+        x-transition:enter-end="opacity-100 scale-100"
+        x-transition:leave="transition ease-in duration-300"
+        x-transition:leave-start="opacity-100 scale-100"
+        x-transition:leave-end="opacity-0 scale-90"
+        class="fixed inset-0 flex items-center justify-center bg-black bg-opacity-50"
+    >
+        <div class="bg-white p-6 rounded-lg">
+            <h2>Modal Content</h2>
+            <button @click="open = false">Close</button>
+        </div>
+    </div>
+</div>
+
+<!-- Short syntax -->
+<div x-show="open" x-transition class="transition duration-300">
+    Content with default transition
+</div>
+
+<!-- Conditional transitions -->
+<div x-show="open" 
+     x-transition:enter="transition ease-out"
+     x-transition:enter-start="transform -translate-x-full"
+     x-transition:enter-end="transform translate-x-0">
+    Slide in from left
+</div>
+```
+
+### 2.2 x-if vs x-show
+
+```html
+<!-- x-show: Toggle visibility (DOM stays) -->
+<div x-data="{ show: false }">
+    <div x-show="show" style="display: none;">
+        Always in DOM, just hidden
+    </div>
+</div>
+
+<!-- x-if: Conditional rendering (DOM removed) -->
+<div x-data="{ user: null }">
+    <template x-if="user">
+        <div>
+            <p x-text="user.name"></p>
+            <button @click="user = null">Logout</button>
+        </div>
+    </template>
+    
+    <template x-if="!user">
+        <div>
+            <p>Please login</p>
+            <button @click="user = { name: 'John' }">Login</button>
+        </div>
+    </template>
+</div>
+
+<!-- x-if dengan transisi (gunakan wrapper) -->
+<template x-if="open">
+    <div x-transition>
+        Content with transition
+    </div>
+</template>
+```
+
+### 2.3 x-for: List Rendering
+
+```html
+<!-- Basic list -->
+<div x-data="{ 
+    users: [
+        { id: 1, name: 'John', email: 'john@example.com' },
+        { id: 2, name: 'Jane', email: 'jane@example.com' }
+    ]
+}">
+    <ul>
+        <template x-for="user in users" :key="user.id">
+            <li>
+                <span x-text="user.name"></span> - 
+                <span x-text="user.email"></span>
+            </li>
+        </template>
+    </ul>
+</div>
+
+<!-- With index -->
+<template x-for="(user, index) in users" :key="user.id">
+    <li>
+        <span x-text="index + 1"></span>. 
+        <span x-text="user.name"></span>
+    </li>
+</template>
+
+<!-- Object iteration -->
+<div x-data="{ 
+    settings: { theme: 'dark', lang: 'id', notifications: true }
+}">
+    <template x-for="(value, key) in settings" :key="key">
+        <div>
+            <strong x-text="key"></strong>: 
+            <span x-text="value"></span>
+        </div>
+    </template>
+</div>
+
+<!-- Range iteration -->
+<template x-for="n in 10" :key="n">
+    <span x-text="n"></span>
+</template>
+
+<!-- Empty state -->
+<template x-for="user in users" :key="user.id">
+    <li x-text="user.name"></li>
+</template>
+<div x-show="users.length === 0">No users found</div>
+```
+
+### 2.4 x-model: Two-way Binding
+
+```html
+<!-- Text input -->
+<div x-data="{ search: '' }">
+    <input x-model="search" type="text" placeholder="Search...">
+    <p>Searching for: <span x-text="search"></span></p>
+</div>
+
+<!-- Modifiers -->
+<div x-data="{ 
+    username: '',
+    age: null,
+}">
+    <!-- lazy: Update on change/blur, not input -->
+    <input x-model.lazy="username" placeholder="Lazy update">
+    
+    <!-- number: Cast to number -->
+    <input x-model.number="age" type="number" placeholder="Number only">
+    
+    <!-- debounce: Delay update -->
+    <input x-model.debounce.500ms="description" placeholder="Debounced 500ms">
+    
+    <!-- debounce with custom timing -->
+    <input x-model.debounce.750ms="search" placeholder="750ms delay">
+    
+    <!-- trim: Remove whitespace -->
+    <input x-model.trim="username" placeholder="Trimmed">
+    
+    <!-- Chained modifiers -->
+    <input x-model.lazy.trim="username">
+</div>
+
+<!-- Checkbox -->
+<div x-data="{ agreed: false }">
+    <input x-model="agreed" type="checkbox" id="agree">
+    <label for="agree">I agree</label>
+    <button x-bind:disabled="!agreed" x-bind:class="{ 'opacity-50': !agreed }">
+        Submit
+    </button>
+</div>
+
+<!-- Multiple checkboxes -->
+<div x-data="{ selected: [] }">
+    <input type="checkbox" value="red" x-model="selected"> Red
+    <input type="checkbox" value="green" x-model="selected"> Green
+    <input type="checkbox" value="blue" x-model="selected"> Blue
+    
+    <p>Selected: <span x-text="selected.join(', ')"></span></p>
+</div>
+
+<!-- Radio buttons -->
+<div x-data="{ plan: 'basic' }">
+    <input type="radio" value="basic" x-model="plan" id="basic">
+    <label for="basic">Basic</label>
+    
+    <input type="radio" value="pro" x-model="plan" id="pro">
+    <label for="pro">Pro</label>
+    
+    <p>Selected plan: <span x-text="plan"></span></p>
+</div>
+
+<!-- Select -->
+<div x-data="{ country: '' }">
+    <select x-model="country">
+        <option value="">Select country</option>
+        <option value="id">Indonesia</option>
+        <option value="sg">Singapore</option>
+        <option value="my">Malaysia</option>
+    </select>
+    
+    <template x-if="country">
+        <p>You selected: <span x-text="country.toUpperCase()"></span></p>
+    </template>
+</div>
+
+<!-- Select multiple -->
+<div x-data="{ tags: [] }">
+    <select x-model="tags" multiple>
+        <option value="php">PHP</option>
+        <option value="js">JavaScript</option>
+        <option value="python">Python</option>
+    </select>
+    <p>Selected: <span x-text="tags.join(', ')"></span></p>
+</div>
+```
+
+## 3. Event Handling
+
+### 3.1 Event Directives
+
+```html
+<!-- Click events -->
+<div x-data="{ count: 0 }">
+    <!-- Basic click -->
+    <button @click="count++">Increment</button>
+    
+    <!-- Shorthand -->
+    <button @click="count--">Decrement</button>
+    
+    <!-- With expression -->
+    <button @click="count = 0">Reset</button>
+    
+    <!-- Inline arrow function -->
+    <button @click="(e) => console.log(e.target)">Log Event</button>
+</div>
+
+<!-- Event modifiers -->
+<div x-data="{ 
+    message: '',
+    submitForm() {
+        alert('Form submitted!')
+    }
+}">
+    <!-- prevent: e.preventDefault() -->
+    <form @submit.prevent="submitForm">
+        <button type="submit">Submit</button>
+    </form>
+    
+    <!-- stop: e.stopPropagation() -->
+    <div @click="message = 'div clicked'">
+        <button @click.stop="message = 'button clicked'">
+            Click me (stops bubbling)
+        </button>
+    </div>
+    
+    <!-- once: Hanya trigger sekali -->
+    <button @click.once="message = 'Clicked once'">Click Once</button>
+    
+    <!-- outside: Click di luar element -->
+    <div x-data="{ open: false }">
+        <button @click="open = true">Open</button>
+        <div x-show="open" @click.outside="open = false" class="dropdown">
+            Dropdown content
+        </div>
+    </div>
+    
+    <!-- away: Alias untuk outside -->
+    <div @click.away="open = false">...</div>
+    
+    <!-- window: Listen pada window -->
+    <div @scroll.window="console.log('scrolling')">...</div>
+    
+    <!-- document: Listen pada document -->
+    <div @keydown.document.escape="open = false">...</div>
+    
+    <!-- Chained modifiers -->
+    <form @submit.prevent.stop="handleSubmit">...</form>
+</div>
+
+<!-- Key events -->
+<div x-data="{ 
+    search: '',
+    submit() {
+        console.log('Searching for:', this.search)
+    }
+}">
+    <!-- Specific keys -->
+    <input @keydown.enter="submit" x-model="search" placeholder="Press enter">
+    
+    <!-- Key modifiers -->
+    <input @keydown.escape="search = ''" placeholder="ESC to clear">
+    <input @keydown.arrow-up="moveUp()" placeholder="Arrow up">
+    <input @keydown.ctrl.k="showShortcut()" placeholder="Ctrl+K">
+    
+    <!-- Combination -->
+    <div @keydown.shift.enter="submit()">Shift+Enter to submit</div>
+</div>
+```
+
+### 3.2 Custom Events
+
+```html
+<!-- Dispatching events -->
+<div x-data="{
+    notify(message) {
+        this.$dispatch('notify', { message: message, type: 'success' })
+    }
+}">
+    <button @click="notify('Item saved!')">Save</button>
+</div>
+
+<!-- Listening custom events -->
+<div x-data="{ notifications: [] }" @notify.window="notifications.push($event.detail)">
+    <template x-for="notif in notifications" :key="notif.message">
+        <div x-text="notif.message" class="notification"></div>
+    </template>
+</div>
+
+<!-- Component communication -->
+<!-- Parent -->
+<div x-data="{ childMessage: '' }" @message-from-child="childMessage = $event.detail">
+    <span x-text="childMessage"></span>
+    <div x-data="{}" @mounted="$dispatch('message-from-child', 'Hello from child')">
+        Child component
+    </div>
+</div>
+
+<!-- Event with $el reference -->
+<button @click="$el.disabled = true; save().then(() => $el.disabled = false)">
+    Save
+</button>
+```
+
+## 4. Lifecycle Hooks & Magic Properties
+
+### 4.1 Lifecycle Methods
+
+```html
+<!-- init: Saat component initialized -->
+<div x-data="{ 
+    users: [],
+    async init() {
+        this.users = await fetch('/api/users').then(r => r.json())
+    }
+}">
+    <template x-for="user in users" :key="user.id">
+        <div x-text="user.name"></div>
+    </template>
+</div>
+
+<!-- destroy: Saat component removed -->
+<div x-data="{
+    interval: null,
+    init() {
+        this.interval = setInterval(() => this.poll(), 5000)
+    },
+    destroy() {
+        clearInterval(this.interval)
+    },
+    poll() {
+        console.log('Polling...')
+    }
+}">
+    Polling component
+</div>
+
+<!-- Alpine lifecycle events -->
+<script>
+document.addEventListener('alpine:init', () => {
+    console.log('Alpine initialized')
+})
+
+document.addEventListener('alpine:starting', () => {
+    console.log('Alpine starting')
+})
+
+document.addEventListener('alpine:finished', () => {
+    console.log('Alpine finished initial render')
+})
+</script>
+```
+
+### 4.2 Magic Properties
+
+```html
+<!-- $el: Current element -->
+<div x-data>
+    <button @click="$el.innerHTML = 'Clicked!'">Click me</button>
+</div>
+
+<!-- $refs: Referenced elements -->
+<div x-data="{ focusInput() { this.$refs.input.focus() } }">
+    <input x-ref="input" type="text">
+    <button @click="focusInput()">Focus Input</button>
+</div>
+
+<!-- Multiple refs -->
+<div x-data="{ 
+    logValues() {
+        console.log(this.$refs.name.value, this.$refs.email.value)
+    }
+}">
+    <input x-ref="name" type="text" placeholder="Name">
+    <input x-ref="email" type="email" placeholder="Email">
+    <button @click="logValues()">Log</button>
+</div>
+
+<!-- $store: Global store -->
+<script>
+document.addEventListener('alpine:init', () => {
+    Alpine.store('notifications', {
+        items: [],
+        add(message) {
+            this.items.push(message)
+            setTimeout(() => this.items.shift(), 3000)
+        }
+    })
+})
+</script>
+
+<div x-data>
+    <button @click="$store.notifications.add('New notification')">
+        Notify
+    </button>
+    <div>
+        <template x-for="notif in $store.notifications.items" :key="notif">
+            <div x-text="notif"></div>
+        </template>
+    </div>
+</div>
+
+<!-- $watch: Watch data changes -->
+<div x-data="{ 
+    query: '',
+    results: [],
+    init() {
+        this.$watch('query', value => {
+            if (value.length > 2) {
+                this.search(value)
+            }
+        })
+    },
+    async search(q) {
+        this.results = await fetch(`/api/search?q=${q}`).then(r => r.json())
+    }
+}">
+    <input x-model="query" placeholder="Search...">
+    <ul>
+        <template x-for="result in results" :key="result.id">
+            <li x-text="result.title"></li>
+        </template>
+    </ul>
+</div>
+
+<!-- $nextTick: Wait for DOM update -->
+<div x-data="{ items: [] }">
+    <button @click="items.push('New item'); $nextTick(() => { 
+        $refs.list.scrollTop = $refs.list.scrollHeight 
+    })">Add Item</button>
+    <ul x-ref="list">
+        <template x-for="item in items" :key="item">
+            <li x-text="item"></li>
+        </template>
+    </ul>
+</div>
+```
+
+## 5. Advanced Patterns
+
+### 5.1 Reusable Components
+
+```html
+<!-- Dropdown component -->
+<div x-data="dropdown()" class="relative">
+    <button @click="toggle" x-ref="trigger" class="btn">Options</button>
+    <div 
+        x-show="open" 
+        @click.away="close"
+        x-transition
+        class="absolute mt-2 w-48 bg-white rounded-md shadow-lg"
+    >
+        <a href="#" class="block px-4 py-2 hover:bg-gray-100">Item 1</a>
+        <a href="#" class="block px-4 py-2 hover:bg-gray-100">Item 2</a>
+    </div>
+</div>
+
+<script>
+function dropdown() {
+    return {
+        open: false,
+        toggle() {
+            if (this.open) {
+                this.close()
+            } else {
+                this.open = true
+            }
+        },
+        close() {
+            this.open = false
+        }
+    }
+}
+</script>
+
+<!-- Modal component -->
+<div x-data="modal()" @keydown.escape.window="close">
+    <button @click="open" class="btn-primary">Open Modal</button>
+    
+    <template x-teleport="body">
+        <div 
+            x-show="isOpen"
+            class="fixed inset-0 z-50 overflow-y-auto"
+            aria-labelledby="modal-title" 
+            role="dialog" 
+            aria-modal="true"
+        >
+            <div class="flex items-end justify-center min-h-screen px-4 pt-4 pb-20 text-center sm:block sm:p-0">
+                <!-- Backdrop -->
+                <div 
+                    x-show="isOpen" 
+                    x-transition:enter="ease-out duration-300"
+                    x-transition:enter-start="opacity-0"
+                    x-transition:enter-end="opacity-100"
+                    x-transition:leave="ease-in duration-200"
+                    x-transition:leave-start="opacity-100"
+                    x-transition:leave-end="opacity-0"
+                    class="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity"
+                    @click="close"
+                ></div>
+
+                <!-- Modal panel -->
+                <div 
+                    x-show="isOpen"
+                    x-transition:enter="ease-out duration-300"
+                    x-transition:enter-start="opacity-0 translate-y-4 sm:translate-y-0 sm:scale-95"
+                    x-transition:enter-end="opacity-100 translate-y-0 sm:scale-100"
+                    x-transition:leave="ease-in duration-200"
+                    x-transition:leave-start="opacity-100 translate-y-0 sm:scale-100"
+                    x-transition:leave-end="opacity-0 translate-y-4 sm:translate-y-0 sm:scale-95"
+                    class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full"
+                >
+                    <div class="bg-white px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
+                        <h3 class="text-lg font-medium text-gray-900" id="modal-title">
+                            Modal Title
+                        </h3>
+                        <div class="mt-2">
+                            <p class="text-sm text-gray-500">
+                                Modal content here...
+                            </p>
+                        </div>
+                    </div>
+                    <div class="bg-gray-50 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
+                        <button @click="close" type="button" class="btn-primary">
+                            Close
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </template>
+</div>
+
+<script>
+function modal() {
+    return {
+        isOpen: false,
+        open() {
+            this.isOpen = true
+            document.body.classList.add('overflow-hidden')
+        },
+        close() {
+            this.isOpen = false
+            document.body.classList.remove('overflow-hidden')
+        }
+    }
+}
+</script>
+```
+
+### 5.2 x-teleport
+
+```html
+<!-- Teleport content ke lokasi lain di DOM -->
+<div x-data="{ open: false }">
+    <button @click="open = true">Open Modal</button>
+    
+    <!-- Teleport ke body untuk z-index yang benar -->
+    <template x-teleport="body">
+        <div x-show="open" class="modal-wrapper">
+            <div class="modal" @click.away="open = false">
+                <h2>Modal Title</h2>
+                <p>This is teleported to body</p>
+            </div>
+        </div>
+    </template>
+</div>
+
+<!-- Teleport dengan target spesifik -->
+<div id="notification-container"></div>
+
+<div x-data="{ show: false }">
+    <button @click="show = true">Show Notification</button>
+    <template x-teleport="#notification-container">
+        <div x-show="show" x-transition class="notification">
+            Notification message
+        </div>
+    </template>
+</div>
+```
+
+### 5.3 x-ignore
+
+```html
+<!-- Skip Alpine initialization untuk content spesifik -->
+<div x-data="{ content: '<p>Safe HTML</p>' }">
+    <!-- Ignore children -->
+    <div x-ignore>
+        <p>This won't be processed by Alpine</p>
+        <span x-text="this won't execute"></span>
+    </div>
+    
+    <!-- Dynamic content dari server yang tidak trusted -->
+    <div x-html="content"></div>
+</div>
+```
+
+### 5.4 x-effect & x-ignore
+
+```html
+<!-- x-effect: Reactive effect -->
+<div x-data="{ 
+    count: 0,
+    doubled: 0
+}" x-effect="doubled = count * 2">
+    <button @click="count++">Count: <span x-text="count"></span></button>
+    <p>Doubled: <span x-text="doubled"></span></p>
+</div>
+
+<!-- x-ignore: Skip parsing -->
+<div x-data>
+    <div x-ignore>
+        {{ Blade syntax won't conflict here }}
+        <span x-text="ignored">Ignored by Alpine</span>
+    </div>
+</div>
+```
+
+## 6. Integration dengan Laravel Blade
+
+### 6.1 Passing Data dari Laravel
+
+```php
+// Controller
+public function index()
+{
+    return view('dashboard', [
+        'initialUsers' => User::limit(10)->get(),
+        'apiEndpoint' => route('api.users.index')
+    ]);
+}
+```
+
+```html
+<!-- Blade Template -->
+<div 
+    x-data="{ 
+        users: {{ Js::from($initialUsers) }},
+        endpoint: '{{ $apiEndpoint }}',
+        async loadMore() {
+            const response = await fetch(`${this.endpoint}?page=2`)
+            const data = await response.json()
+            this.users.push(...data.data)
+        }
+    }"
+>
+    <ul>
+        <template x-for="user in users" :key="user.id">
+            <li x-text="user.name"></li>
+        </template>
+    </ul>
+    <button @click="loadMore">Load More</button>
+</div>
+```
+
+### 6.2 Blade Components + Alpine
+
+```php
+// resources/views/components/dropdown.blade.php
+@props(['trigger', 'content'])
+
+<div x-data="{ open: false }" class="relative">
+    <div @click="open = !open">
+        {{ $trigger }}
+    </div>
+    
+    <div 
+        x-show="open" 
+        @click.away="open = false"
+        x-transition
+        class="absolute right-0 mt-2 w-48 rounded-md shadow-lg bg-white ring-1 ring-black ring-opacity-5"
+    >
+        {{ $content }}
+    </div>
+</div>
+```
+
+```html
+<!-- Usage -->
+<x-dropdown>
+    <x-slot:trigger>
+        <button class="btn">User Menu</button>
+    </x-slot:trigger>
+    
+    <x-slot:content>
+        <a href="/profile" class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">Profile</a>
+        <a href="/settings" class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">Settings</a>
+        <form method="POST" action="/logout">
+            @csrf
+            <button type="submit" class="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">
+                Logout
+            </button>
+        </form>
+    </x-slot:content>
+</x-dropdown>
+```
+
+### 6.3 Livewire + Alpine Integration
+
+```html
+<!-- Inside Livewire component -->
+<div x-data="{ 
+    count: @entangle('count'),
+    get doubled() {
+        return this.count * 2
+    }
+}">
+    <input x-model="count" type="number">
+    <p>Livewire count: <span x-text="count"></span></p>
+    <p>Alpine doubled: <span x-text="doubled"></span></p>
+    <button wire:click="save">Save to Database</button>
+</div>
+
+<!-- Two-way binding dengan defer -->
+<div x-data="{ 
+    search: @entangle('search').defer 
+}">
+    <input x-model="search" placeholder="Search...">
+    <!-- Updates only on blur/enter, not every keystroke -->
+</div>
+```
+
+### 6.4 Blade Directives untuk Alpine
+
+```php
+// AppServiceProvider.php
+Blade::directive('alpine', function ($expression) {
+    return "<?php echo 'x-data=\"' . htmlspecialchars(json_encode($expression), ENT_QUOTES, 'UTF-8') . '\"'; ?>";
+});
+```
+
+```html
+<!-- Penggunaan -->
+<div @alpine(['user' => $user, 'posts' => $posts])>
+    <!-- Alpine component dengan data dari PHP -->
+</div>
+```
+
+### 6.5 Security: XSS Prevention
+
+```html
+<!-- ❌ Jangan langsung render user input -->
+<div x-data="{ content: '{{ $userInput }}' }">
+    <div x-html="content"></div> <!-- Dangerous! -->
+</div>
+
+<!-- ✅ Gunakan x-text untuk text content -->
+<div x-data="{ message: '{{ addslashes($message) }}' }">
+    <div x-text="message"></div> <!-- Safe -->
+</div>
+
+<!-- ✅ Sanitize HTML jika perlu x-html -->
+<div x-data="{ 
+    html: '{{ Js::from(strip_tags($htmlContent, '<p><br><strong>')) }}'
+}">
+    <div x-html="html"></div>
+</div>
+
+<!-- ✅ Gunakan @js directive Laravel 9+ -->
+<div x-data="{ 
+    config: @js($config),
+    user: @js($user)
+}">
+    <!-- Automatically escaped and properly formatted -->
+</div>
+```
+
+## 7. Common Patterns & Best Practices
+
+### 7.1 Form Handling
+
+```html
+<div x-data="{
+    form: {
+        name: '',
+        email: '',
+        message: ''
+    },
+    errors: {},
+    submitting: false,
+    async submit() {
+        this.submitting = true
+        this.errors = {}
+        
+        try {
+            const response = await fetch('/contact', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRF-TOKEN': document.querySelector('meta[name=csrf-token]').content
+                },
+                body: JSON.stringify(this.form)
+            })
+            
+            if (!response.ok) {
+                const data = await response.json()
+                this.errors = data.errors
+                return
+            }
+            
+            // Success
+            this.form = { name: '', email: '', message: '' }
+            alert('Message sent!')
+        } finally {
+            this.submitting = false
+        }
+    }
+}">
+    <form @submit.prevent="submit">
+        <div>
+            <input x-model="form.name" type="text" placeholder="Name" 
+                   :class="{ 'border-red-500': errors.name }">
+            <span x-show="errors.name" x-text="errors.name[0]" class="text-red-500 text-sm"></span>
+        </div>
+        
+        <div>
+            <input x-model="form.email" type="email" placeholder="Email"
+                   :class="{ 'border-red-500': errors.email }">
+            <span x-show="errors.email" x-text="errors.email[0]" class="text-red-500 text-sm"></span>
+        </div>
+        
+        <div>
+            <textarea x-model="form.message" placeholder="Message"
+                      :class="{ 'border-red-500': errors.message }"></textarea>
+            <span x-show="errors.message" x-text="errors.message[0]" class="text-red-500 text-sm"></span>
+        </div>
+        
+        <button type="submit" :disabled="submitting" :class="{ 'opacity-50': submitting }">
+            <span x-show="!submitting">Send</span>
+            <span x-show="submitting">Sending...</span>
+        </button>
+    </form>
+</div>
+```
+
+### 7.2 Tabs Component
+
+```html
+<div x-data="{ 
+    activeTab: 'profile',
+    tabs: [
+        { id: 'profile', label: 'Profile', content: 'Profile content here' },
+        { id: 'settings', label: 'Settings', content: 'Settings content here' },
+        { id: 'messages', label: 'Messages', content: 'Messages content here' }
+    ]
+}">
+    <div class="border-b border-gray-200">
+        <nav class="-mb-px flex space-x-8" aria-label="Tabs">
+            <template x-for="tab in tabs" :key="tab.id">
+                <button 
+                    @click="activeTab = tab.id"
+                    :class="{
+                        'border-indigo-500 text-indigo-600': activeTab === tab.id,
+                        'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300': activeTab !== tab.id
+                    }"
+                    class="whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm"
+                    x-text="tab.label"
+                ></button>
+            </template>
+        </nav>
+    </div>
+    
+    <div class="mt-4">
+        <template x-for="tab in tabs" :key="tab.id">
+            <div 
+                x-show="activeTab === tab.id"
+                x-transition:enter="transition ease-out duration-200"
+                x-transition:enter-start="opacity-0 translate-y-1"
+                x-transition:enter-end="opacity-100 translate-y-0"
+                x-text="tab.content"
+            ></div>
+        </template>
+    </div>
+</div>
+```
+
+### 7.3 Async Data Loading
+
+```html
+<div x-data="{
+    posts: [],
+    loading: false,
+    page: 1,
+    hasMore: true,
+    async init() {
+        await this.loadPosts()
+    },
+    async loadPosts() {
+        if (this.loading || !this.hasMore) return
+        
+        this.loading = true
+        try {
+            const response = await fetch(`/api/posts?page=${this.page}`)
+            const data = await response.json()
+            
+            this.posts.push(...data.data)
+            this.page++
+            this.hasMore = data.current_page < data.last_page
+        } finally {
+            this.loading = false
+        }
+    }
+}" @scroll.window="if ((window.innerHeight + window.scrollY) >= document.body.offsetHeight - 100) loadPosts()">
+    <div class="space-y-4">
+        <template x-for="post in posts" :key="post.id">
+            <article class="border p-4 rounded">
+                <h2 x-text="post.title" class="text-xl font-bold"></h2>
+                <p x-text="post.excerpt" class="text-gray-600 mt-2"></p>
+            </article>
+        </template>
+    </div>
+    
+    <div x-show="loading" class="text-center py-4">
+        <span>Loading...</span>
+    </div>
+    
+    <div x-show="!hasMore && posts.length > 0" class="text-center py-4 text-gray-500">
+        No more posts
+    </div>
+</div>
+```
+
+### 7.4 Search with Debounce
+
+```html
+<div x-data="{
+    query: '',
+    results: [],
+    loading: false,
+    init() {
+        this.$watch('query', value => {
+            if (value.length < 2) {
+                this.results = []
+                return
+            }
+            this.search()
+        })
+    },
+    search: _.debounce(async function() {
+        this.loading = true
+        try {
+            const response = await fetch(`/api/search?q=${encodeURIComponent(this.query)}`)
+            this.results = await response.json()
+        } finally {
+            this.loading = false
+        }
+    }, 300)
+}">
+    <div class="relative">
+        <input 
+            x-model="query" 
+            type="text" 
+            placeholder="Search..."
+            class="w-full border rounded px-4 py-2"
+        >
+        
+        <div x-show="loading" class="absolute right-3 top-2.5">
+            <svg class="animate-spin h-5 w-5 text-gray-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+        </div>
+    </div>
+    
+    <ul x-show="results.length > 0" class="mt-2 border rounded divide-y">
+        <template x-for="result in results" :key="result.id">
+            <li class="px-4 py-2 hover:bg-gray-50 cursor-pointer" x-text="result.title"></li>
+        </template>
+    </ul>
+    
+    <p x-show="query.length >= 2 && results.length === 0 && !loading" class="mt-2 text-gray-500">
+        No results found
+    </p>
+</div>
+
+<!-- Atau dengan Alpine debounce built-in -->
+<div x-data="{ query: '', search() { /* ... */ } }">
+    <input x-model.debounce.300ms="query" @input="search">
+</div>
+```
+
+## 8. Performance Optimization
+
+### 8.1 Lazy Initialization
+
+```html
+<!-- x-init dengan defer -->
+<div x-data="{ items: [] }" x-init="$nextTick(() => { items = {{ Js::from($items) }} })">
+    <!-- Component renders immediately, data loads after -->
+</div>
+
+<!-- Intersection Observer untuk lazy load -->
+<div x-data="{ shown: false }" x-intersect="shown = true">
+    <div x-show="shown" x-transition>
+        <!-- Heavy content only renders when visible -->
+        <img src="heavy-image.jpg" loading="lazy">
+    </div>
+</div>
+
+<!-- Alpine Intersect plugin -->
+<div x-data @intersect.once="loadContent()">
+    <div x-html="content"></div>
+</div>
+```
+
+### 8.2 Optimize Large Lists
+
+```html
+<!-- Virtual scrolling untuk list besar -->
+<div x-data="{
+    items: Array.from({length: 10000}, (_, i) => ({ id: i, name: `Item ${i}` })),
+    visibleItems: [],
+    containerHeight: 400,
+    itemHeight: 50,
+    scrollTop: 0,
+    get startIndex() {
+        return Math.floor(this.scrollTop / this.itemHeight)
+    },
+    get endIndex() {
+        return Math.min(
+            this.startIndex + Math.ceil(this.containerHeight / this.itemHeight) + 1,
+            this.items.length
+        )
+    },
+    get visibleItems() {
+        return this.items.slice(this.startIndex, this.endIndex)
+    },
+    get totalHeight() {
+        return this.items.length * this.itemHeight
+    },
+    get offsetY() {
+        return this.startIndex * this.itemHeight
+    }
+}">
+    <div 
+        @scroll="scrollTop = $event.target.scrollTop"
+        :style="`height: ${containerHeight}px; overflow-y: auto;`"
+    >
+        <div :style="`height: ${totalHeight}px; position: relative;`">
+            <div :style="`transform: translateY(${offsetY}px);`">
+                <template x-for="item in visibleItems" :key="item.id">
+                    <div :style="`height: ${itemHeight}px;`" x-text="item.name"></div>
+                </template>
+            </div>
+        </div>
+    </div>
+</div>
+```
+
+## Kesimpulan
+
+Alpine.js menyediakan solusi reactive UI yang ideal untuk Laravel:
+- **Zero build step**: Langsung gunakan di Blade templates
+- **Lightweight**: ~15kb gzipped, no dependencies
+- **Familiar syntax**: Mirip Vue.js tapi lebih sederhana
+- **Perfect for**: Dropdowns, modals, tabs, form validation, AJAX interactions
+- **Integration**: Native support dengan Blade dan Livewire
+
+Selanjutnya di **Sesi 65**, kita akan eksplorasi ekosistem Spatie packages untuk Laravel termasuk permission, backup, medialibrary, dan query builder.
+```

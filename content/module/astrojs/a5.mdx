@@ -1,0 +1,1216 @@
+---
+title: "Sesi 5: Components & Framework Integration"
+description: "Astro components adalah komponen native Astro dengan ekstensi `.astro`. Mereka adalah fondasi dari Islands Architecture - HTML statis sebagai default,..."
+category: "astrojs"
+tags: ["astrojs", "components"]
+order: 5
+---
+
+# Sesi 5: Components & Framework Integration
+
+## 5.1 Astro Components (Islands Architecture)
+
+Astro components adalah komponen native Astro dengan ekstensi `.astro`. Mereka adalah fondasi dari Islands Architecture - HTML statis sebagai default, dengan interaktivitas sebagai opt-in.
+
+### Karakteristik Astro Components:
+
+| Fitur | Astro Component | Framework Component (React/Vue) |
+|-------|----------------|--------------------------------|
+| **Default Output** | HTML murni, zero JS | JavaScript bundle |
+| **Client Directive** | Tidak perlu (default statis) | Wajib (`client:*`) |
+| **Hydration** | Tidak ada | Perlu dihydrate |
+| **Performance** | Terbaik untuk konten | Overhead JS |
+| **Use Case** | Layout, konten statis | Interaktivitas kompleks |
+
+### Contoh Astro Component Lengkap:
+
+```astro
+---
+// src/components/Card.astro
+// Component ini 100% server-side, zero JavaScript di client!
+
+interface Props {
+  image?: string;
+  tags?: string[];
+  href: string;
+  featured?: boolean;
+}
+
+const { 
+  title, 
+  description, 
+  image = '/images/placeholder.jpg',
+  tags = [],
+  href,
+  featured = false 
+} = Astro.props;
+
+// Logic di server - tidak ada di browser
+const formattedTitle = title.length > 50 
+  ? title.slice(0, 50) + '...' 
+  : title;
+
+const tagColors = ['blue', 'green', 'purple', 'orange'];
+---
+
+<article class:list={['card', { 'card-featured': featured }]}>
+  {featured && <span class="badge">Featured</span>}
+  
+  <a href={href} class="card-link">
+    <div class="image-wrapper">
+      <img 
+        src={image} 
+        alt={title}
+        loading="lazy"
+        width="400"
+        height="225"
+      />
+    </div>
+    
+    <div class="content">
+      <h3>{formattedTitle}</h3>
+      <p>{description}</p>
+      
+      {tags.length > 0 && (
+        <div class="tags">
+          {tags.map((tag, index) => (
+            <span 
+              class="tag" 
+              style={`background-color: var(--color-${tagColors[index % tagColors.length]})`}
+            >
+              {tag}
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  </a>
+</article>
+
+<style>
+  .card {
+    border: 1px solid #e5e7eb;
+    border-radius: 12px;
+    overflow: hidden;
+    transition: transform 0.2s, box-shadow 0.2s;
+    background: white;
+  }
+  
+  .card:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1);
+  }
+  
+  .card-featured {
+    border-color: #3b82f6;
+    border-width: 2px;
+  }
+  
+  .badge {
+    position: absolute;
+    background: #3b82f6;
+    color: white;
+    padding: 0.25rem 0.75rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    border-radius: 0 0 8px 0;
+  }
+  
+  .card-link {
+    text-decoration: none;
+    color: inherit;
+    display: block;
+  }
+  
+  .image-wrapper {
+    aspect-ratio: 16/9;
+    overflow: hidden;
+  }
+  
+  .image-wrapper img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+  
+  .content {
+    padding: 1.25rem;
+  }
+  
+  h3 {
+    margin: 0 0 0.5rem;
+    font-size: 1.25rem;
+    color: #111827;
+  }
+  
+  p {
+    margin: 0 0 1rem;
+    color: #6b7280;
+    line-height: 1.5;
+  }
+  
+  .tags {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+  
+  .tag {
+    padding: 0.25rem 0.75rem;
+    border-radius: 9999px;
+    font-size: 0.75rem;
+    font-weight: 500;
+    color: white;
+  }
+</style>
+```
+
+---
+
+## 5.2 Framework Components (React, Vue, Svelte, SolidJS)
+
+Astro memungkinkan kamu menggunakan komponen dari framework lain dalam satu project. Ini seperti memiliki tim ahli dari berbagai bidang dalam satu proyek.
+
+### Instalasi Integrasi:
+
+```bash
+# React
+npx astro add react
+
+# Vue
+npx astro add vue
+
+# Svelte
+npx astro add svelte
+
+# SolidJS
+npx astro add solid-js
+
+# Atau install manual:
+npm install @astrojs/react react react-dom
+```
+
+### Konfigurasi Multiple Frameworks:
+
+```javascript
+// astro.config.mjs
+import { defineConfig } from 'astro/config';
+import react from '@astrojs/react';
+import vue from '@astrojs/vue';
+import svelte from '@astrojs/svelte';
+import solid from '@astrojs/solid-js';
+
+export default defineConfig({
+  integrations: [
+    react({
+      include: ['**/react-components/**', '**/*.react.jsx'],
+    }),
+    vue({
+      include: ['**/vue-components/**', '**/*.vue'],
+    }),
+    svelte(),
+    solid(),
+  ],
+});
+```
+
+### React Component di Astro:
+
+```jsx
+// src/components/react/SearchWidget.jsx
+import { useState, useEffect } from 'react';
+
+export default function SearchWidget({ placeholder = 'Cari...' }) {
+  const [query, setQuery] = useState('');
+  const [results, setResults] = useState([]);
+  const [isLoading, setIsLoading] = useState(false);
+
+  useEffect(() => {
+    if (query.length < 2) {
+      setResults([]);
+      return;
+    }
+
+    const timeoutId = setTimeout(async () => {
+      setIsLoading(true);
+      try {
+        const res = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
+        const data = await res.json();
+        setResults(data.results);
+      } catch (error) {
+        console.error('Search error:', error);
+      } finally {
+        setIsLoading(false);
+      }
+    }, 300);
+
+    return () => clearTimeout(timeoutId);
+  }, [query]);
+
+  return (
+    <div className="search-widget">
+      <input
+        type="search"
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        placeholder={placeholder}
+        className="search-input"
+      />
+      
+      {isLoading && <div className="loading">Mencari...</div>}
+      
+      {results.length > 0 && (
+        <ul className="search-results">
+          {results.map((item) => (
+            <li key={item.id}>
+              <a href={item.url}>{item.title}</a>
+              <p>{item.excerpt}</p>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+```
+
+**Penggunaan di Astro:**
+
+```astro
+---
+// src/pages/blog.astro
+import SearchWidget from '../components/react/SearchWidget.jsx';
+import Layout from '../layouts/Layout.astro';
+---
+
+<Layout title="Blog">
+  <h1>Artikel Blog</h1>
+  
+  <!-- 
+    WAJIB pakai client directive!
+    Tanpa ini, React component tidak akan hidup (hanya render HTML statis)
+  -->
+  <SearchWidget 
+    client:load 
+    placeholder="Cari artikel..." 
+  />
+  
+  <!-- List artikel statis (Astro component) -->
+  <div class="article-list">
+    <!-- ... -->
+  </div>
+</Layout>
+```
+
+### Vue Component di Astro:
+
+```vue
+<!-- src/components/vue/CommentSection.vue -->
+<template>
+  <div class="comments">
+    <h3>{{ comments.length }} Komentar</h3>
+    
+    <form @submit.prevent="addComment" class="comment-form">
+      <textarea 
+        v-model="newComment" 
+        placeholder="Tulis komentar..."
+        rows="3"
+      ></textarea>
+      <button type="submit" :disabled="!newComment.trim()">
+        Kirim
+      </button>
+    </form>
+    
+    <ul class="comment-list">
+      <li v-for="comment in comments" :key="comment.id" class="comment">
+        <img :src="comment.avatar" :alt="comment.author" class="avatar" />
+        <div class="content">
+          <strong>{{ comment.author }}</strong>
+          <time>{{ formatDate(comment.date) }}</time>
+          <p>{{ comment.text }}</p>
+        </div>
+      </li>
+    </ul>
+  </div>
+</template>
+
+<script setup>
+import { ref, onMounted } from 'vue';
+
+const props = defineProps({
+  postId: String
+});
+
+const comments = ref([]);
+const newComment = ref('');
+
+onMounted(async () => {
+  // Fetch comments saat component mount
+  const res = await fetch(`/api/comments?postId=${props.postId}`);
+  comments.value = await res.json();
+});
+
+const addComment = async () => {
+  if (!newComment.value.trim()) return;
+  
+  const res = await fetch('/api/comments', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      postId: props.postId,
+      text: newComment.value
+    })
+  });
+  
+  const saved = await res.json();
+  comments.value.unshift(saved);
+  newComment.value = '';
+};
+
+const formatDate = (date) => {
+  return new Date(date).toLocaleDateString('id-ID', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric'
+  });
+};
+</script>
+
+<style scoped>
+.comments {
+  margin-top: 2rem;
+  padding-top: 2rem;
+  border-top: 1px solid #e5e7eb;
+}
+
+.comment-form {
+  margin-bottom: 1.5rem;
+}
+
+textarea {
+  width: 100%;
+  padding: 0.75rem;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  resize: vertical;
+}
+
+button {
+  margin-top: 0.5rem;
+  padding: 0.5rem 1rem;
+  background: #3b82f6;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.comment-list {
+  list-style: none;
+  padding: 0;
+}
+
+.comment {
+  display: flex;
+  gap: 1rem;
+  padding: 1rem 0;
+  border-bottom: 1px solid #f3f4f6;
+}
+
+.avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+.content {
+  flex: 1;
+}
+
+time {
+  color: #6b7280;
+  font-size: 0.875rem;
+  margin-left: 0.5rem;
+}
+</style>
+```
+
+**Penggunaan di Astro:**
+
+```astro
+---
+// src/pages/blog/[slug].astro
+import CommentSection from '../../components/vue/CommentSection.vue';
+import Layout from '../../layouts/Layout.astro';
+
+const { slug } = Astro.params;
+---
+
+<Layout>
+  <article>
+    <!-- Konten artikel (Astro - statis) -->
+    <Content />
+  </article>
+  
+  <!-- Vue component - hanya dihydrate saat terlihat -->
+  <CommentSection 
+    client:visible 
+    postId={slug} 
+  />
+</Layout>
+```
+
+### Svelte Component di Astro:
+
+```svelte
+<!-- src/components/svelte/ImageCarousel.svelte -->
+<script>
+  export let images = [];
+  export let autoplay = false;
+  export let interval = 5000;
+  
+  let currentIndex = 0;
+  let timer;
+  
+  $: currentImage = images[currentIndex];
+  
+  function next() {
+    currentIndex = (currentIndex + 1) % images.length;
+  }
+  
+  function prev() {
+    currentIndex = (currentIndex - 1 + images.length) % images.length;
+  }
+  
+  function goTo(index) {
+    currentIndex = index;
+    resetTimer();
+  }
+  
+  function resetTimer() {
+    if (timer) clearInterval(timer);
+    if (autoplay) {
+      timer = setInterval(next, interval);
+    }
+  }
+  
+  import { onMount, onDestroy } from 'svelte';
+  
+  onMount(() => {
+    if (autoplay) resetTimer();
+  });
+  
+  onDestroy(() => {
+    if (timer) clearInterval(timer);
+  });
+</script>
+
+<div class="carousel">
+  <div class="slides">
+    {#each images as image, i}
+      <div 
+        class="slide" 
+        class:active={i === currentIndex}
+        style="background-image: url({image.url})"
+      >
+        {#if image.caption}
+          <div class="caption">{image.caption}</div>
+        {/if}
+      </div>
+    {/each}
+  </div>
+  
+  <button class="nav prev" on:click={prev} aria-label="Previous">
+    ←
+  </button>
+  <button class="nav next" on:click={next} aria-label="Next">
+    →
+  </button>
+  
+  <div class="indicators">
+    {#each images as _, i}
+      <button 
+        class="dot" 
+        class:active={i === currentIndex}
+        on:click={() => goTo(i)}
+        aria-label="Go to slide {i + 1}"
+      />
+    {/each}
+  </div>
+</div>
+
+<style>
+  .carousel {
+    position: relative;
+    width: 100%;
+    height: 400px;
+    overflow: hidden;
+    border-radius: 12px;
+  }
+  
+  .slides {
+    position: relative;
+    width: 100%;
+    height: 100%;
+  }
+  
+  .slide {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-size: cover;
+    background-position: center;
+    opacity: 0;
+    transition: opacity 0.5s;
+  }
+  
+  .slide.active {
+    opacity: 1;
+  }
+  
+  .caption {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    padding: 1.5rem;
+    background: linear-gradient(transparent, rgba(0,0,0,0.7));
+    color: white;
+  }
+  
+  .nav {
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    background: rgba(255,255,255,0.8);
+    border: none;
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    cursor: pointer;
+    font-size: 1.25rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  
+  .nav.prev { left: 1rem; }
+  .nav.next { right: 1rem; }
+  
+  .indicators {
+    position: absolute;
+    bottom: 1rem;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    gap: 0.5rem;
+  }
+  
+  .dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    border: none;
+    background: rgba(255,255,255,0.5);
+    cursor: pointer;
+  }
+  
+  .dot.active {
+    background: white;
+  }
+</style>
+```
+
+**Penggunaan di Astro:**
+
+```astro
+---
+// src/pages/gallery.astro
+import ImageCarousel from '../components/svelte/ImageCarousel.svelte';
+import Layout from '../layouts/Layout.astro';
+
+const galleryImages = [
+  { url: '/images/photo1.jpg', caption: 'Sunset di Bali' },
+  { url: '/images/photo2.jpg', caption: 'Gunung Bromo' },
+  { url: '/images/photo3.jpg', caption: 'Raja Ampat' },
+  { url: '/images/photo4.jpg', caption: 'Candi Borobudur' },
+];
+---
+
+<Layout title="Galeri Foto">
+  <h1>Galeri Perjalanan</h1>
+  
+  <ImageCarousel 
+    client:load
+    images={galleryImages}
+    autoplay={true}
+    interval={4000}
+  />
+</Layout>
+```
+
+---
+
+## 5.3 Component Props & Data Passing
+
+Meneruskan data antara Astro dan framework components memerlukan pemahaman tentang serialization.
+
+### Passing Props ke Framework Components:
+
+```astro
+---
+// src/pages/demo.astro
+import ReactComponent from '../components/react/ReactComponent.jsx';
+import VueComponent from '../components/vue/VueComponent.vue';
+
+// Data dari Astro (server-side)
+const user = {
+  name: 'Budi Santoso',
+  email: 'budi@example.com',
+  role: 'admin',
+  joinDate: new Date('2023-01-15'),  // Date object
+  preferences: {
+    theme: 'dark',
+    notifications: true
+  }
+};
+
+const items = ['Laptop', 'Mouse', 'Keyboard'];
+---
+
+<!-- 
+  Props akan di-serialize ke JSON
+  Hanya data yang bisa di-JSON-kan yang bisa diteruskan
+-->
+<ReactComponent
+  client:load
+  user={user}
+  items={items}
+  count={items.length}
+  isActive={true}
+/>
+
+<VueComponent
+  client:visible
+  :user="user"        <!-- Vue binding syntax juga works -->
+  items={items}
+/>
+```
+
+### Batasan Props:
+
+**✅ Bisa diteruskan:**
+- String, Number, Boolean
+- Array, Object (plain)
+- Date (akan dikonversi ke string, perlu parse ulang di client)
+
+**❌ Tidak bisa diteruskan:**
+- Functions
+- Class instances
+- Maps, Sets
+- Symbols
+
+**Solusi untuk Functions:**
+
+```jsx
+// React component
+export default function Counter({ initialCount }) {
+  const [count, setCount] = useState(initialCount);
+  
+  // Function didefinisikan di client, bukan dari props
+  const increment = () => setCount(c => c + 1);
+  const decrement = () => setCount(c => c - 1);
+  
+  return (
+    <div>
+      <button onClick={decrement}>-</button>
+      <span>{count}</span>
+      <button onClick={increment}>+</button>
+    </div>
+  );
+}
+```
+
+### Passing Data dari Framework ke Astro:
+
+Tidak bisa langsung. Gunakan:
+1. **URL parameters** (navigasi)
+2. **Global state** (nanostores, see Sesi 11)
+3. **Custom events** (dispatch dari framework, listen di Astro)
+
+```jsx
+// React component mengirim data
+function SearchForm() {
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    const query = e.target.search.value;
+    
+    // Navigasi dengan query parameter
+    window.location.href = `/search?q=${encodeURIComponent(query)}`;
+    
+    // Atau dispatch custom event
+    window.dispatchEvent(new CustomEvent('search', { detail: query }));
+  };
+  
+  return <form onSubmit={handleSubmit}>...</form>;
+}
+```
+
+```astro
+---
+// Astro page menerima via URL
+const query = Astro.url.searchParams.get('q');
+---
+```
+
+---
+
+## 5.4 Component Composition
+
+Menggabungkan berbagai tipe komponen dalam satu halaman.
+
+### Pattern: Astro Wrapper + Framework Children:
+
+```astro
+---
+// src/components/Modal.astro
+// Wrapper Astro untuk konten modal
+interface Props {
+  open?: boolean;
+}
+
+const { title, open = false } = Astro.props;
+---
+
+<div class="modal-backdrop" class:list={{ 'is-open': open }}>
+  <div class="modal-container" role="dialog" aria-modal="true">
+    <header class="modal-header">
+      <h2>{title}</h2>
+      <button class="close-btn" aria-label="Close">×</button>
+    </header>
+    
+    <div class="modal-body">
+      <slot />  <!-- Konten bisa Astro atau Framework -->
+    </div>
+    
+    <footer class="modal-footer">
+      <slot name="footer" />
+    </footer>
+  </div>
+</div>
+
+<style>
+  .modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.5);
+    display: none;
+    place-items: center;
+    z-index: 1000;
+  }
+  
+  .modal-backdrop.is-open {
+    display: grid;
+  }
+  
+  .modal-container {
+    background: white;
+    border-radius: 12px;
+    max-width: 500px;
+    width: 90%;
+    max-height: 90vh;
+    overflow: auto;
+  }
+  
+  .modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1rem 1.5rem;
+    border-bottom: 1px solid #e5e7eb;
+  }
+  
+  .close-btn {
+    background: none;
+    border: none;
+    font-size: 1.5rem;
+    cursor: pointer;
+    padding: 0.25rem;
+  }
+  
+  .modal-body {
+    padding: 1.5rem;
+  }
+  
+  .modal-footer {
+    padding: 1rem 1.5rem;
+    border-top: 1px solid #e5e7eb;
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.75rem;
+  }
+</style>
+
+<script>
+  // Client-side logic untuk modal
+  document.querySelectorAll('.modal-backdrop').forEach(modal => {
+    const closeBtn = modal.querySelector('.close-btn');
+    
+    closeBtn?.addEventListener('click', () => {
+      modal.classList.remove('is-open');
+    });
+    
+    modal.addEventListener('click', (e) => {
+      if (e.target === modal) {
+        modal.classList.remove('is-open');
+      }
+    });
+  });
+  
+  // Global function untuk open modal
+  window.openModal = (id) => {
+    document.getElementById(id)?.classList.add('is-open');
+  };
+</script>
+```
+
+**Penggunaan dengan React Form:**
+
+```astro
+---
+// src/pages/contact.astro
+import Modal from '../components/Modal.astro';
+import ContactForm from '../components/react/ContactForm.jsx';
+import Layout from '../layouts/Layout.astro';
+---
+
+<Layout title="Hubungi Kami">
+  <button onclick="openModal('contact-modal')">
+    Buka Form Kontak
+  </button>
+  
+  <Modal id="contact-modal" title="Kirim Pesan">
+    <!-- React component di dalam Astro wrapper -->
+    <ContactForm client:visible />
+    
+    <Fragment slot="footer">
+      <button type="button" onclick="document.getElementById('contact-modal').classList.remove('is-open')">
+        Batal
+      </button>
+    </Fragment>
+  </Modal>
+</Layout>
+```
+
+### Pattern: Islands Hierarchy:
+
+```astro
+---
+// src/pages/dashboard.astro
+import Layout from '../layouts/Layout.astro';
+import StatsCard from '../components/StatsCard.astro';        // Astro
+import ActivityChart from '../components/react/ActivityChart.jsx';  // React
+import RecentUsers from '../components/vue/RecentUsers.vue';        // Vue
+import Notifications from '../components/svelte/Notifications.svelte'; // Svelte
+---
+
+<Layout title="Dashboard">
+  <!-- Grid statis dengan Astro -->
+  <div class="stats-grid">
+    <StatsCard title="Users" value="1,234" trend="+12%" />
+    <StatsCard title="Revenue" value="Rp 50M" trend="+8%" />
+    <StatsCard title="Orders" value="89" trend="-3%" />
+  </div>
+  
+  <!-- Chart interaktif - React -->
+  <section class="chart-section">
+    <h2>Aktivitas 30 Hari Terakhir</h2>
+    <ActivityChart 
+      client:visible 
+      dataUrl="/api/activity" 
+    />
+  </section>
+  
+  <div class="dashboard-grid">
+    <!-- List user - Vue -->
+    <RecentUsers 
+      client:idle 
+      limit={10} 
+    />
+    
+    <!-- Notifikasi real-time - Svelte -->
+    <Notifications 
+      client:load 
+      websocketUrl="wss://api.example.com/notifications" 
+    />
+  </div>
+</Layout>
+```
+
+---
+
+## 5.5 Built-in Components
+
+Astro menyediakan komponen bawaan yang powerful.
+
+### `<Image />` Component:
+
+```astro
+---
+// src/pages/gallery.astro
+import { Image } from 'astro:assets';
+import localImage from '../assets/photo.jpg';
+---
+
+<!-- Local image dengan optimasi otomatis -->
+<Image 
+  src={localImage}
+  alt="Deskripsi foto"
+  width={800}
+  height={600}
+  quality={80}
+  format="webp"
+/>
+
+<!-- Remote image (perlu dimensi) -->
+<Image 
+  src="https://example.com/photo.jpg"
+  alt="Remote photo"
+  width={800}
+  height={600}
+  inferSize={true}  <!-- Astro akan coba infer dimensi -->
+/>
+```
+
+### `<Picture />` Component:
+
+```astro
+---
+import { Picture } from 'astro:assets';
+import heroImage from '../assets/hero.jpg';
+---
+
+<Picture 
+  src={heroImage}
+  alt="Hero image"
+  widths={[400, 800, 1200]}
+  sizes="(max-width: 800px) 100vw, 800px"
+  formats={['avif', 'webp', 'jpeg']}
+  fallbackFormat="jpeg"
+/>
+<!-- Generate: <picture> dengan multiple <source> -->
+```
+
+### `<Content />` Component:
+
+```astro
+---
+// src/pages/blog/[slug].astro
+import { getEntry } from 'astro:content';
+
+const { slug } = Astro.params;
+const entry = await getEntry('blog', slug);
+const { Content, headings } = await entry.render();
+---
+
+<article>
+  <!-- Render konten MDX/Markdown -->
+  <Content />
+  
+  <!-- Headings untuk TOC -->
+  <ul>
+    {headings.map(h => (
+      <li style={`margin-left: ${(h.depth - 1) * 1rem}`}>
+        <a href={`#${h.slug}`}>{h.text}</a>
+      </li>
+    ))}
+  </ul>
+</article>
+```
+
+### `<Fragment />` Component:
+
+```astro
+---
+const items = ['A', 'B', 'C'];
+---
+
+<!-- Tanpa wrapper tambahan -->
+{items.map(item => (
+  <Fragment>
+    <dt>Item {item}</dt>
+    <dd>Deskripsi untuk {item}</dd>
+  </Fragment>
+))}
+<!-- Output: <dt>Item A</dt><dd>Deskripsi...</dd> (tanpa wrapper) -->
+```
+
+### `<slot />` dengan Astro.slots:
+
+```astro
+---
+// src/components/ConditionalWrapper.astro
+const hasHeader = await Astro.slots.has('header');
+const headerContent = hasHeader ? await Astro.slots.render('header') : null;
+---
+
+<div class="wrapper">
+  {hasHeader && (
+    <header set:html={headerContent} />
+  )}
+  
+  <main>
+    <slot />
+  </main>
+  
+  <slot name="footer" />
+</div>
+```
+
+---
+
+## 5.6 Custom Components
+
+Membuat komponen reusable dengan best practices.
+
+### Component Library Structure:
+
+```
+src/components/
+├── ui/                    # Primitive components
+│   ├── Button.astro
+│   ├── Input.astro
+│   ├── Card.astro
+│   └── Badge.astro
+├── layout/                # Layout components
+│   ├── Container.astro
+│   ├── Grid.astro
+│   └── Stack.astro
+├── forms/                 # Form-specific
+│   ├── FormField.astro
+│   ├── FormError.astro
+│   └── FormSuccess.astro
+└── [feature]/             # Feature-specific
+    ├── [Feature]List.astro
+    └── [Feature]Card.astro
+```
+
+### Primitive Button Component:
+
+```astro
+---
+// src/components/ui/Button.astro
+export type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger';
+export type ButtonSize = 'sm' | 'md' | 'lg';
+
+interface Props {
+  variant?: ButtonVariant;
+  size?: ButtonSize;
+  href?: string;
+  type?: 'button' | 'submit' | 'reset';
+  disabled?: boolean;
+  loading?: boolean;
+  block?: boolean;
+  class?: string;
+}
+
+const {
+  variant = 'primary',
+  size = 'md',
+  href,
+  type = 'button',
+  disabled = false,
+  loading = false,
+  block = false,
+  class: className = ''
+} = Astro.props;
+
+const Tag = href ? 'a' : 'button';
+
+const baseStyles = 'inline-flex items-center justify-center font-medium rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed';
+
+const variants = {
+  primary: 'bg-blue-600 text-white hover:bg-blue-700 focus:ring-blue-500',
+  secondary: 'bg-gray-200 text-gray-900 hover:bg-gray-300 focus:ring-gray-500',
+  ghost: 'bg-transparent text-gray-700 hover:bg-gray-100 focus:ring-gray-500',
+  danger: 'bg-red-600 text-white hover:bg-red-700 focus:ring-red-500'
+};
+
+const sizes = {
+  sm: 'px-3 py-1.5 text-sm',
+  md: 'px-4 py-2 text-base',
+  lg: 'px-6 py-3 text-lg'
+};
+
+const classes = [
+  baseStyles,
+  variants[variant],
+  sizes[size],
+  block ? 'w-full' : '',
+  loading ? 'cursor-wait' : '',
+  className
+].join(' ');
+---
+
+<Tag
+  class={classes}
+  {...href ? { href } : { type, disabled: disabled || loading }}
+>
+  {loading && (
+    <svg class="animate-spin -ml-1 mr-2 h-4 w-4 text-current" fill="none" viewBox="0 0 24 24">
+      <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+      <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+    </svg>
+  )}
+  <slot />
+</Tag>
+```
+
+**Penggunaan:**
+
+```astro
+---
+import Button from '../components/ui/Button.astro';
+---
+
+<Button variant="primary" size="lg">
+  Mulai Sekarang
+</Button>
+
+<Button variant="secondary" href="/docs">
+  Baca Dokumentasi
+</Button>
+
+<Button variant="danger" size="sm" disabled>
+  Hapus
+</Button>
+
+<Button loading block>
+  Memproses...
+</Button>
+```
+
+---
+
+## Ringkasan Sesi 5
+
+| Konsep | Deskripsi | Best Practice |
+|--------|-----------|---------------|
+| **Astro Components** | Zero JS default, HTML murni | Gunakan untuk layout, konten statis |
+| **Framework Integration** | React, Vue, Svelte, SolidJS | Install via `astro add` |
+| **Client Directives** | `client:load`, `client:visible`, dll | Pilih berdasarkan kebutuhan interaktivitas |
+| **Props Passing** | JSON-serializable only | Functions tidak bisa di-pass |
+| **Built-in Components** | Image, Picture, Content, Fragment | Gunakan untuk optimasi |
+| **Custom Components** | Reusable, type-safe | Struktur folder by category |
+
+---
+
+**Selanjutnya:** Di Sesi 6, kita akan mendalami **Directives & Interaktivitas** - memahami semua client directives secara detail, kapan menggunakannya, dan cara membuat custom directives.

@@ -1,0 +1,677 @@
+---
+title: "Sesi 2: Instalasi & Environment Setup"
+description: "Sebelum memulai perjalanan dengan Laravel 12, Anda perlu memastikan \"peralatan\" Anda lengkap. Bayangkan ini seperti mempersiapkan dapur sebelum memasa..."
+category: "laravel"
+tags: ["laravel", "setup"]
+order: 2
+---
+
+## Sesi 2: Instalasi & Environment Setup
+
+### 2.1 Requirement Sistem: PHP 8.2+, Composer 2.5+, Node.js 18+
+
+Sebelum memulai perjalanan dengan Laravel 12, Anda perlu memastikan "peralatan" Anda lengkap. Bayangkan ini seperti mempersiapkan dapur sebelum memasak— Anda perlu kompor yang panas (PHP), pisau yang tajam (Composer), dan bahan segar (Node.js).
+
+#### 2.1.1 PHP 8.2 atau Lebih Tinggi
+
+Laravel 12 mensyaratkan **PHP 8.2+** sebagai minimum requirement. Ini bukan sekadar versi, tetapi fondasi yang membawa fitur-fitur modern.
+
+**Fitur PHP 8.2 yang Direkomendasikan:**
+- **Readonly Classes**: Class yang immutable, cocok untuk DTO (Data Transfer Objects)
+- **Sensitive Parameter Attribute**: Menyembunyikan data sensitif di log dan error
+- **Null-Safe Operator**: Chain operasi yang aman dari null
+- **Fibers**: Untuk concurrent programming (digunakan internal Laravel)
+
+**Cek Versi PHP:**
+
+```bash
+# Cek versi PHP di terminal/command prompt
+php -v
+
+# Output yang diharapkan:
+# PHP 8.2.12 (cli) (built: Oct 24 2023) (NTS Visual C++ 2019 x64)
+# Copyright (c) The PHP Group
+# Zend Engine v4.2.12, Copyright (c) Zend Technologies
+```
+
+**Jika PHP Belum Terinstall:**
+
+**Windows:**
+- Download dari [windows.php.net](https://windows.php.net/download/)
+- Pilih **VS16 x64 Non Thread Safe** untuk development
+- Extract ke `C:\php` dan tambahkan ke PATH environment variable
+
+**Mac (menggunakan Homebrew):**
+```bash
+brew install php@8.2
+brew link php@8.2 --force
+```
+
+**Linux (Ubuntu/Debian):**
+```bash
+sudo apt update
+sudo apt install php8.2 php8.2-cli php8.2-common php8.2-curl php8.2-mbstring php8.2-mysql php8.2-xml php8.2-zip php8.2-bcmath php8.2-tokenizer
+```
+
+**Extension PHP Wajib untuk Laravel 12:**
+```bash
+# Cek extension yang sudah terinstall
+php -m
+
+# Extension yang HARUS ada:
+# - ctype, curl, dom, fileinfo, filter, hash, mbstring
+# - openssl, pcre, pdo, session, tokenizer, xml, zip
+```
+
+#### 2.1.2 Composer 2.5 atau Lebih Tinggi
+
+**Composer** adalah package manager untuk PHP—seperti npm untuk Node.js atau pip untuk Python. Laravel bergantung penuh pada Composer untuk mengelola dependensi.
+
+**Cek Versi Composer:**
+```bash
+composer --version
+
+# Output yang diharapkan:
+# Composer version 2.5.8 2023-06-21 16:54:37
+```
+
+**Instalasi Composer:**
+
+**Windows:**
+- Download installer dari [getcomposer.org](https://getcomposer.org/download/)
+- Jalankan **Composer-Setup.exe** dan ikuti wizard
+
+**Mac/Linux:**
+```bash
+php -r "copy('https://getcomposer.org/installer', 'composer-setup.php');"
+php -r "if (hash_file('sha384', 'composer-setup.php') === 'e21205b207c3ff031906575712edab6f13eb0b361f2085f1f1237b7126d785e826a450292b6cfd1d64d92e6563bbde02') { echo 'Installer verified'; } else { echo 'Installer corrupt'; unlink('composer-setup.php'); } echo PHP_EOL;"
+php composer-setup.php
+php -r "unlink('composer-setup.php');"
+sudo mv composer.phar /usr/local/bin/composer
+```
+
+#### 2.1.3 Node.js 18 atau Lebih Tinggi
+
+Node.js dibutuhkan untuk mengelola **frontend assets**—CSS, JavaScript, dan build tools seperti Vite yang digunakan Laravel 12.
+
+**Cek Versi Node.js:**
+```bash
+node --version
+npm --version
+
+# Output yang diharapkan:
+# v18.17.0
+# 9.6.7
+```
+
+**Instalasi Node.js:**
+- Download dari [nodejs.org](https://nodejs.org/) (pilih LTS version)
+- Atau gunakan **NVM** (Node Version Manager) untuk mengelola multiple versi
+
+**Menggunakan NVM (Recommended):**
+```bash
+# Install NVM
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.0/install.sh | bash
+
+# Install Node.js 18
+nvm install 18
+nvm use 18
+nvm alias default 18
+```
+
+---
+
+### 2.2 Instalasi via Laravel Installer vs Composer
+
+Ada dua cara utama untuk membuat project Laravel baru—masing-masing dengan kelebihan dan kekurangannya.
+
+#### 2.2.1 Menggunakan Laravel Installer (Recommended)
+
+Laravel Installer adalah CLI tool khusus yang membuat proses instalasi lebih cepat dan nyaman.
+
+**Instalasi Laravel Installer:**
+```bash
+composer global require laravel/installer
+```
+
+**Pastikan global Composer bin directory ada di PATH:**
+```bash
+# Tambahkan ke ~/.bashrc atau ~/.zshrc (Mac/Linux)
+export PATH="$PATH:$HOME/.composer/vendor/bin"
+
+# Windows: biasanya di %APPDATA%\Composer\vendor\bin
+```
+
+**Membuat Project dengan Laravel Installer:**
+```bash
+# Syntax dasar
+laravel new nama-project
+
+# Contoh praktis
+laravel new blog-app
+
+# Dengan opsi tambahan
+laravel new blog-app --jet --livewire      # Dengan Jetstream + Livewire
+laravel new blog-app --breeze --react      # Dengan Breeze + React
+laravel new blog-app --api                 # API-only scaffold
+laravel new blog-app --pest                # Menggunakan Pest testing
+```
+
+**Kelebihan Laravel Installer:**
+- Lebih cepat (cache global)
+- Opsi interaktif untuk memilih starter kit
+- Auto-deteksi environment terbaik
+- Bisa membuat project di directory manapun dengan mudah
+
+#### 2.2.2 Menggunakan Composer Create-Project
+
+Cara klasik yang selalu works, cocok jika Anda tidak ingin menginstall global tool tambahan.
+
+```bash
+# Syntax dasar
+composer create-project laravel/laravel nama-project
+
+# Contoh praktis
+composer create-project laravel/laravel blog-app
+
+# Spesifik versi (jika diperlukan)
+composer create-project laravel/laravel blog-app "12.*"
+
+# Dengan opsi prefer-dist (lebih cepat, tidak include dev-dependencies)
+composer create-project --prefer-dist laravel/laravel blog-app
+```
+
+**Perbedaan Mendasar:**
+
+| Aspek | Laravel Installer | Composer Create-Project |
+|-------|------------------|-------------------------|
+| **Kecepatan** | Lebih cepat (cache global) | Download fresh setiap kali |
+| **Interaktif** | Ya, wizard pemilihan stack | Tidak, default saja |
+| **Flexibilitas** | Opsi starter kit built-in | Manual setup setelah instalasi |
+| **Update** | Perlu update global (`composer global update`) | Selalu versi terbaru |
+
+#### 2.2.3 Verifikasi Instalasi
+
+Setelah instalasi selesai, verifikasi struktur project:
+
+```bash
+cd blog-app
+ls -la
+
+# Struktur yang seharusnya muncul:
+# app/        - Kode aplikasi (Models, Controllers, dll)
+# bootstrap/  - Bootstrapping aplikasi
+# config/     - File konfigurasi
+# database/   - Migrations, seeders, factories
+# public/     - Entry point (index.php) dan assets public
+# resources/  - Views, Blade templates, raw assets (CSS/JS)
+# routes/     - Definisi route (web.php, api.php, console.php)
+# storage/    - Logs, cache, compiled views, file uploads
+# tests/      - Unit dan Feature tests
+# vendor/     - Dependencies Composer (auto-generated)
+```
+
+**Jalankan Development Server:**
+```bash
+php artisan serve
+
+# Output:
+# INFO  Server running on [http://127.0.0.1:8000].
+# Press Ctrl+C to stop the server
+```
+
+Buka browser dan akses `http://127.0.0.1:8000`—Anda akan melihat halaman welcome Laravel 12!
+
+---
+
+### 2.3 Laravel Herd (Windows/Mac) vs Laravel Sail (Docker)
+
+Laravel menyediakan dua solusi environment yang berbeda untuk kebutuhan berbeda—satu untuk simplicity, satu untuk consistency.
+
+#### 2.3.1 Laravel Herd: Simplicity untuk Windows & Mac
+
+> **Analogi Sederhana**: Herd seperti membeli laptop MacBook—everything works out of the box, tinggal pakai.
+
+**Laravel Herd** adalah development environment native untuk **Windows** dan **macOS** yang menggantikan Valet (Mac) dan Homestead. Dia memberikan stack lengkap dengan satu klik install.
+
+**Fitur Laravel Herd:**
+- **PHP 8.2+** terinstall otomatis
+- **Nginx** sebagai web server
+- **MySQL/PostgreSQL** database
+- **Redis** untuk cache dan queue
+- **Mailpit** untuk email testing
+- **Node.js** dan **NPM**
+- **SSL certificates** otomatis (HTTPS localhost)
+
+**Instalasi Herd:**
+
+1. Download dari [herd.laravel.com](https://herd.laravel.com/)
+2. Install seperti aplikasi biasa
+3. Herd akan mengatur PATH dan environment variable otomatis
+
+**Menggunakan Herd:**
+
+```bash
+# Link project ke Herd (dari directory project)
+herd link
+
+# Akses via: http://nama-folder.test
+# Contoh: project di ~/Projects/blog-app
+# Maka bisa diakses di: http://blog-app.test
+
+# Secure dengan HTTPS
+herd secure blog-app
+
+# Mengelola services
+herd start
+herd stop
+herd restart
+
+# Switch PHP version
+herd use 8.2
+herd use 8.3
+```
+
+**Kelebihan Herd:**
+- Setup dalam hitungan menit
+- Tidak perlu konfigurasi manual
+- SSL otomatis untuk HTTPS development
+- Isolasi version PHP per project
+
+#### 2.3.2 Laravel Sail: Docker untuk Consistency
+
+> **Analogi Sederhana**: Sail seperti container shipping—apapun isinya, cara packing dan shipping sama. Cocok untuk tim yang ingin environment 100% identik.
+
+**Laravel Sail** adalah Docker-based development environment. Ia menjamin bahwa aplikasi berjalan sama persis di laptop developer A, developer B, dan server production.
+
+**Prasyarat Sail:**
+- Docker Desktop terinstall ([docker.com](https://www.docker.com/products/docker-desktop))
+- WSL2 (Windows Subsystem for Linux) untuk Windows user
+
+**Setup Project dengan Sail:**
+
+```bash
+# Saat membuat project baru dengan Sail
+curl -s "https://laravel.build/blog-app" | bash
+
+# Atau jika sudah ada project, install Sail:
+composer require laravel/sail --dev
+php artisan sail:install
+
+# Pilih services yang diinginkan:
+# [0] mysql
+# [1] pgsql
+# [2] mariadb
+# [3] redis
+# [4] memcached
+# [5] meilisearch
+# [6] minio
+# [7] mailpit
+# [8] selenium
+```
+
+**Menggunakan Sail:**
+
+```bash
+# Start Sail (di background)
+./vendor/bin/sail up -d
+
+# Start Sail (di foreground, lihat logs)
+./vendor/bin/sail up
+
+# Stop Sail
+./vendor/bin/sail down
+
+# Jalankan Artisan commands
+./vendor/bin/sail artisan migrate
+./vendor/bin/sail artisan make:controller UserController
+
+# Jalankan NPM commands
+./vendor/bin/sail npm run dev
+./vendor/bin/sail npm run build
+
+# Masuk ke container shell
+./vendor/bin/sail shell
+
+# Database CLI
+./vendor/bin/sail mysql
+./vendor/bin/sail redis
+```
+
+**Alias untuk Kemudahan:**
+
+Tambahkan ke `~/.bashrc` atau `~/.zshrc`:
+```bash
+alias sail='[ -f sail ] && sh sail || sh vendor/bin/sail'
+```
+
+Sekarang bisa menggunakan:
+```bash
+sail up -d
+sail artisan migrate
+sail npm run dev
+```
+
+**Perbandingan Herd vs Sail:**
+
+| Aspek | Laravel Herd | Laravel Sail |
+|-------|--------------|--------------|
+| **Setup Time** | 5 menit | 15-30 menit (download images) |
+| **Resource Usage** | Ringan (native) | Lebih berat (Docker overhead) |
+| **Consistency** | Baik | Sempurna (containerized) |
+| **Tim Collaboration** | Perlu dokumentasi setup | Identik untuk semua orang |
+| **Production Parity** | Dekat | Identik 100% |
+| **Best For** | Solo developer, rapid prototyping | Teams, CI/CD, complex stacks |
+
+---
+
+### 2.4 Konfigurasi Environment: .env, .env.example, Environment Encryption
+
+File environment adalah "rahasia" aplikasi Anda—API keys, database credentials, dan konfigurasi sensitif disimpan di sini.
+
+#### 2.4.1 File .env (Environment Variables)
+
+File `.env` berisi konfigurasi yang berbeda untuk environment berbeda (development, staging, production).
+
+**Struktur File .env Laravel 12:**
+```env
+APP_NAME="Blog App"
+APP_ENV=local
+APP_KEY=base64:randomstringdisini
+APP_DEBUG=true
+APP_URL=http://localhost
+
+LOG_CHANNEL=stack
+LOG_LEVEL=debug
+
+DB_CONNECTION=mysql
+DB_HOST=127.0.0.1
+DB_PORT=3306
+DB_DATABASE=blog_app
+DB_USERNAME=root
+DB_PASSWORD=secret
+
+BROADCAST_DRIVER=log
+CACHE_DRIVER=file
+FILESYSTEM_DISK=local
+QUEUE_CONNECTION=sync
+SESSION_DRIVER=file
+SESSION_LIFETIME=120
+
+MEMCACHED_HOST=127.0.0.1
+
+REDIS_HOST=127.0.0.1
+REDIS_PASSWORD=null
+REDIS_PORT=6379
+
+MAIL_MAILER=smtp
+MAIL_HOST=mailpit
+MAIL_PORT=1025
+MAIL_USERNAME=null
+MAIL_PASSWORD=null
+MAIL_ENCRYPTION=null
+MAIL_FROM_ADDRESS="hello@example.com"
+MAIL_FROM_NAME="${APP_NAME}"
+
+AWS_ACCESS_KEY_ID=
+AWS_SECRET_ACCESS_KEY=
+AWS_DEFAULT_REGION=us-east-1
+AWS_BUCKET=
+AWS_USE_PATH_STYLE_ENDPOINT=false
+
+PUSHER_APP_ID=
+PUSHER_APP_KEY=
+PUSHER_APP_SECRET=
+PUSHER_HOST=
+PUSHER_PORT=443
+PUSHER_SCHEME=https
+PUSHER_APP_CLUSTER=mt1
+
+VITE_APP_NAME="${APP_NAME}"
+```
+
+#### 2.4.2 File .env.example
+
+File `.env.example` adalah template yang di-commit ke repository (tidak seperti `.env` yang di-ignore oleh Git).
+
+**Purpose:**
+- Memberi tahu developer lain variable apa yang dibutuhkan
+- Template untuk setup environment baru
+- Dokumentasi konfigurasi yang tersedia
+
+**Workflow Best Practice:**
+```bash
+# 1. Developer baru clone repository
+git clone https://github.com/user/repo.git
+
+# 2. Copy .env.example menjadi .env
+cp .env.example .env
+
+# 3. Generate application key
+php artisan key:generate
+
+# 4. Edit .env sesuai environment lokal
+nano .env  # atau editor favorit Anda
+```
+
+#### 2.4.3 Environment Encryption (Laravel 11+ Feature)
+
+Fitur baru di Laravel 11/12: Anda bisa meng-encrypt file `.env` untuk keamanan tambahan!
+
+**Mengapa Encrypt?**
+- File `.env` bisa jadi target hacker jika terexpose
+- Credentials production tidak boleh plaintext di server
+- Compliance requirement (PCI DSS, GDPR)
+
+**Cara Menggunakan:**
+
+```bash
+# Encrypt file .env
+php artisan env:encrypt
+
+# Output:
+# Environment file encrypted successfully.
+# Key: base64:xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+
+# File .env.encrypted akan tercipta
+# File .env asli bisa dihapus atau di-secure
+
+# Decrypt saat deployment
+php artisan env:decrypt --key=base64:xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+
+# Atau dengan key di environment variable
+export LARAVEL_ENV_ENCRYPTION_KEY=base64:xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+php artisan env:decrypt
+```
+
+**Practical Example:**
+```bash
+# Di local development
+php artisan env:encrypt
+# Simpan key di password manager (1Password, Bitwarden)
+
+# Di production server
+# Set environment variable dengan key
+export LARAVEL_ENV_ENCRYPTION_KEY=base64:your-key-here
+php artisan env:decrypt
+```
+
+**Konfigurasi di bootstrap/app.php:**
+```php
+->withEnvironmentVariables([
+    'APP_KEY' => env('APP_KEY'),
+    // Variable yang boleh diakses sebelum decrypt
+])
+```
+
+---
+
+### 2.5 Structuring Environment Variables untuk Multi-Environment
+
+Aplikasi modern berjalan di multiple environment—local, development, staging, production. Laravel membuat ini mudah dikelola.
+
+#### 2.5.1 Environment Detection
+
+Laravel mendeteksi environment melalui `APP_ENV` di `.env`:
+
+```env
+# .env (local)
+APP_ENV=local
+APP_DEBUG=true
+
+# .env.production (production)
+APP_ENV=production
+APP_DEBUG=false
+```
+
+**Cek Environment di Kode:**
+```php
+// Di controller atau service
+if (app()->environment('local')) {
+    // Hanya jalan di local
+    Log::info('Debug info:', $data);
+}
+
+// Multiple environment check
+if (app()->environment(['staging', 'production'])) {
+    // Jalan di staging atau production
+    $this->sendRealEmail();
+} else {
+    // Jalan di local/development
+    Log::info('Email would be sent:', $emailData);
+}
+```
+
+#### 2.5.2 Configuration Files vs .env
+
+Laravel menggunakan **Configuration Files** di folder `config/` yang membaca dari `.env`.
+
+**Contoh config/database.php:**
+```php
+<?php
+
+return [
+    'default' => env('DB_CONNECTION', 'mysql'),
+    
+    'connections' => [
+        'mysql' => [
+            'driver' => 'mysql',
+            'host' => env('DB_HOST', '127.0.0.1'),
+            'port' => env('DB_PORT', '3306'),
+            'database' => env('DB_DATABASE', 'forge'),
+            'username' => env('DB_USERNAME', 'forge'),
+            'password' => env('DB_PASSWORD', ''),
+            // ...
+        ],
+        // ...
+    ],
+];
+```
+
+**Best Practice:**
+- `.env` = nilai yang berubah per environment (credentials, URLs)
+- `config/` = struktur dan default values yang konsisten
+- Jangan akses `env()` langsung di code (kecuali di config files)
+- Gunakan `config('database.connections.mysql.host')` di aplikasi
+
+#### 2.5.3 Environment-Specific Configuration
+
+**Untuk Development (Local):**
+```env
+APP_ENV=local
+APP_DEBUG=true
+DB_DATABASE=blog_app_local
+CACHE_DRIVER=file
+QUEUE_CONNECTION=sync
+MAIL_MAILER=log  # Email masuk ke log, tidak terkirim
+```
+
+**Untuk Staging:**
+```env
+APP_ENV=staging
+APP_DEBUG=true  # Tetap true untuk debugging
+DB_DATABASE=blog_app_staging
+CACHE_DRIVER=redis
+QUEUE_CONNECTION=database
+MAIL_MAILER=smtp  # Email ke Mailtrap atau similar
+```
+
+**Untuk Production:**
+```env
+APP_ENV=production
+APP_DEBUG=false  # PENTING: Selalu false di production!
+DB_DATABASE=blog_app_prod
+CACHE_DRIVER=redis
+QUEUE_CONNECTION=redis
+MAIL_MAILER=smtp
+LOG_LEVEL=error  # Hanya log error, tidak info/debug
+```
+
+#### 2.5.4 Managing Multiple .env Files
+
+Untuk switching cepat antar environment:
+
+```bash
+# Simpan multiple env files
+.env.local
+.env.staging
+.env.production
+
+# Copy sesuai kebutuhan
+cp .env.staging .env
+
+# Atau gunakan package seperti vlucas/phpdotenv untuk loading spesifik
+```
+
+**Helper Function di composer.json:**
+```json
+{
+    "scripts": {
+        "env:local": "cp .env.local .env",
+        "env:staging": "cp .env.staging .env",
+        "env:production": "cp .env.production .env"
+    }
+}
+```
+
+Penggunaan:
+```bash
+composer run env:staging
+```
+
+#### 2.5.5 Security Checklist untuk Environment
+
+```bash
+# 1. Pastikan .env di .gitignore
+cat .gitignore | grep .env
+
+# 2. Set permission yang benar (Unix/Linux)
+chmod 600 .env  # Owner read/write only
+
+# 3. Jangan pernah commit credentials
+git add .env.example  # OK
+git add .env          # JANGAN!
+
+# 4. Gunakan APP_KEY yang kuat (auto-generated)
+php artisan key:generate
+
+# 5. Rotate credentials secara berkala
+#    Update DB_PASSWORD, API keys, dll setiap 3-6 bulan
+```
+
+---
+
+### 2.6 Kesimpulan
+
+Setup environment Laravel 12 adalah fondasi dari pengalaman development yang mulus. Pilihlah tools yang sesuai kebutuhan:
+
+- **Laravel Installer** untuk pemula yang ingin cepat mulai
+- **Laravel Herd** untuk solo developer Mac/Windows yang ingin zero-config
+- **Laravel Sail** untuk tim yang butuh environment 100% konsisten
+
+Selalu ingat prinsip **12-Factor App** untuk environment variables:
+1. Store config in environment (bukan di code)
+2. Strict separation of config across deploys
+3. Never group credentials dengan code
+
+Dengan setup yang benar, Anda siap melangkah ke sesi berikutnya—mengeksplorasi struktur direktori Laravel 12 yang telah disederhanakan namun powerful!

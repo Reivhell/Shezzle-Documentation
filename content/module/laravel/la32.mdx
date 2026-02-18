@@ -1,0 +1,556 @@
+---
+title: "Sesi 32: Advanced Eloquent Patterns"
+description: "Menguasai pola-pola Eloquent modern termasuk Attribute casting, querying JSON columns, subqueries kompleks, dan teknik pruning untuk aplikasi skala be..."
+category: "laravel"
+tags: ["laravel", "eloquent"]
+order: 32
+---
+
+## Tujuan Pembelajaran
+
+Menguasai pola-pola Eloquent modern termasuk Attribute casting, querying JSON columns, subqueries kompleks, dan teknik pruning untuk aplikasi skala besar.
+
+## 1. Accessors & Mutators (Laravel 9+ Style)
+
+### 1.1 Attribute::make() Syntax
+
+Laravel 9+ memperkenalkan class-based attributes yang lebih clean dan powerful.
+
+```php
+<?php
+
+namespace App\Models;
+
+use Illuminate\Database\Eloquent\Casts\Attribute;
+
+class User extends Model
+{
+    protected $fillable = ['first_name', 'last_name', 'email', 'password'];
+
+    /**
+     * Full name accessor & mutator
+     */
+    protected function fullName(): Attribute
+    {
+        return Attribute::make(
+            get: fn () => "{$this->first_name} {$this->last_name}",
+            set: function (string $value) {
+                [$first, $last] = explode(' ', $value, 2);
+                return [
+                    'first_name' => $first,
+                    'last_name' => $last ?? '',
+                ];
+            }
+        );
+    }
+
+    /**
+     * Email dengan formatting otomatis
+     */
+    protected function email(): Attribute
+    {
+        return Attribute::make(
+            get: fn (string $value) => strtolower($value),
+            set: fn (string $value) => strtolower(trim($value))
+        );
+    }
+
+    /**
+     * Password hashing otomatis
+     */
+    protected function password(): Attribute
+    {
+        return Attribute::make(
+            set: fn (string $value) => bcrypt($value)
+        );
+    }
+
+    /**
+     * Accessor dengan caching
+     */
+    protected function age(): Attribute
+    {
+        return Attribute::make(
+            get: fn () => $this->birth_date?->age
+        )->shouldCache(); // Cache value selama request lifecycle
+    }
+}
+```
+
+### 1.2 Accessor dengan Dependencies
+
+```php
+<?php
+
+class Order extends Model
+{
+    protected function total(): Attribute
+    {
+        return Attribute::make(
+            get: function () {
+                return $this->items->sum(function ($item) {
+                    return $item->price * $item->quantity;
+                });
+            }
+        );
+    }
+
+    /**
+     * Accessor dengan format currency
+     */
+    protected function formattedTotal(): Attribute
+    {
+        return Attribute::make(
+            get: fn () => 'Rp ' . number_format($this->total, 0, ',', '.')
+        );
+    }
+
+    /**
+     * Status dengan logic kompleks
+     */
+    protected function statusBadge(): Attribute
+    {
+        return Attribute::make(
+            get: function () {
+                return match($this->status) {
+                    'pending' => '<span class="badge badge-warning">Pending</span>',
+                    'processing' => '<span class="badge badge-info">Processing</span>',
+                    'completed' => '<span class="badge badge-success">Completed</span>',
+                    'cancelled' => '<span class="badge badge-danger">Cancelled</span>',
+                    default => '<span class="badge badge-secondary">Unknown</span>',
+                };
+            }
+        );
+    }
+}
+```
+
+### 1.3 Mutator dengan Validasi
+
+```php
+<?php
+
+class Product extends Model
+{
+    protected function price(): Attribute
+    {
+        return Attribute::make(
+            get: fn (int $value) => $value / 100, // Store as cents, display as dollars
+            set: function (float $value) {
+                if ($value < 0) {
+                    throw new InvalidArgumentException('Price cannot be negative');
+                }
+                return (int) ($value * 100); // Convert to cents for storage
+            }
+        );
+    }
+
+    /**
+     * SKU generator otomatis
+     */
+    protected function sku(): Attribute
+    {
+        return Attribute::make(
+            set: function (?string $value) {
+                return $value ?? $this->generateSku();
+            }
+        );
+    }
+
+    private function generateSku(): string
+    {
+        return 'SKU-' . strtoupper(uniqid());
+    }
+}
+```
+
+## 2. Querying JSON Columns
+
+### 2.1 Where pada JSON
+
+```php
+<?php
+
+// Model dengan JSON column
+class User extends Model
+{
+    protected $casts = [
+        'settings' => 'array',
+        'preferences' => 'json',
+        'metadata' => 'object',
+    ];
+}
+
+// Query JSON dengan arrow operator
+User::where('settings->theme', 'dark')->get();
+User::where('settings->notifications->email', true)->get();
+User::where('metadata->subscription->plan', 'premium')->get();
+
+// Where JSON contains (array)
+User::whereJsonContains('roles', 'admin')->get();
+User::whereJsonContains('tags', ['php', 'laravel'])->get();
+
+// Where JSON length
+User::whereJsonLength('permissions', '>', 5)->get();
+User::whereJsonLength('permissions', 0)->get();
+
+// Multiple JSON conditions
+User::where('settings->theme', 'dark')
+    ->whereJsonContains('settings->sidebar', 'collapsed')
+    ->get();
+```
+
+### 2.2 Ordering & Aggregasi JSON
+
+```php
+<?php
+
+// Order by JSON value
+User::orderBy('settings->language')->get();
+User::orderByRaw("JSON_EXTRACT(settings, '$.login_count') DESC")->get();
+
+// Select JSON sebagai alias
+User::select('id', 'name')
+    ->selectRaw("JSON_UNQUOTE(JSON_EXTRACT(settings, '$.timezone')) as timezone")
+    ->get();
+
+// Update JSON partial
+User::where('id', 1)->update([
+    'settings->theme' => 'light',
+    'settings->updated_at' => now()->toIso8601String(),
+]);
+
+// Increment JSON value (MySQL 8.0+)
+User::where('id', 1)->update([
+    'settings->login_count' => DB::raw('JSON_EXTRACT(settings, "$.login_count") + 1'),
+]);
+```
+
+### 2.3 JSON Search Advanced
+
+```php
+<?php
+
+// Search dalam nested JSON
+User::whereRaw("JSON_SEARCH(preferences, 'one', '%gaming%') IS NOT NULL")->get();
+
+// PostgreSQL JSONB operators
+User::whereRaw("settings @> '{\"theme\": \"dark\"}'")->get();
+User::whereRaw("settings ? 'notifications'")->get(); // Key exists
+
+// MySQL JSON path
+User::whereRaw("JSON_CONTAINS_PATH(settings, 'one', '$.billing.address')")->get();
+```
+
+## 3. Subqueries dalam Eloquent
+
+### 3.1 Select Subqueries
+
+```php
+<?php
+
+// Ambil data dengan subquery sebagai kolom
+$users = User::select('id', 'name')
+    ->selectSub(function ($query) {
+        $query->from('orders')
+            ->selectRaw('COUNT(*)')
+            ->whereColumn('orders.user_id', 'users.id');
+    }, 'orders_count')
+    ->selectSub(function ($query) {
+        $query->from('orders')
+            ->selectRaw('SUM(total)')
+            ->whereColumn('orders.user_id', 'users.id');
+    }, 'total_spent')
+    ->get();
+
+// Dengan order by subquery
+User::orderByDesc(function ($query) {
+    $query->from('posts')
+        ->selectRaw('COUNT(*)')
+        ->whereColumn('posts.user_id', 'users.id');
+})->get();
+```
+
+### 3.2 Where Subqueries
+
+```php
+<?php
+
+// Where exists
+User::whereExists(function ($query) {
+    $query->from('orders')
+        ->whereColumn('orders.user_id', 'users.id')
+        ->where('total', '>', 1000);
+})->get();
+
+// Where not exists
+User::whereNotExists(function ($query) {
+    $query->from('orders')
+        ->whereColumn('orders.user_id', 'users.id');
+})->get(); // Users without orders
+
+// Where in subquery
+User::whereIn('id', function ($query) {
+    $query->from('orders')
+        ->select('user_id')
+        ->where('status', 'completed')
+        ->groupBy('user_id')
+        ->havingRaw('COUNT(*) > 5');
+})->get();
+
+// Where column subquery
+User::whereColumn('credit_limit', '<', function ($query) {
+    $query->from('orders')
+        ->selectRaw('SUM(total)')
+        ->whereColumn('orders.user_id', 'users.id')
+        ->where('status', '!=', 'cancelled');
+})->get();
+```
+
+### 3.3 From Subqueries (Derived Tables)
+
+```php
+<?php
+
+// Subquery sebagai table source
+$recentOrders = DB::table('orders')
+    ->select('user_id', DB::raw('MAX(created_at) as last_order_at'))
+    ->where('created_at', '>', now()->subMonth())
+    ->groupBy('user_id');
+
+$users = User::joinSub($recentOrders, 'recent_orders', function ($join) {
+    $join->on('users.id', '=', 'recent_orders.user_id');
+})
+->select('users.*', 'recent_orders.last_order_at')
+->get();
+
+// Eloquent dengan from subquery
+User::fromSub(function ($query) {
+    $query->from('users')
+        ->where('is_active', true)
+        ->where('created_at', '>', now()->subYear());
+}, 'active_users')
+->where('role', 'customer')
+->get();
+```
+
+## 4. Advanced Where Clauses
+
+### 4.1 whereFullText()
+
+```php
+<?php
+
+// Full-text search (MySQL/PostgreSQL)
+Article::whereFullText('content', 'laravel eloquent')->get();
+
+// Dengan boolean mode (MySQL)
+Article::whereFullText('content', '+laravel -wordpress', ['mode' => 'boolean'])->get();
+
+// Expanded mode
+Article::whereFullText('content', 'database indexing', ['mode' => 'expanded'])->get();
+
+// Multiple columns
+Article::whereFullText(['title', 'content'], 'tutorial')->get();
+```
+
+### 4.2 whereJsonContains()
+
+```php
+<?php
+
+// Array contains
+User::whereJsonContains('tags', 'developer')->get();
+User::whereJsonContains('tags', ['php', 'laravel'])->get();
+
+// Nested JSON
+User::whereJsonContains('settings->languages', 'id')->get();
+
+// Dengan where lain
+User::whereJsonContains('roles', 'admin')
+    ->where('is_active', true)
+    ->get();
+```
+
+### 4.3 whereAny() & whereAll() (Laravel 10.22+)
+
+```php
+<?php
+
+// WHERE (col1 = val OR col2 = val OR col3 = val)
+User::whereAny(['name', 'email', 'phone'], 'like', '%john%')->get();
+
+// WHERE (col1 > val AND col2 > val AND col3 > val)
+Product::whereAll(['stock', 'reserved', 'available'], '>', 0)->get();
+
+// Kombinasi
+User::where('is_active', true)
+    ->whereAny(['name', 'bio'], 'like', '%developer%')
+    ->get();
+```
+
+## 5. Model Pruning & Mass Deletion
+
+### 5.1 Model Pruning (Laravel 8+)
+
+```php
+<?php
+
+namespace App\Models;
+
+use Illuminate\Database\Eloquent\MassPrunable;
+
+class Log extends Model
+{
+    use MassPrunable;
+
+    /**
+     * Determine which models should be pruned.
+     */
+    public function prunable(): Builder
+    {
+        return static::where('created_at', '<', now()->subDays(30));
+    }
+
+    /**
+     * Prepare model for pruning (optional cleanup).
+     */
+    protected function pruning(): void
+    {
+        // Hapus file terkait, dll
+        Storage::delete($this->file_path);
+    }
+}
+```
+
+Schedule pruning:
+
+```php
+<?php
+
+// routes/console.php atau App\Console\Kernel
+Schedule::command('model:prune', [
+    '--model' => [Log::class, Activity::class],
+])->daily();
+
+// Atau prune semua model dengan trait Prunable
+Schedule::command('model:prune')->daily();
+```
+
+### 5.2 Mass Deletion Strategies
+
+```php
+<?php
+
+// Delete dengan chunk (memory safe)
+User::where('last_login_at', '<', now()->subYears(2))
+    ->chunkById(1000, function ($users) {
+        foreach ($users as $user) {
+            $user->delete(); // Trigger model events
+        }
+    });
+
+// Force delete dengan chunk
+User::onlyTrashed()
+    ->chunkById(1000, function ($users) {
+        $users->each->forceDelete();
+    });
+
+// Mass delete tanpa event (lebih cepat, tapi tidak trigger model events)
+User::where('status', 'banned')->delete();
+
+// Mass delete dengan subquery
+User::whereIn('id', function ($query) {
+    $query->from('reports')
+        ->select('user_id')
+        ->where('severity', 'high')
+        ->where('created_at', '>', now()->subDay());
+})->delete();
+```
+
+### 5.3 Truncate vs Delete
+
+```php
+<?php
+
+// Delete - bisa dengan where, trigger event, soft delete support
+Model::where('condition', 'value')->delete();
+
+// Truncate - super cepat, reset auto-increment, tidak trigger event, tidak support soft delete
+Model::truncate();
+
+// Untuk empty table dengan foreign key constraints
+Schema::disableForeignKeyConstraints();
+Model::truncate();
+Schema::enableForeignKeyConstraints();
+```
+
+## 6. Query Optimization Patterns
+
+### 6.1 Select Specific Columns
+
+```php
+<?php
+
+// Hindari select * pada query berat
+User::select('id', 'name', 'email')->get();
+
+// Dengan relasi, pilih kolom spesifik
+User::with(['posts' => function ($query) {
+    $query->select('id', 'user_id', 'title', 'slug'); // Wajib include foreign key!
+}])->get();
+
+// Exclude kolom sensitif
+User::select(['*'])->selectRaw('password as hidden_password')->get();
+```
+
+### 6.2 Eager Loading Optimization
+
+```php
+<?php
+
+// Eager load dengan specific columns
+User::with(['profile:id,user_id,bio,avatar'])->get();
+
+// Eager load dengan constraints
+Post::with(['comments' => function ($query) {
+    $query->latest()->limit(5);
+}])->get();
+
+// Lazy eager load dengan filter
+$users = User::all();
+$users->load(['posts' => function ($query) {
+    $query->where('status', 'published');
+}]);
+```
+
+### 6.3 Query Caching
+
+```php
+<?php
+
+// Cache query result
+$users = User::remember(3600)->get(); // Cache 1 jam
+$users = User::remember(now()->addHours(2))->get();
+
+// Cache dengan tag (untuk invalidasi selective)
+$users = User::cacheTags(['users', 'admins'])->remember(3600)->get();
+
+// Cache forever dengan rememberForever
+$settings = Setting::rememberForever()->get();
+
+// Forget cache
+User::flushCache();
+```
+
+## Kesimpulan
+
+Advanced Eloquent Patterns menyediakan tools untuk kode yang lebih maintainable dan performant:
+- **Attribute::make()** untuk accessors/mutators modern dan readable
+- **JSON querying** untuk flexible schema tanpa alter table
+- **Subqueries** untuk complex data retrieval dalam single query
+- **Model Pruning** untuk automated cleanup data lama
+- **Optimization patterns** untuk aplikasi high-traffic
+
+Selanjutnya di **Sesi 33**, kita akan mempelajari Database Transactions untuk data integrity dan concurrency control.
+```

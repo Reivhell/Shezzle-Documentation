@@ -1,0 +1,997 @@
+---
+title: "Sesi 77: Hexagonal Architecture / Clean Architecture"
+description: "**Hexagonal Architecture** (atau Ports and Adapters Architecture) dipopulerkan oleh Alistair Cockburn. Konsep utamanya adalah memisahkan application c..."
+category: "laravel"
+tags: ["laravel"]
+order: 77
+---
+
+## 1. Apa itu Hexagonal Architecture?
+
+**Hexagonal Architecture** (atau Ports and Adapters Architecture) dipopulerkan oleh Alistair Cockburn. Konsep utamanya adalah memisahkan application core dari external concerns (database, UI, external services) melalui well-defined interfaces (ports).
+
+**Visualisasi:**
+```
+                              External World
+                                   │
+         ┌─────────────────────────┼─────────────────────────┐
+         │                         │                         │
+         ▼                         ▼                         ▼
+   ┌──────────┐              ┌──────────┐              ┌──────────┐
+   │   Web    │              │  CLI     │              │  API     │
+   │ Controller│             │ Command  │              │ Endpoint │
+   └────┬─────┘              └────┬─────┘              └────┬─────┘
+        │                         │                         │
+        └─────────────────────────┼─────────────────────────┘
+                                  │
+                                  ▼
+                    ┌─────────────────────────┐
+                    │      PRIMARY/DRIVING    │
+                    │        ADAPTERS         │
+                    │  (Call application core) │
+                    └───────────┬─────────────┘
+                                │
+                                ▼
+        ┌───────────────────────────────────────────────────────┐
+        │                                                       │
+        │              APPLICATION CORE (Domain)                │
+        │  ┌─────────────────┐    ┌─────────────────────────┐  │
+        │  │  Use Cases      │◄──►│    Domain Entities      │  │
+        │  │  (Interactors)  │    │    & Business Rules     │  │
+        │  └─────────────────┘    └─────────────────────────┘  │
+        │           ▲                                          │
+        │           │                                          │
+        │  ┌─────────────────┐                                 │
+        │  │  Ports          │    (Interfaces/Contracts)       │
+        │  │  (Interfaces    │    ←────────────────────────────┼───►
+        │  │   untuk         │                                 │
+        │  │   external)     │                                 │
+        │  └─────────────────┘                                 │
+        │                                                       │
+        └───────────────────────────────────────────────────────┘
+                                │
+                                ▼
+                    ┌─────────────────────────┐
+                    │     SECONDARY/DRIVEN    │
+                    │        ADAPTERS         │
+                    │ (Called by application)  │
+                    └───────────┬─────────────┘
+                                │
+        ┌───────────────────────┼───────────────────────┐
+        │                       │                       │
+        ▼                       ▼                       ▼
+   ┌──────────┐          ┌──────────┐          ┌──────────┐
+   │ Eloquent │          │  Mailer  │          │ Payment  │
+   │ Repository│         │ Adapter  │          │ Gateway  │
+   └──────────┘          └──────────┘          └──────────┘
+```
+
+**Clean Architecture** (Robert C. Martin) adalah evolusi dari Hexagonal dengan layer yang lebih explicit:
+- **Entities**: Business objects dan rules paling dasar
+- **Use Cases**: Application-specific business rules
+- **Interface Adapters**: Presenters, controllers, gateways
+- **Frameworks & Drivers**: Database, web framework, external interfaces
+
+## 2. Layer Separation dalam Laravel
+
+### 2.1 Struktur Folder Hexagonal
+
+```
+app/
+├── Core/                              # Application Core (Domain + Use Cases)
+│   ├── Domain/                        # Business entities dan rules
+│   │   ├── Entities/
+│   │   │   └── Order.php              # Pure PHP, no framework dependencies
+│   │   ├── ValueObjects/
+│   │   │   ├── Money.php
+│   │   │   └── Email.php
+│   │   └── Services/                  # Domain services (pure business logic)
+│   │       └── PricingService.php
+│   │
+│   ├── Application/                   # Use cases, application services
+│   │   ├── Ports/                     # Interfaces (driving dan driven)
+│   │   │   ├── Incoming/              # Driven by external (primary)
+│   │   │   │   ├── OrderRepositoryInterface.php
+│   │   │   │   └── PaymentGatewayInterface.php
+│   │   │   └── Outgoing/              # Driving external (secondary)
+│   │   │       └── NotificationInterface.php
+│   │   │
+│   │   ├── UseCases/                  # Single responsibility use cases
+│   │   │   ├── PlaceOrder/
+│   │   │   │   ├── PlaceOrderUseCase.php
+│   │   │   │   ├── PlaceOrderRequest.php   # DTO Input
+│   │   │   │   └── PlaceOrderResponse.php  # DTO Output
+│   │   │   └── CancelOrder/
+│   │   │       ├── CancelOrderUseCase.php
+│   │   │       └── CancelOrderRequest.php
+│   │   │
+│   │   └── Services/                  # Application services (orchestration)
+│   │       └── OrderApplicationService.php
+│   │
+│   └── Shared/                        # Shared kernel
+│       └── ValueObjects/
+│           └── Uuid.php
+│
+├── Adapters/                          # Implementation dari ports
+│   ├── Incoming/                      # Primary/Driving adapters
+│   │   ├── Web/                       # Laravel controllers
+│   │   │   └── OrderController.php
+│   │   ├── CLI/                       # Artisan commands
+│   │   │   └── ProcessOrdersCommand.php
+│   │   └── Queue/                     # Job handlers
+│   │       └── ProcessOrderJob.php
+│   │
+│   └── Outgoing/                      # Secondary/Driven adapters
+│       ├── Persistence/               # Database implementations
+│       │   ├── Eloquent/
+│       │   │   ├── EloquentOrderRepository.php
+│       │   │   └── Models/
+│       │   │       └── OrderModel.php
+│       │   └── Redis/
+│       │       └── RedisCacheRepository.php
+│       ├── Messaging/                 # Message queue implementations
+│       │   └── RabbitMqEventPublisher.php
+│       └── External/                  # External service clients
+│           ├── StripePaymentGateway.php
+│           └── SendGridMailer.php
+│
+└── Providers/
+    └── RepositoryServiceProvider.php  # Binding interfaces ke implementations
+```
+
+### 2.2 Dependency Rule
+
+**The Dependency Rule**: Dependencies hanya boleh mengarah ke dalam (ke core), tidak ke luar.
+
+```
+┌─────────────────────────────────────┐
+│  Frameworks & Drivers (Laravel)     │  ◄─── External dependencies
+│  - Eloquent, HTTP, Queue, Mail      │
+├─────────────────────────────────────┤
+│  Interface Adapters                 │
+│  - Controllers, Presenters          │
+├─────────────────────────────────────┤
+│  Application Business Rules         │
+│  - Use Cases, Application Services  │
+├─────────────────────────────────────┤
+│  Enterprise Business Rules          │  ◄─── Domain (no dependencies)
+│  - Entities, Value Objects          │
+└─────────────────────────────────────┘
+```
+
+## 3. Ports (Interfaces)
+
+### 3.1 Driving Ports (Incoming)
+
+Interface yang diimplementasi oleh adapters untuk mengontrol aplikasi.
+
+```php
+<?php
+
+// Core/Application/Ports/Incoming/OrderUseCaseInterface.php
+
+namespace App\Core\Application\Ports\Incoming;
+
+use App\Core\Application\UseCases\PlaceOrder\PlaceOrderRequest;
+use App\Core\Application\UseCases\PlaceOrder\PlaceOrderResponse;
+
+interface OrderUseCaseInterface
+{
+    public function placeOrder(PlaceOrderRequest $request): PlaceOrderResponse;
+    
+    public function cancelOrder(string $orderId, string $reason): void;
+    
+    public function confirmOrder(string $orderId): void;
+}
+```
+
+### 3.2 Driven Ports (Outgoing)
+
+Interface yang dikonsumsi oleh core untuk berinteraksi dengan external world.
+
+```php
+<?php
+
+// Core/Application/Ports/Outgoing/OrderRepositoryInterface.php
+
+namespace App\Core\Application\Ports\Outgoing;
+
+use App\Core\Domain\Entities\Order;
+
+interface OrderRepositoryInterface
+{
+    public function findById(string $id): ?Order;
+    
+    public function findByIdOrFail(string $id): Order;
+    
+    public function save(Order $order): void;
+    
+    public function delete(string $id): void;
+    
+    public function findPendingOrders(int $limit = 20): array;
+}
+
+// Core/Application/Ports/Outgoing/PaymentGatewayInterface.php
+
+namespace App\Core\Application\Ports\Outgoing;
+
+use App\Core\Domain\ValueObjects\Money;
+
+interface PaymentGatewayInterface
+{
+    public function charge(string $customerId, Money $amount, array $metadata): PaymentResult;
+    
+    public function refund(string $transactionId, ?Money $amount = null): RefundResult;
+    
+    public function getTransaction(string $transactionId): Transaction;
+}
+
+// Core/Application/Ports/Outgoing/NotificationInterface.php
+
+namespace App\Core\Application\Ports\Outgoing;
+
+interface NotificationInterface
+{
+    public function sendEmail(string $to, string $template, array $data): void;
+    
+    public function sendSms(string $phoneNumber, string $message): void;
+    
+    public function sendPush(string $deviceToken, string $title, string $body): void;
+}
+
+// Core/Application/Ports/Outgoing/EventPublisherInterface.php
+
+namespace App\Core\Application\Ports\Outgoing;
+
+interface EventPublisherInterface
+{
+    public function publish(string $eventName, array $payload): void;
+    
+    public function publishDomainEvent(object $event): void;
+}
+```
+
+## 4. Application Core (Domain + Use Cases)
+
+### 4.1 Domain Entities (Pure PHP)
+
+```php
+<?php
+
+// Core/Domain/Entities/Order.php
+
+namespace App\Core\Domain\Entities;
+
+use App\Core\Domain\ValueObjects\Money;
+use App\Core\Domain\ValueObjects\OrderId;
+use App\Core\Domain\ValueObjects\OrderStatus;
+use App\Core\Domain\ValueObjects\CustomerId;
+
+class Order
+{
+    private OrderId $id;
+    private CustomerId $customerId;
+    private array $items;           // OrderItem[]
+    private Money $total;
+    private OrderStatus $status;
+    private \DateTimeImmutable $createdAt;
+    private ?\DateTimeImmutable $confirmedAt = null;
+    
+    public function __construct(
+        OrderId $id,
+        CustomerId $customerId,
+        array $items,
+        \DateTimeImmutable $createdAt
+    ) {
+        $this->id = $id;
+        $this->customerId = $customerId;
+        $this->items = $items;
+        $this->createdAt = $createdAt;
+        $this->status = OrderStatus::PENDING();
+        $this->calculateTotal();
+    }
+    
+    // Factory method
+    public static function create(
+        CustomerId $customerId,
+        array $items
+    ): self {
+        return new self(
+            OrderId::generate(),
+            $customerId,
+            $items,
+            new \DateTimeImmutable()
+        );
+    }
+    
+    public function confirm(): void
+    {
+        if (!$this->status->equals(OrderStatus::PENDING())) {
+            throw new \DomainException('Only pending orders can be confirmed');
+        }
+        
+        if (empty($this->items)) {
+            throw new \DomainException('Cannot confirm empty order');
+        }
+        
+        $this->status = OrderStatus::CONFIRMED();
+        $this->confirmedAt = new \DateTimeImmutable();
+    }
+    
+    public function cancel(string $reason): void
+    {
+        if ($this->status->equals(OrderStatus::SHIPPED())) {
+            throw new \DomainException('Cannot cancel shipped order');
+        }
+        
+        $this->status = OrderStatus::CANCELLED();
+        // Domain event bisa ditambahkan di sini
+    }
+    
+    private function calculateTotal(): void
+    {
+        $total = Money::zero('USD');
+        foreach ($this->items as $item) {
+            $total = $total->add($item->subtotal());
+        }
+        $this->total = $total;
+    }
+    
+    // Getters
+    public function id(): OrderId { return $this->id; }
+    public function customerId(): CustomerId { return $this->customerId; }
+    public function total(): Money { return $this->total; }
+    public function status(): OrderStatus { return $this->status; }
+    public function items(): array { return $this->items; }
+}
+```
+
+### 4.2 Use Cases (Application Business Rules)
+
+```php
+<?php
+
+// Core/Application/UseCases/PlaceOrder/PlaceOrderUseCase.php
+
+namespace App\Core\Application\UseCases\PlaceOrder;
+
+use App\Core\Application\Ports\Incoming\OrderUseCaseInterface;
+use App\Core\Application\Ports\Outgoing\OrderRepositoryInterface;
+use App\Core\Application\Ports\Outgoing\PaymentGatewayInterface;
+use App\Core\Application\Ports\Outgoing\NotificationInterface;
+use App\Core\Application\Ports\Outgoing\EventPublisherInterface;
+use App\Core\Domain\Entities\Order;
+use App\Core\Domain\Entities\OrderItem;
+use App\Core\Domain\Services\PricingService;
+use App\Core\Domain\ValueObjects\CustomerId;
+use App\Core\Domain\ValueObjects\ProductId;
+use App\Core\Domain\ValueObjects\Money;
+
+class PlaceOrderUseCase implements OrderUseCaseInterface
+{
+    public function __construct(
+        private OrderRepositoryInterface $orderRepository,
+        private PaymentGatewayInterface $paymentGateway,
+        private NotificationInterface $notificationService,
+        private EventPublisherInterface $eventPublisher,
+        private PricingService $pricingService
+    ) {}
+    
+    public function placeOrder(PlaceOrderRequest $request): PlaceOrderResponse
+    {
+        // 1. Create domain objects dari request
+        $customerId = new CustomerId($request->customerId);
+        
+        $items = array_map(function ($item) {
+            return new OrderItem(
+                new ProductId($item['productId']),
+                $item['quantity'],
+                Money::fromDecimal($item['unitPrice'], 'USD'),
+                $this->pricingService->calculateDiscount(
+                    $item['productId'], 
+                    $item['quantity']
+                )
+            );
+        }, $request->items);
+        
+        // 2. Execute domain logic
+        $order = Order::create($customerId, $items);
+        
+        // 3. Persist (driven port)
+        $this->orderRepository->save($order);
+        
+        // 4. Process payment (driven port)
+        $paymentResult = $this->paymentGateway->charge(
+            $request->customerId,
+            $order->total(),
+            ['order_id' => $order->id()->toString()]
+        );
+        
+        if (!$paymentResult->isSuccessful()) {
+            $order->cancel('Payment failed');
+            $this->orderRepository->save($order);
+            throw new PaymentFailedException($paymentResult->errorMessage());
+        }
+        
+        // 5. Confirm order
+        $order->confirm();
+        $this->orderRepository->save($order);
+        
+        // 6. Notify customer (driven port)
+        $this->notificationService->sendEmail(
+            $request->customerEmail,
+            'order-confirmation',
+            [
+                'orderId' => $order->id()->toString(),
+                'total' => $order->total()->format(),
+            ]
+        );
+        
+        // 7. Publish event (driven port)
+        $this->eventPublisher->publish('order.placed', [
+            'orderId' => $order->id()->toString(),
+            'customerId' => $order->customerId()->toString(),
+            'amount' => $order->total()->toArray(),
+        ]);
+        
+        // 8. Return response DTO
+        return new PlaceOrderResponse(
+            orderId: $order->id()->toString(),
+            status: $order->status()->value(),
+            total: $order->total()->format(),
+            paymentTransactionId: $paymentResult->transactionId()
+        );
+    }
+}
+
+// Request DTO (Input)
+// Core/Application/UseCases/PlaceOrder/PlaceOrderRequest.php
+
+namespace App\Core\Application\UseCases\PlaceOrder;
+
+class PlaceOrderRequest
+{
+    public function __construct(
+        public readonly string $customerId,
+        public readonly string $customerEmail,
+        public readonly array $items,      // ['productId' => '123', 'quantity' => 2, 'unitPrice' => 10.00]
+        public readonly ?string $couponCode = null,
+        public readonly ?string $notes = null
+    ) {
+        $this->validate();
+    }
+    
+    private function validate(): void
+    {
+        if (empty($this->items)) {
+            throw new \InvalidArgumentException('Order must have at least one item');
+        }
+        
+        if (!filter_var($this->customerEmail, FILTER_VALIDATE_EMAIL)) {
+            throw new \InvalidArgumentException('Invalid email format');
+        }
+    }
+}
+
+// Response DTO (Output)
+// Core/Application/UseCases/PlaceOrder/PlaceOrderResponse.php
+
+namespace App\Core\Application\UseCases\PlaceOrder;
+
+class PlaceOrderResponse
+{
+    public function __construct(
+        public readonly string $orderId,
+        public readonly string $status,
+        public readonly string $total,
+        public readonly string $paymentTransactionId
+    ) {}
+}
+```
+
+## 5. Adapters Implementation
+
+### 5.1 Primary Adapters (Driving)
+
+```php
+<?php
+
+// Adapters/Incoming/Web/OrderController.php
+
+namespace App\Adapters\Incoming\Web;
+
+use App\Core\Application\Ports\Incoming\OrderUseCaseInterface;
+use App\Core\Application\UseCases\PlaceOrder\PlaceOrderRequest;
+use App\Http\Controllers\Controller;
+use Illuminate\Http\Request;
+
+class OrderController extends Controller
+{
+    public function __construct(
+        private OrderUseCaseInterface $orderUseCase
+    ) {}
+    
+    public function store(Request $request)
+    {
+        // Transform HTTP request ke Application Request DTO
+        $placeOrderRequest = new PlaceOrderRequest(
+            customerId: $request->user()->id,
+            customerEmail: $request->user()->email,
+            items: $request->input('items'),
+            couponCode: $request->input('coupon_code'),
+            notes: $request->input('notes')
+        );
+        
+        // Call use case (application core)
+        $response = $this->orderUseCase->placeOrder($placeOrderRequest);
+        
+        // Transform response ke HTTP response
+        return response()->json([
+            'data' => [
+                'id' => $response->orderId,
+                'status' => $response->status,
+                'total' => $response->total,
+                'payment_transaction_id' => $response->paymentTransactionId,
+            ],
+            'links' => [
+                'self' => route('orders.show', $response->orderId),
+            ]
+        ], 201);
+    }
+}
+
+// Adapters/Incoming/CLI/ProcessOrdersCommand.php
+
+namespace App\Adapters\Incoming\CLI;
+
+use App\Core\Application\Ports\Incoming\OrderUseCaseInterface;
+use Illuminate\Console\Command;
+
+class ProcessOrdersCommand extends Command
+{
+    protected $signature = 'orders:process-pending';
+    
+    public function handle(OrderUseCaseInterface $orderUseCase)
+    {
+        // CLI juga menggunakan same use case interface!
+        $pendingOrders = $this->getPendingOrders();
+        
+        foreach ($pendingOrders as $order) {
+            try {
+                $orderUseCase->confirmOrder($order->id);
+                $this->info("Confirmed order: {$order->id}");
+            } catch (\Exception $e) {
+                $this->error("Failed to confirm order {$order->id}: {$e->getMessage()}");
+            }
+        }
+    }
+}
+```
+
+### 5.2 Secondary Adapters (Driven)
+
+```php
+<?php
+
+// Adapters/Outgoing/Persistence/Eloquent/EloquentOrderRepository.php
+
+namespace App\Adapters\Outgoing\Persistence\Eloquent;
+
+use App\Core\Application\Ports\Outgoing\OrderRepositoryInterface;
+use App\Core\Domain\Entities\Order;
+use App\Core\Domain\Entities\OrderItem;
+use App\Core\Domain\ValueObjects\CustomerId;
+use App\Core\Domain\ValueObjects\Money;
+use App\Core\Domain\ValueObjects\OrderId;
+use App\Core\Domain\ValueObjects\OrderStatus;
+use App\Core\Domain\ValueObjects\ProductId;
+
+class EloquentOrderRepository implements OrderRepositoryInterface
+{
+    public function __construct(
+        private OrderModel $model
+    ) {}
+    
+    public function findById(string $id): ?Order
+    {
+        $record = $this->model->with('items')->find($id);
+        
+        if (!$record) {
+            return null;
+        }
+        
+        return $this->toEntity($record);
+    }
+    
+    public function save(Order $order): void
+    {
+        $this->model->updateOrCreate(
+            ['id' => $order->id()->toString()],
+            [
+                'customer_id' => $order->customerId()->toString(),
+                'status' => $order->status()->value(),
+                'total_amount' => $order->total()->amount(),
+                'total_currency' => $order->total()->currency(),
+            ]
+        );
+    }
+    
+    private function toEntity(OrderModel $model): Order
+    {
+        return new Order(
+            new OrderId($model->id),
+            new CustomerId($model->customer_id),
+            $model->items->map(fn ($i) => new OrderItem(
+                new ProductId($i->product_id),
+                $i->quantity,
+                new Money($i->unit_price_amount, $i->unit_price_currency)
+            ))->toArray(),
+            new \DateTimeImmutable($model->created_at)
+        );
+    }
+}
+
+// Adapters/Outgoing/External/StripePaymentGateway.php
+
+namespace App\Adapters\Outgoing\External;
+
+use App\Core\Application\Ports\Outgoing\PaymentGatewayInterface;
+use App\Core\Domain\ValueObjects\Money;
+use Stripe\StripeClient;
+
+class StripePaymentGateway implements PaymentGatewayInterface
+{
+    public function __construct(
+        private StripeClient $stripe
+    ) {}
+    
+    public function charge(string $customerId, Money $amount, array $metadata): PaymentResult
+    {
+        try {
+            $charge = $this->stripe->charges->create([
+                'amount' => $amount->amount(), // cents
+                'currency' => strtolower($amount->currency()),
+                'customer' => $customerId,
+                'metadata' => $metadata,
+            ]);
+            
+            return PaymentResult::success($charge->id);
+        } catch (\Stripe\Exception\CardException $e) {
+            return PaymentResult::failure($e->getMessage());
+        }
+    }
+    
+    public function refund(string $transactionId, ?Money $amount = null): RefundResult
+    {
+        $params = ['charge' => $transactionId];
+        
+        if ($amount) {
+            $params['amount'] = $amount->amount();
+        }
+        
+        $refund = $this->stripe->refunds->create($params);
+        
+        return new RefundResult($refund->id, $refund->status === 'succeeded');
+    }
+}
+```
+
+## 6. Dependency Inversion dengan Service Provider
+
+```php
+<?php
+
+// Providers/RepositoryServiceProvider.php
+
+namespace App\Providers;
+
+use Illuminate\Support\ServiceProvider;
+
+class RepositoryServiceProvider extends ServiceProvider
+{
+    public function register(): void
+    {
+        // Binding: Interface → Implementation
+        // Core tidak tahu apa-apa tentang Eloquent atau Stripe!
+        
+        $this->app->bind(
+            \App\Core\Application\Ports\Outgoing\OrderRepositoryInterface::class,
+            \App\Adapters\Outgoing\Persistence\Eloquent\EloquentOrderRepository::class
+        );
+        
+        $this->app->bind(
+            \App\Core\Application\Ports\Outgoing\PaymentGatewayInterface::class,
+            \App\Adapters\Outgoing\External\StripePaymentGateway::class
+        );
+        
+        $this->app->bind(
+            \App\Core\Application\Ports\Outgoing\NotificationInterface::class,
+            \App\Adapters\Outgoing\External\SendGridNotification::class
+        );
+        
+        $this->app->bind(
+            \App\Core\Application\Ports\Outgoing\EventPublisherInterface::class,
+            \App\Adapters\Outgoing\Messaging\RabbitMqEventPublisher::class
+        );
+        
+        // Use case binding
+        $this->app->bind(
+            \App\Core\Application\Ports\Incoming\OrderUseCaseInterface::class,
+            \App\Core\Application\UseCases\PlaceOrder\PlaceOrderUseCase::class
+        );
+    }
+}
+
+// Environment-specific binding
+// Providers/AppServiceProvider.php
+
+public function register(): void
+{
+    // Testing: gunakan fake implementations
+    if ($this->app->environment('testing')) {
+        $this->app->bind(
+            PaymentGatewayInterface::class,
+            FakePaymentGateway::class
+        );
+    }
+    
+    // Local: gunakan logging wrapper
+    if ($this->app->environment('local')) {
+        $this->app->extend(PaymentGatewayInterface::class, function ($service) {
+            return new LoggingPaymentGatewayDecorator($service);
+        });
+    }
+}
+```
+
+## 7. Testing Hexagonal Architecture
+
+### 7.1 Unit Tests (Domain Layer)
+
+```php
+<?php
+
+// tests/Unit/Core/Domain/Entities/OrderTest.php
+
+namespace Tests\Unit\Core\Domain\Entities;
+
+use App\Core\Domain\Entities\Order;
+use App\Core\Domain\Entities\OrderItem;
+use App\Core\Domain\ValueObjects\CustomerId;
+use App\Core\Domain\ValueObjects\Money;
+use App\Core\Domain\ValueObjects\ProductId;
+use PHPUnit\Framework\TestCase;
+
+class OrderTest extends TestCase
+{
+    public function test_can_create_order(): void
+    {
+        $customerId = CustomerId::generate();
+        $items = [
+            new OrderItem(new ProductId('prod-1'), 2, Money::fromDecimal(10, 'USD')),
+        ];
+        
+        $order = Order::create($customerId, $items);
+        
+        $this->assertEquals($customerId, $order->customerId());
+        $this->assertEquals(Money::fromDecimal(20, 'USD'), $order->total());
+        $this->assertTrue($order->status()->isPending());
+    }
+    
+    public function test_cannot_confirm_empty_order(): void
+    {
+        $this->expectException(\DomainException::class);
+        
+        $order = Order::create(CustomerId::generate(), []);
+        $order->confirm();
+    }
+    
+    public function test_confirmed_order_cannot_be_cancelled(): void
+    {
+        $this->expectException(\DomainException::class);
+        
+        $order = $this->createConfirmedOrder();
+        $order->cancel('Changed my mind');
+    }
+    
+    private function createConfirmedOrder(): Order
+    {
+        $order = Order::create(CustomerId::generate(), [
+            new OrderItem(ProductId::generate(), 1, Money::fromDecimal(10, 'USD')),
+        ]);
+        $order->confirm();
+        return $order;
+    }
+}
+```
+
+### 7.2 Integration Tests (Use Cases dengan Fakes)
+
+```php
+<?php
+
+// tests/Integration/Core/Application/PlaceOrderUseCaseTest.php
+
+namespace Tests\Integration\Core\Application;
+
+use App\Core\Application\Ports\Outgoing\OrderRepositoryInterface;
+use App\Core\Application\UseCases\PlaceOrder\PlaceOrderRequest;
+use App\Core\Application\UseCases\PlaceOrder\PlaceOrderUseCase;
+use App\Core\Domain\ValueObjects\Money;
+use Tests\TestCase;
+
+class PlaceOrderUseCaseTest extends TestCase
+{
+    private PlaceOrderUseCase $useCase;
+    private FakeOrderRepository $orderRepository;
+    private FakePaymentGateway $paymentGateway;
+    private FakeNotificationService $notificationService;
+    
+    protected function setUp(): void
+    {
+        parent::setUp();
+        
+        // Gunakan fake implementations untuk external dependencies
+        $this->orderRepository = new FakeOrderRepository();
+        $this->paymentGateway = new FakePaymentGateway();
+        $this->notificationService = new FakeNotificationService();
+        $this->eventPublisher = new FakeEventPublisher();
+        
+        $this->useCase = new PlaceOrderUseCase(
+            $this->orderRepository,
+            $this->paymentGateway,
+            $this->notificationService,
+            $this->eventPublisher,
+            new PricingService()
+        );
+    }
+    
+    public function test_successful_order_placement(): void
+    {
+        $request = new PlaceOrderRequest(
+            customerId: 'cust-123',
+            customerEmail: 'test@example.com',
+            items: [
+                ['productId' => 'prod-1', 'quantity' => 2, 'unitPrice' => 10.00],
+            ]
+        );
+        
+        $response = $this->useCase->placeOrder($request);
+        
+        // Assert database state
+        $savedOrder = $this->orderRepository->findById($response->orderId);
+        $this->assertNotNull($savedOrder);
+        $this->assertEquals(Money::fromDecimal(20, 'USD'), $savedOrder->total());
+        
+        // Assert external calls
+        $this->assertCount(1, $this->paymentGateway->charges);
+        $this->assertCount(1, $this->notificationService->emailsSent);
+        $this->assertCount(1, $this->eventPublisher->events);
+        
+        // Assert response
+        $this->assertEquals('confirmed', $response->status);
+    }
+    
+    public function test_failed_payment_cancels_order(): void
+    {
+        $this->paymentGateway->forceFailure();
+        
+        $request = new PlaceOrderRequest(
+            customerId: 'cust-123',
+            customerEmail: 'test@example.com',
+            items: [
+                ['productId' => 'prod-1', 'quantity' => 1, 'unitPrice' => 10.00],
+            ]
+        );
+        
+        $this->expectException(PaymentFailedException::class);
+        
+        try {
+            $this->useCase->placeOrder($request);
+        } finally {
+            // Assert order cancelled
+            $order = $this->orderRepository->lastSaved();
+            $this->assertTrue($order->status()->isCancelled());
+        }
+    }
+}
+
+// Fake implementations untuk testing
+class FakeOrderRepository implements OrderRepositoryInterface
+{
+    public array $orders = [];
+    public ?Order $lastSaved = null;
+    
+    public function save(Order $order): void
+    {
+        $this->orders[$order->id()->toString()] = $order;
+        $this->lastSaved = $order;
+    }
+    
+    public function findById(string $id): ?Order
+    {
+        return $this->orders[$id] ?? null;
+    }
+    
+    // ... other methods
+}
+
+class FakePaymentGateway implements PaymentGatewayInterface
+{
+    public array $charges = [];
+    private bool $shouldFail = false;
+    
+    public function charge(string $customerId, Money $amount, array $metadata): PaymentResult
+    {
+        if ($this->shouldFail) {
+            return PaymentResult::failure('Card declined');
+        }
+        
+        $this->charges[] = compact('customerId', 'amount', 'metadata');
+        return PaymentResult::success('fake-transaction-id');
+    }
+    
+    public function forceFailure(): void
+    {
+        $this->shouldFail = true;
+    }
+}
+```
+
+### 7.3 Contract Tests (Adapters)
+
+```php
+<?php
+
+// tests/Contract/Adapters/EloquentOrderRepositoryTest.php
+
+namespace Tests\Contract\Adapters;
+
+use App\Adapters\Outgoing\Persistence\Eloquent\EloquentOrderRepository;
+use App\Core\Application\Ports\Outgoing\OrderRepositoryInterface;
+use Tests\TestCase;
+
+class EloquentOrderRepositoryTest extends TestCase
+{
+    use RepositoryContractTests;
+    
+    protected function createRepository(): OrderRepositoryInterface
+    {
+        return new EloquentOrderRepository(new \App\Models\Order());
+    }
+}
+
+// Trait untuk test contract yang sama untuk semua implementations
+trait RepositoryContractTests
+{
+    abstract protected function createRepository(): OrderRepositoryInterface;
+    
+    public function test_can_save_and_retrieve_order(): void
+    {
+        $repository = $this->createRepository();
+        $order = $this->createSampleOrder();
+        
+        $repository->save($order);
+        $retrieved = $repository->findById($order->id()->toString());
+        
+        $this->assertEquals($order->id(), $retrieved->id());
+        $this->assertEquals($order->total(), $retrieved->total());
+    }
+    
+    // ... more contract tests
+}
+```
+
+## Kesimpulan
+
+Hexagonal Architecture / Clean Architecture dalam Laravel:
+- **Dependency Inversion**: Core bergantung pada abstractions (ports), bukan concrete implementations
+- **Layer Separation**: Domain → Application → Adapters dengan dependencies inward-only
+- **Testability**: Domain dan Use Cases bisa di-test tanpa Laravel framework atau external services
+- **Flexibility**: Ganti database (Eloquent → MongoDB) atau payment gateway (Stripe → Midtrans) tanpa mengubah core logic
+- **Maintainability**: Clear boundaries memudahkan reasoning dan refactoring
+
+Trade-off: More boilerplate, more files, steeper learning curve — tetapi pays off untuk aplikasi yang kompleks dan long-lived.
+
+Selanjutnya di **Sesi 78**, kita akan membahas Event Sourcing & CQRS: event store, projections, snapshotting, dan event replay strategies.
+```

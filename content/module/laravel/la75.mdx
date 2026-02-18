@@ -1,0 +1,956 @@
+---
+title: "Sesi 75: Microservices & Distributed Systems"
+description: "**Microservices** adalah arsitektur aplikasi di mana sistem dibagi menjadi multiple independent services yang berkomunikasi melalui network. Setiap se..."
+category: "laravel"
+tags: ["laravel", "architecture"]
+order: 75
+---
+
+## 1. Apa itu Microservices?
+
+**Microservices** adalah arsitektur aplikasi di mana sistem dibagi menjadi multiple independent services yang berkomunikasi melalui network. Setiap service memiliki database sendiri, codebase terpisah, dan bisa di-deploy independently.
+
+**Monolith vs Microservices:**
+
+| Aspek | Monolith | Microservices |
+|-------|----------|---------------|
+| **Codebase** | Single repository | Multiple repositories |
+| **Database** | Shared database | Database per service |
+| **Deployment** | All-or-nothing | Independent |
+| **Scaling** | Scale entire app | Scale individual services |
+| **Complexity** | Simpler initially | Higher operational complexity |
+| **Team Structure** | Single team | Multiple autonomous teams |
+
+**Kapan menggunakan Microservices:**
+- Team > 10 developers (Conway's Law)
+- Different scaling requirements per component
+- Multiple teams dengan different release cycles
+- Need for polyglot persistence (different databases per service)
+- Strong domain boundaries (DDD)
+
+**Kapan TIDAK menggunakan Microservices:**
+- Team kecil (< 5 developers)
+- MVP/early stage product
+- Tidak ada clear domain boundaries
+- Belum matang dalam DevOps practices
+
+## 2. Service Discovery
+
+### 2.1 Apa itu Service Discovery?
+
+**Service Discovery** adalah mekanisme untuk services menemukan lokasi (IP/port) services lain secara dinamis. Dalam microservices, instances bisa scale up/down, restart, atau pindah server, sehingga hardcoded URLs tidak feasible.
+
+**Arsitektur Service Discovery:**
+```
+┌─────────────────────────────────────────┐
+│         Service Registry                │
+│    (Consul / Eureka / etcd / K8s DNS)   │
+│                                         │
+│  ┌─────────┐  ┌─────────┐  ┌─────────┐ │
+│  │User Svc │  │Order Svc│  │Payment  │ │
+│  │:8001    │  │:8002    │  │Svc:8003 │ │
+│  └────┬────┘  └────┬────┘  └────┬────┘ │
+│       └─────────────┴─────────────┘     │
+│              Heartbeat checks           │
+└─────────────────────────────────────────┘
+              ↑
+    ┌─────────┴─────────┐
+    │   API Gateway     │
+    │  (Query registry  │
+    │   untuk routing)  │
+    └───────────────────┘
+```
+
+### 2.2 Consul Service Discovery
+
+```php
+<?php
+
+// Installation: composer require sensiolabs/consul-php-sdk
+
+namespace App\Services;
+
+use SensioLabs\Consul\ServiceFactory;
+use SensioLabs\Consul\Services\AgentInterface;
+
+class ConsulServiceDiscovery
+{
+    private AgentInterface $agent;
+    
+    public function __construct()
+    {
+        $factory = new ServiceFactory([
+            'base_uri' => 'http://consul:8500',
+        ]);
+        $this->agent = $factory->get('agent');
+    }
+    
+    // Register service saat startup
+    public function register(
+        string $name,
+        string $id,
+        string $address,
+        int $port,
+        array $tags = [],
+        string $healthCheckUrl = null
+    ): void {
+        $service = [
+            'Name' => $name,
+            'ID' => $id,
+            'Address' => $address,
+            'Port' => $port,
+            'Tags' => $tags,
+        ];
+        
+        if ($healthCheckUrl) {
+            $service['Check'] = [
+                'HTTP' => $healthCheckUrl,
+                'Interval' => '10s',
+                'Timeout' => '5s',
+            ];
+        }
+        
+        $this->agent->registerService($service);
+    }
+    
+    // Deregister saat shutdown
+    public function deregister(string $id): void
+    {
+        $this->agent->deregisterService($id);
+    }
+    
+    // Discover healthy instances
+    public function discover(string $serviceName): array
+    {
+        $catalog = $this->agent->services();
+        $services = json_decode($catalog->getBody(), true);
+        
+        return collect($services)
+            ->filter(fn ($s) => $s['Service'] === $serviceName)
+            ->filter(fn ($s) => $this->isHealthy($s['ID']))
+            ->map(fn ($s) => [
+                'id' => $s['ID'],
+                'address' => $s['Address'],
+                'port' => $s['Port'],
+                'tags' => $s['Tags'] ?? [],
+            ])
+            ->values()
+            ->toArray();
+    }
+    
+    private function isHealthy(string $serviceId): bool
+    {
+        $checks = $this->agent->checks();
+        $data = json_decode($checks->getBody(), true);
+        
+        $serviceCheck = collect($data)->first(
+            fn ($c) => $c['ServiceID'] === $serviceId
+        );
+        
+        return $serviceCheck && $serviceCheck['Status'] === 'passing';
+    }
+}
+
+// Laravel Service Provider
+class ConsulServiceProvider extends ServiceProvider
+{
+    public function boot()
+    {
+        $discovery = app(ConsulServiceDiscovery::class);
+        
+        // Register this service
+        $discovery->register(
+            name: 'user-service',
+            id: 'user-service-' . gethostname(),
+            address: gethostbyname(gethostname()),
+            port: 8001,
+            tags: ['laravel', 'v1'],
+            healthCheckUrl: 'http://localhost:8001/health'
+        );
+        
+        // Deregister on shutdown
+        register_shutdown_function(function () use ($discovery) {
+            $discovery->deregister('user-service-' . gethostname());
+        });
+    }
+}
+```
+
+### 2.3 Kubernetes-native Discovery
+
+```php
+<?php
+
+// Kubernetes DNS-based discovery
+// Format: <service-name>.<namespace>.svc.cluster.local
+
+class KubernetesServiceDiscovery
+{
+    public function resolve(string $service, string $namespace = 'default'): string
+    {
+        // K8s automatically creates DNS records
+        return "http://{$service}.{$namespace}.svc.cluster.local";
+    }
+    
+    // Dengan load balancing (round-robin via K8s Service)
+    public function getUserServiceUrl(): string
+    {
+        return $this->resolve('user-service', 'production');
+    }
+}
+
+// Usage
+$client = new GuzzleHttp\Client([
+    'base_uri' => app(KubernetesServiceDiscovery::class)->getUserServiceUrl(),
+]);
+```
+
+## 3. Inter-service Communication
+
+### 3.1 Synchronous (HTTP/gRPC)
+
+**HTTP/REST:**
+```php
+<?php
+
+namespace App\Services;
+
+use GuzzleHttp\Client;
+use GuzzleHttp\Pool;
+use GuzzleHttp\Psr7\Request;
+use Illuminate\Support\Facades\Cache;
+
+class UserServiceClient
+{
+    private Client $client;
+    private CircuitBreaker $breaker;
+    
+    public function __construct()
+    {
+        $this->client = new Client([
+            'base_uri' => config('services.user_service.url'),
+            'timeout' => 5,
+            'connect_timeout' => 2,
+            'headers' => [
+                'Accept' => 'application/json',
+                'X-API-Key' => config('services.user_service.key'),
+                'X-Request-ID' => app('request-id'),
+            ],
+        ]);
+        
+        $this->breaker = new CircuitBreaker(
+            name: 'user-service',
+            failureThreshold: 5,
+            timeout: 60
+        );
+    }
+    
+    public function getUser(int $id): ?array
+    {
+        return $this->breaker->call(function () use ($id) {
+            // Cache untuk reduce calls
+            return Cache::remember("user:{$id}", 60, function () use ($id) {
+                $response = $this->client->get("/users/{$id}");
+                return json_decode($response->getBody(), true);
+            });
+        });
+    }
+    
+    // Batch requests dengan Pool (parallel)
+    public function getUsers(array $ids): array
+    {
+        $requests = function ($ids) {
+            foreach ($ids as $id) {
+                yield new Request('GET', "/users/{$id}");
+            }
+        };
+        
+        $results = [];
+        $pool = new Pool($this->client, $requests($ids), [
+            'concurrency' => 5,
+            'fulfilled' => function ($response, $index) use (&$results) {
+                $results[$index] = json_decode($response->getBody(), true);
+            },
+            'rejected' => function ($reason, $index) {
+                Log::error("Failed to fetch user", ['index' => $index, 'error' => $reason]);
+            },
+        ]);
+        
+        $promise = $pool->promise();
+        $promise->wait();
+        
+        return $results;
+    }
+}
+```
+
+**gRPC (High Performance):**
+```php
+<?php
+
+// Install: composer require spiral/roadrunner-grpc
+
+// Proto definition (user.proto)
+/*
+syntax = "proto3";
+
+service UserService {
+    rpc GetUser(GetUserRequest) returns (User);
+    rpc ListUsers(ListUsersRequest) returns (stream User);
+}
+
+message GetUserRequest {
+    int32 id = 1;
+}
+
+message User {
+    int32 id = 1;
+    string name = 2;
+    string email = 3;
+}
+*/
+
+// gRPC Client
+use Spiral\GRPC\Context;
+use App\Proto\UserServiceClient;
+use App\Proto\GetUserRequest;
+
+class GrpcUserClient
+{
+    private UserServiceClient $client;
+    
+    public function __construct(string $address)
+    {
+        $this->client = new UserServiceClient($address, [
+            'credentials' => \Grpc\ChannelCredentials::createInsecure(),
+        ]);
+    }
+    
+    public function getUser(int $id): User
+    {
+        $request = new GetUserRequest();
+        $request->setId($id);
+        
+        $context = new Context([]);
+        list($response, $status) = $this->client->GetUser($context, $request)->wait();
+        
+        if ($status->code !== \Grpc\STATUS_OK) {
+            throw new \RuntimeException("gRPC error: {$status->details}");
+        }
+        
+        return $response;
+    }
+}
+```
+
+### 3.2 Asynchronous (Message Queue)
+
+```php
+<?php
+
+// Event-driven architecture dengan RabbitMQ/Redis
+
+namespace App\Events;
+
+class OrderCreated
+{
+    public function __construct(
+        public int $orderId,
+        public int $userId,
+        public float $amount,
+        public array $items,
+        public string $occurredAt
+    ) {}
+}
+
+// Publisher (Order Service)
+class OrderController extends Controller
+{
+    public function store(CreateOrderRequest $request)
+    {
+        $order = DB::transaction(function () use ($request) {
+            return Order::create($request->validated());
+        });
+        
+        // Publish event untuk services lain
+        event(new OrderCreated(
+            orderId: $order->id,
+            userId: $order->user_id,
+            amount: $order->total,
+            items: $order->items->toArray(),
+            occurredAt: now()->toIso8601String()
+        ));
+        
+        return new OrderResource($order);
+    }
+}
+
+// Subscriber (Payment Service)
+namespace App\Listeners;
+
+class ChargePaymentForOrder
+{
+    public function handle(OrderCreated $event): void
+    {
+        // Idempotent processing
+        $existing = Payment::where('order_id', $event->orderId)->first();
+        if ($existing) {
+            return;
+        }
+        
+        Payment::create([
+            'order_id' => $event->orderId,
+            'user_id' => $event->userId,
+            'amount' => $event->amount,
+            'status' => 'pending',
+        ]);
+        
+        // Process payment...
+    }
+}
+
+// Event Service Provider
+class EventServiceProvider extends ServiceProvider
+{
+    protected $listen = [
+        OrderCreated::class => [
+            ChargePaymentForOrder::class,
+            SendOrderConfirmation::class,
+            UpdateInventory::class,
+            NotifyWarehouse::class,
+        ],
+    ];
+}
+```
+
+### 3.3 Circuit Breaker Pattern
+
+```php
+<?php
+
+namespace App\Services;
+
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Log;
+
+class CircuitBreaker
+{
+    private string $name;
+    private int $failureThreshold;
+    private int $timeout;
+    
+    const STATE_CLOSED = 'closed';     // Normal operation
+    const STATE_OPEN = 'open';         // Failing, reject fast
+    const STATE_HALF_OPEN = 'half_open'; // Testing recovery
+    
+    public function __construct(string $name, int $failureThreshold = 5, int $timeout = 60)
+    {
+        $this->name = $name;
+        $this->failureThreshold = $failureThreshold;
+        $this->timeout = $timeout;
+    }
+    
+    public function call(callable $callback)
+    {
+        $state = $this->getState();
+        
+        if ($state === self::STATE_OPEN) {
+            if ($this->shouldAttemptReset()) {
+                $state = self::STATE_HALF_OPEN;
+                $this->setState($state);
+            } else {
+                throw new \RuntimeException("Circuit breaker '{$this->name}' is OPEN");
+            }
+        }
+        
+        try {
+            $result = $callback();
+            $this->onSuccess();
+            return $result;
+        } catch (\Exception $e) {
+            $this->onFailure();
+            throw $e;
+        }
+    }
+    
+    private function getState(): string
+    {
+        return Cache::get("circuit:{$this->name}:state", self::STATE_CLOSED);
+    }
+    
+    private function setState(string $state): void
+    {
+        Cache::put("circuit:{$this->name}:state", $state, 3600);
+    }
+    
+    private function onSuccess(): void
+    {
+        if ($this->getState() === self::STATE_HALF_OPEN) {
+            $this->setState(self::STATE_CLOSED);
+        }
+        
+        Cache::forget("circuit:{$this->name}:failures");
+        Cache::forget("circuit:{$this->name}:last_failure");
+    }
+    
+    private function onFailure(): void
+    {
+        $failures = Cache::increment("circuit:{$this->name}:failures");
+        Cache::put("circuit:{$this->name}:last_failure", now()->timestamp, 3600);
+        
+        if ($failures >= $this->failureThreshold) {
+            Log::warning("Circuit breaker '{$this->name}' OPENED");
+            $this->setState(self::STATE_OPEN);
+        }
+    }
+    
+    private function shouldAttemptReset(): bool
+    {
+        $lastFailure = Cache::get("circuit:{$this->name}:last_failure");
+        return $lastFailure && (now()->timestamp - $lastFailure) > $this->timeout;
+    }
+}
+```
+
+## 4. Distributed Transactions
+
+### 4.1 Apa itu Distributed Transaction?
+
+**Problem:** Dalam microservices, satu business operation bisa melibatkan multiple services. Bagaimana ensure consistency ketika:
+1. Order Service: Create order ✓
+2. Payment Service: Charge credit card ✓
+3. Inventory Service: Reserve stock ✗ (failed!)
+
+**Solusi:** Saga Pattern — sequence of local transactions yang compensate jika ada failure.
+
+### 4.2 Saga Pattern: Orchestration
+
+```php
+<?php
+
+// Central orchestrator mengkoordinasi saga
+
+namespace App\Sagas;
+
+class OrderSaga
+{
+    private SagaState $state;
+    private array $compensations = [];
+    
+    public function execute(CreateOrderCommand $command): SagaResult
+    {
+        try {
+            // Step 1: Create Order
+            $order = $this->orderService->create($command);
+            $this->compensations[] = fn () => $this->orderService->cancel($order->id);
+            $this->state->saveStep('order_created', $order->id);
+            
+            // Step 2: Process Payment
+            $payment = $this->paymentService->charge([
+                'order_id' => $order->id,
+                'amount' => $command->amount,
+            ]);
+            $this->compensations[] = fn () => $this->paymentService->refund($payment->id);
+            $this->state->saveStep('payment_charged', $payment->id);
+            
+            // Step 3: Reserve Inventory
+            $reservation = $this->inventoryService->reserve([
+                'order_id' => $order->id,
+                'items' => $command->items,
+            ]);
+            $this->compensations[] = fn () => $this->inventoryService->release($reservation->id);
+            $this->state->saveStep('inventory_reserved', $reservation->id);
+            
+            // Step 4: Ship Order
+            $shipment = $this->shippingService->create([
+                'order_id' => $order->id,
+                'address' => $command->shippingAddress,
+            ]);
+            $this->state->saveStep('shipment_created', $shipment->id);
+            
+            return SagaResult::success($order);
+            
+        } catch (\Exception $e) {
+            $this->compensate();
+            return SagaResult::failure($e);
+        }
+    }
+    
+    private function compensate(): void
+    {
+        // Execute compensations in reverse order
+        foreach (array_reverse($this->compensations) as $compensation) {
+            try {
+                $compensation();
+            } catch (\Exception $e) {
+                Log::error('Compensation failed', ['error' => $e->getMessage()]);
+                // Alert untuk manual intervention
+            }
+        }
+    }
+}
+```
+
+### 4.3 Saga Pattern: Choreography
+
+```php
+<?php
+
+// Event-driven choreography — tidak ada central orchestrator
+
+// Order Service publishes OrderCreated
+// Payment Service listens, processes, publishes PaymentProcessed
+// Inventory Service listens, processes, publishes InventoryReserved
+// Shipping Service listens, processes, publishes OrderShipped
+
+// Each service handles its own compensation
+
+namespace App\Listeners;
+
+class PaymentServiceListener
+{
+    public function onOrderCreated(OrderCreated $event): void
+    {
+        try {
+            $payment = $this->paymentService->charge($event);
+            
+            event(new PaymentProcessed(
+                orderId: $event->orderId,
+                paymentId: $payment->id,
+                status: 'success'
+            ));
+        } catch (\Exception $e) {
+            event(new PaymentFailed(
+                orderId: $event->orderId,
+                reason: $e->getMessage()
+            ));
+            
+            // Compensation tidak perlu — order belum diproses lebih lanjut
+        }
+    }
+    
+    public function onPaymentFailed(PaymentFailed $event): void
+    {
+        // Refund jika sudah charge partial
+        $this->paymentService->refundPartial($event->orderId);
+    }
+}
+
+namespace App\Listeners;
+
+class InventoryServiceListener
+{
+    public function onPaymentProcessed(PaymentProcessed $event): void
+    {
+        try {
+            $reservation = $this->inventoryService->reserve($event->orderId);
+            
+            event(new InventoryReserved(
+                orderId: $event->orderId,
+                reservationId: $reservation->id
+            ));
+        } catch (\Exception $e) {
+            event(new InventoryReservationFailed(
+                orderId: $event->orderId,
+                reason: $e->getMessage()
+            ));
+            
+            // Trigger compensation di payment service
+            event(new RequestPaymentRefund(orderId: $event->orderId));
+        }
+    }
+}
+```
+
+## 5. API Gateway Patterns
+
+### 5.1 Apa itu API Gateway?
+
+**API Gateway** adalah single entry point untuk semua clients. Ia handle:
+- Routing ke appropriate microservice
+- Authentication & authorization
+- Rate limiting
+- Request/response transformation
+- Caching
+- SSL termination
+
+```
+┌─────────────┐     ┌─────────────┐     ┌─────────────┐
+│   Mobile    │     │    Web      │     │  Partner    │
+│    App      │     │   Client    │     │    API      │
+└──────┬──────┘     └──────┬──────┘     └──────┬──────┘
+       │                   │                   │
+       └───────────────────┼───────────────────┘
+                           │
+                    ┌──────▼──────┐
+                    │  API Gateway │
+                    │  (Kong/AWS   │
+                    │   /Laravel)  │
+                    └──────┬──────┘
+                           │
+              ┌────────────┼────────────┐
+              │            │            │
+        ┌─────▼─────┐ ┌────▼────┐ ┌────▼────┐
+        │  User Svc │ │ Order   │ │ Payment │
+        │    :8001  │ │ Svc:8002│ │ Svc:8003│
+        └───────────┘ └─────────┘ └─────────┘
+```
+
+### 5.2 Laravel sebagai API Gateway
+
+```php
+<?php
+
+// routes/gateway.php
+
+use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Route;
+
+Route::middleware(['auth:api', 'throttle:100,1'])->group(function () {
+    
+    // User Service Routes
+    Route::prefix('users')->group(function () {
+        Route::get('/', fn () => proxyTo('user_service', '/users'));
+        Route::get('/{id}', fn ($id) => proxyTo('user_service', "/users/{$id}"));
+        Route::post('/', fn () => proxyTo('user_service', '/users', 'POST'));
+    });
+    
+    // Order Service Routes
+    Route::prefix('orders')->group(function () {
+        Route::get('/', fn () => proxyTo('order_service', '/orders'));
+        Route::post('/', fn () => proxyTo('order_service', '/orders', 'POST'));
+        
+        // Aggregated endpoint — calls multiple services
+        Route::get('/{id}/details', function ($id) {
+            $order = Http::withToken(request()->bearerToken())
+                ->get(service_url('order_service') . "/orders/{$id}")
+                ->json();
+            
+            $user = Http::withToken(request()->bearerToken())
+                ->get(service_url('user_service') . "/users/{$order['user_id']}")
+                ->json();
+            
+            return [
+                'order' => $order,
+                'customer' => $user,
+                'payment_status' => cache()->get("payment:{$id}") ?? 'pending',
+            ];
+        });
+    });
+});
+
+// Helper functions
+function proxyTo(string $service, string $path, string $method = 'GET')
+{
+    $response = Http::withHeaders(request()->headers->all())
+        ->withBody(request()->getContent(), request()->header('Content-Type'))
+        ->send($method, service_url($service) . $path);
+    
+    return response($response->body(), $response->status())
+        ->withHeaders($response->headers());
+}
+
+function service_url(string $service): string
+{
+    return app(ServiceDiscovery::class)->resolve($service);
+}
+```
+
+### 5.3 Kong API Gateway (Production)
+
+```yaml
+# docker-compose.yml untuk Kong
+version: '3.8'
+services:
+  kong:
+    image: kong:latest
+    environment:
+      KONG_DATABASE: postgres
+      KONG_PG_HOST: kong-database
+      KONG_PG_USER: kong
+      KONG_PG_PASSWORD: kong
+      KONG_CASSANDRA_CONTACT_POINTS: kong-database
+      KONG_PROXY_ACCESS_LOG: /dev/stdout
+      KONG_ADMIN_ACCESS_LOG: /dev/stdout
+      KONG_PROXY_ERROR_LOG: /dev/stderr
+      KONG_ADMIN_ERROR_LOG: /dev/stderr
+      KONG_PLUGINS: bundled,rate-limiting
+    ports:
+      - "8000:8000"
+      - "8443:8443"
+      - "8001:8001"
+      - "8444:8444"
+
+# Kong configuration via Admin API
+# Setup service
+curl -X POST http://localhost:8001/services \
+  --data name=user-service \
+  --data url=http://user-service:8001
+
+# Setup route
+curl -X POST http://localhost:8001/services/user-service/routes \
+  --data paths[]=/users
+
+# Enable rate limiting
+curl -X POST http://localhost:8001/services/user-service/plugins \
+  --data name=rate-limiting \
+  --data config.minute=100 \
+  --data config.policy=redis
+
+# Enable JWT auth
+curl -X POST http://localhost:8001/services/user-service/plugins \
+  --data name=jwt
+```
+
+## 6. Service Mesh Considerations
+
+### 6.1 Apa itu Service Mesh?
+
+**Service Mesh** adalah dedicated infrastructure layer untuk handling service-to-service communication. Proxy sidecar (seperti Istio/Linkerd) di-inject ke setiap pod, menangani:
+- mTLS (encrypted traffic)
+- Traffic splitting (canary deployments)
+- Retries & timeouts
+- Observability (metrics, tracing)
+
+```
+┌─────────────────────────────────────────┐
+│           Kubernetes Pod                │
+│  ┌─────────┐      ┌─────────┐          │
+│  │   App   │◄────►│ Sidecar │◄────┐    │
+│  │Container│      │  Proxy  │     │    │
+│  │ (Laravel)      │(Envoy/  │     │    │
+│  └─────────┘      │ Linkerd)│     │    │
+│                   └────┬────┘     │    │
+│                        │          │    │
+│                   mTLS │          │ mTLS
+│                   encrypted       │    │
+│                        ▼          │    │
+└───────────────────────────────────┼────┘
+                                    │
+                         ┌──────────┴──────────┐
+                         │   Service Mesh      │
+                         │  Control Plane      │
+                         │ (Istiod/Linkerd)    │
+                         └─────────────────────┘
+```
+
+### 6.2 Laravel dengan Istio
+
+```yaml
+# kubernetes/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: user-service
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: user-service
+  template:
+    metadata:
+      annotations:
+        # Istio sidecar injection
+        sidecar.istio.io/inject: "true"
+        # Traffic policy
+        traffic.sidecar.istio.io/includeInboundPorts: "8001"
+    spec:
+      containers:
+        - name: user-service
+          image: registry/user-service:latest
+          ports:
+            - containerPort: 8001
+          env:
+            - name: APP_ENV
+              value: "production"
+---
+# Istio VirtualService untuk traffic management
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: user-service
+spec:
+  hosts:
+    - user-service
+  http:
+    - route:
+        - destination:
+            host: user-service
+            subset: v1
+          weight: 90
+        - destination:
+            host: user-service
+            subset: v2
+          weight: 10
+      retries:
+        attempts: 3
+        perTryTimeout: 2s
+        retryOn: gateway-error,connect-failure,refused-stream
+      timeout: 10s
+---
+# DestinationRule untuk subsets
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: user-service
+spec:
+  host: user-service
+  trafficPolicy:
+    tls:
+      mode: ISTIO_MUTUAL
+  subsets:
+    - name: v1
+      labels:
+        version: v1
+    - name: v2
+      labels:
+        version: v2
+```
+
+### 6.3 Observability dengan Service Mesh
+
+```php
+<?php
+
+// Distributed tracing headers — Istio/Envoy compatible
+class TracingMiddleware
+{
+    public function handle($request, $next)
+    {
+        // Propagate Istio tracing headers
+        $headers = [
+            'x-request-id',
+            'x-b3-traceid',
+            'x-b3-spanid',
+            'x-b3-parentspanid',
+            'x-b3-sampled',
+            'x-b3-flags',
+            'x-ot-span-context',
+        ];
+        
+        foreach ($headers as $header) {
+            if ($request->hasHeader($header)) {
+                // Continue trace
+                continue;
+            }
+            
+            // Start new trace jika tidak ada
+            if ($header === 'x-request-id') {
+                $request->headers->set($header, Str::uuid()->toString());
+            }
+        }
+        
+        return $next($request);
+    }
+}
+```
+
+## Kesimpulan
+
+Microservices & Distributed Systems mencakup:
+- **Service Discovery**: Consul atau K8s DNS untuk dynamic service location
+- **Inter-service Communication**: HTTP/REST, gRPC untuk sync; message queues untuk async
+- **Circuit Breaker**: Prevent cascade failures dengan fail-fast mechanism
+- **Distributed Transactions**: Saga pattern (orchestration vs choreography) untuk consistency
+- **API Gateway**: Single entry point dengan routing, auth, rate limiting
+- **Service Mesh**: Istio/Linkerd untuk mTLS, traffic management, dan observability tanpa code changes

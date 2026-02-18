@@ -1,0 +1,975 @@
+---
+title: "Sesi 9: Blade Templating Advanced"
+description: "Blade components adalah \"lego\" dari UI Laravel—blok-blok kecil yang bisa dipasang-pasang membentuk antarmuka yang kompleks."
+category: "laravel"
+tags: ["laravel", "frontend"]
+order: 9
+---
+
+## 9.1 Blade Components: Anonymous vs Class-based
+
+Blade components adalah "lego" dari UI Laravel—blok-blok kecil yang bisa dipasang-pasang membentuk antarmuka yang kompleks.
+
+### 9.1.1 Anonymous Components
+
+Anonymous components adalah file Blade sederhana tanpa class PHP. Mereka hidup di `resources/views/components/` dan sangat cocok untuk UI yang murni presentasional.
+
+> **tip**
+>
+  Gunakan anonymous components untuk komponen yang tidak butuh logic PHP kompleks—hanya menerima props dan merender HTML.
+
+```blade
+{{-- resources/views/components/alert.blade.php --}}
+
+@props(['type' => 'info', 'dismissible' => false])
+
+@php
+$colors = [
+    'info' => 'bg-blue-100 border-blue-400 text-blue-700',
+    'success' => 'bg-green-100 border-green-400 text-green-700',
+    'warning' => 'bg-yellow-100 border-yellow-400 text-yellow-700',
+    'error' => 'bg-red-100 border-red-400 text-red-700',
+];
+
+$icon = [
+    'info' => 'information-circle',
+    'success' => 'check-circle',
+    'warning' => 'exclamation-triangle',
+    'error' => 'x-circle',
+];
+@endphp
+
+<div {{ $attributes->merge(['class' => "border-l-4 p-4 {$colors[$type]}"]) }} role="alert">
+    <div class="flex items-start">
+        <div class="flex-shrink-0">
+            {{-- Icon berdasarkan type --}}
+            <x-icon :name="$icon[$type]" class="h-5 w-5" />
+        </div>
+        
+        <div class="ml-3 flex-1">
+            @if(isset($title))
+                <h3 class="text-sm font-medium">{{ $title }}</h3>
+            @endif
+            
+            <div class="text-sm {{ isset($title) ? 'mt-2' : '' }}">
+                {{ $slot }}
+            </div>
+        </div>
+        
+        @if($dismissible)
+            <button type="button" class="ml-auto -mx-1.5 -my-1.5 rounded-lg p-1.5 hover:bg-opacity-20 hover:bg-gray-500" onclick="this.parentElement.parentElement.remove()">
+                <span class="sr-only">Dismiss</span>
+                <x-icon name="x" class="h-4 w-4" />
+            </button>
+        @endif
+    </div>
+</div>
+```
+
+Penggunaan:
+
+```blade
+<x-alert type="success" :dismissible="true">
+    <x-slot:title>Profile Updated!</x-slot:title>
+    Your profile information has been successfully saved.
+</x-alert>
+
+<x-alert type="error">
+    There was an error processing your request. Please try again.
+</x-alert>
+```
+
+### 9.1.2 Class-based Components
+
+Gunakan class-based components ketika butuh logic PHP, dependency injection, atau method helper.
+
+```php
+<?php
+
+// app/View/Components/DataTable.php
+
+namespace App\View\Components;
+
+use Illuminate\View\Component;
+use Illuminate\Pagination\LengthAwarePaginator;
+
+class DataTable extends Component
+{
+    public LengthAwarePaginator $items;
+    public array $columns;
+    public ?string $sortField;
+    public ?string $sortDirection;
+    public bool $searchable;
+    public bool $paginated;
+
+    public function __construct(
+        LengthAwarePaginator $items,
+        array $columns,
+        ?string $sortField = null,
+        ?string $sortDirection = 'asc',
+        bool $searchable = true,
+        bool $paginated = true
+    ) {
+        $this->items = $items;
+        $this->columns = $columns;
+        $this->sortField = $sortField;
+        $this->sortDirection = $sortDirection;
+        $this->searchable = $searchable;
+        $this->paginated = $paginated;
+    }
+
+    public function render()
+    {
+        return view('components.data-table');
+    }
+
+    public function isSortable(string $column): bool
+    {
+        return in_array($column, array_keys($this->columns));
+    }
+
+    public function sortUrl(string $column): string
+    {
+        $direction = ($this->sortField === $column && $this->sortDirection === 'asc') 
+            ? 'desc' 
+            : 'asc';
+            
+        return request()->fullUrlWithQuery([
+            'sort' => $column,
+            'direction' => $direction,
+        ]);
+    }
+
+    public function sortIcon(string $column): string
+    {
+        if ($this->sortField !== $column) {
+            return 'sort';
+        }
+        
+        return $this->sortDirection === 'asc' ? 'sort-ascending' : 'sort-descending';
+    }
+}
+```
+
+```blade
+{{-- resources/views/components/data-table.blade.php --}}
+
+<div class="bg-white shadow overflow-hidden border-b border-gray-200 sm:rounded-lg">
+    @if($searchable)
+        <div class="p-4 border-b border-gray-200">
+            <form method="GET" class="flex gap-4">
+                <input 
+                    type="search" 
+                    name="search" 
+                    value="{{ request('search') }}"
+                    placeholder="Search..."
+                    class="flex-1 rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                >
+                <button type="submit" class="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700">
+                    Search
+                </button>
+            </form>
+        </div>
+    @endif
+
+    <table class="min-w-full divide-y divide-gray-200">
+        <thead class="bg-gray-50">
+            <tr>
+                @foreach($columns as $key => $label)
+                    <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        @if($isSortable($key))
+                            <a href="{{ $sortUrl($key) }}" class="group inline-flex items-center">
+                                {{ $label }}
+                                <x-icon :name="$sortIcon($key)" class="ml-2 h-4 w-4 text-gray-400 group-hover:text-gray-500" />
+                            </a>
+                        @else
+                            {{ $label }}
+                        @endif
+                    </th>
+                @endforeach
+                
+                @if(isset($actions))
+                    <th scope="col" class="relative px-6 py-3">
+                        <span class="sr-only">Actions</span>
+                    </th>
+                @endif
+            </tr>
+        </thead>
+        
+        <tbody class="bg-white divide-y divide-gray-200">
+            @forelse($items as $item)
+                <tr class="hover:bg-gray-50">
+                    @foreach($columns as $key => $label)
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                            {{ $item->$key }}
+                        </td>
+                    @endforeach
+                    
+                    @if(isset($actions))
+                        <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                            {{ $actions($item) }}
+                        </td>
+                    @endif
+                </tr>
+            @empty
+                <tr>
+                    <td colspan="{{ count($columns) + (isset($actions) ? 1 : 0) }}" class="px-6 py-4 text-center text-gray-500">
+                        No records found.
+                    </td>
+                </tr>
+            @endforelse
+        </tbody>
+    </table>
+
+    @if($paginated)
+        <div class="px-6 py-4 border-t border-gray-200">
+            {{ $items->links() }}
+        </div>
+    @endif
+</div>
+```
+
+Penggunaan:
+
+```blade
+@php
+$columns = [
+    'name' => 'Name',
+    'email' => 'Email',
+    'created_at' => 'Joined',
+];
+
+$users = \App\Models\User::paginate(10);
+@endphp
+
+<x-data-table 
+    :items="$users" 
+    :columns="$columns"
+    :sort-field="request('sort')"
+    :sort-direction="request('direction', 'asc')"
+>
+    <x-slot:actions="{ $item }">
+        <a href="{{ route('users.edit', $item) }}" class="text-blue-600 hover:text-blue-900">Edit</a>
+        <form action="{{ route('users.destroy', $item) }}" method="POST" class="inline">
+            @csrf @method('DELETE')
+            <button type="submit" class="text-red-600 hover:text-red-900 ml-4">Delete</button>
+        </form>
+    </x-slot:actions>
+</x-data-table>
+```
+
+---
+
+## 9.2 Conditional Directives (@auth, @guest, @env)
+
+Blade menyediakan direktif kondisional yang ekspresif untuk kasus umum.
+
+### 9.2.1 Authentication Directives
+
+```blade
+{{-- @auth dan @guest --}}
+@auth
+    <div class="user-menu">
+        <span>Welcome, {{ auth()->user()->name }}</span>
+        <a href="{{ route('logout') }}">Logout</a>
+    </div>
+@endauth
+
+@guest
+    <div class="auth-links">
+        <a href="{{ route('login') }}">Login</a>
+        <a href="{{ route('register') }}">Register</a>
+    </div>
+@endguest
+
+{{-- Dengan guard spesifik --}}
+@auth('admin')
+    <a href="{{ route('admin.dashboard') }}">Admin Panel</a>
+@endauth
+
+@guest('admin')
+    <a href="{{ route('admin.login') }}">Admin Login</a>
+@endguest
+```
+
+### 9.2.2 Environment Directives
+
+```blade
+{{-- Environment check --}}
+@env('local')
+    <div class="debug-banner">
+        Local Environment - Debug Mode Active
+        <pre>{{ var_dump($debugData) }}</pre>
+    </div>
+@endenv
+
+@env(['staging', 'testing'])
+    <div class="staging-banner">
+        ⚠️ This is the {{ app()->environment() }} environment
+    </div>
+@endenv
+
+@production
+    {{-- Analytics hanya di production --}}
+    <script async src="https://analytics.example.com/script.js"></script>
+    
+    {{-- Error tracking --}}
+    <script>
+        window.errorTracker = new ErrorTracker({
+            dsn: '{{ config("services.sentry.dsn") }}'
+        });
+    </script>
+@endproduction
+```
+
+### 9.2.3 Feature Check (Laravel Pennant)
+
+```blade
+{{-- Dengan Laravel Pennant --}}
+@feature('new-dashboard')
+    <x-new-dashboard />
+@else
+    <x-legacy-dashboard />
+@endfeature
+
+@feature('dark-mode')
+    <button onclick="toggleDarkMode()">🌙 Toggle Dark Mode</button>
+@endfeature
+
+{{-- Dengan kondisi --}}
+@if(Feature::active('beta-feature') && auth()->user()->isBetaTester())
+    <x-beta-feature />
+@endif
+```
+
+### 9.2.4 Session and Request Directives
+
+```blade
+{{-- Session check --}}
+@if(session('success'))
+    <x-alert type="success">{{ session('success') }}</x-alert>
+@endif
+
+@session('error')
+    <x-alert type="error">{{ $value }}</x-alert>
+@endsession
+
+{{-- Old input --}}
+<input 
+    type="email" 
+    name="email" 
+    value="{{ old('email', $user->email ?? '') }}"
+    class="@error('email') border-red-500 @enderror"
+>
+
+@error('email')
+    <p class="text-red-500 text-sm">{{ $message }}</p>
+@enderror
+
+{{-- Request check --}}
+@request('is', 'posts/*')
+    {{-- Hanya tampil di halaman posts --}}
+    <x-posts-sidebar />
+@endrequest
+
+@request('route', 'home')
+    <x-hero-section />
+@endrequest
+```
+
+---
+
+## 9.3 Loop Directives dan $loop Variable
+
+### 9.3.1 Loop Lanjutan
+
+```blade
+{{-- Loop dengan kondisi --}}
+@foreach($users as $user)
+    @continue($user->isBanned())
+    
+    <div class="user-card {{ $loop->first ? 'border-t-0' : '' }}">
+        <h3>{{ $user->name }}</h3>
+        
+        @if($loop->even)
+            <span class="badge badge-secondary">Even</span>
+        @endif
+        
+        @break($loop->iteration > 10 && !$showAll)
+    </div>
+@endforeach
+
+{{-- Once directive (hanya render sekali per loop) --}}
+@foreach($posts as $post)
+    @once
+        <script>
+            console.log('Script loaded once untuk semua posts');
+        </script>
+    @endonce
+    
+    <article>{{ $post->title }}</article>
+@endforeach
+
+{{-- Foreach dengan index custom --}}
+@foreach($items as $key => $item)
+    <tr>
+        <td>{{ $loop->parent->iteration }}.{{ $loop->iteration }}</td>
+        <td>{{ $item->name }}</td>
+    </tr>
+@endforeach
+```
+
+### 9.3.2 $loop Variable Deep Dive
+
+```blade
+{{-- Informasi lengkap tentang loop --}}
+@foreach($users as $user)
+    <tr>
+        <td>{{ $loop->index }}</td>           {{-- Index mulai 0 --}}
+        <td>{{ $loop->iteration }}</td>       {{-- Iterasi mulai 1 --}}
+        <td>{{ $loop->count }}</td>           {{-- Total items --}}
+        <td>{{ $loop->remaining }}</td>       {{-- Sisa items --}}
+        <td>
+            @if($loop->first) First @endif
+            @if($loop->last) Last @endif
+            @if($loop->even) Even @endif
+            @if($loop->odd) Odd @endif
+        </td>
+        <td>Depth: {{ $loop->depth }}</td>    {{-- Kedalaman nesting --}}
+        
+        {{-- Akses parent loop --}}
+        @if($loop->parent)
+            <td>Parent index: {{ $loop->parent->index }}</td>
+        @endif
+    </tr>
+@endforeach
+
+{{-- Nested loops dengan parent reference --}}
+@foreach($categories as $category)
+    <h2>{{ $category->name }}</h2>
+    
+    @foreach($category->products as $product)
+        <div class="product {{ $loop->parent->odd ? 'bg-gray-100' : 'bg-white' }}">
+            {{ $loop->parent->iteration }}.{{ $loop->iteration }}
+            {{ $product->name }}
+        </div>
+    @endforeach
+@endforeach
+```
+
+### 9.3.3 Loop dengan Empty State
+
+```blade
+{{-- @forelse dengan multiple empty conditions --}}
+@forelse($posts as $post)
+    <x-post-card :post="$post" />
+@empty
+    @if(request()->has('search'))
+        <x-empty-state 
+            title="No results found"
+            description="Try adjusting your search terms."
+            :action="['url' => route('posts.index'), 'text' => 'Clear Search']"
+        />
+    @else
+        <x-empty-state 
+            title="No posts yet"
+            description="Be the first to create a post!"
+            :action="['url' => route('posts.create'), 'text' => 'Create Post']"
+        />
+    @endif
+@endforelse
+
+{{-- @empty directive standalone --}}
+@empty($records)
+    <p>No records available.</p>
+@endempty
+
+{{-- @isset kombinasi --}}
+@isset($records)
+    @if($records->isEmpty())
+        <p>Records variable exists but is empty.</p>
+    @else
+        @foreach($records as $record)
+            <p>{{ $record->name }}</p>
+        @endforeach
+    @endif
+@else
+    <p>Records variable not set.</p>
+@endisset
+```
+
+---
+
+## 9.4 Blade Service Injection (@inject)
+
+Inject service dari container langsung di template—berguna untuk helper service yang sering digunakan di view.
+
+### 9.4.1 Basic Injection
+
+```blade
+{{-- Inject service --}}
+@inject('metrics', 'App\Services\AnalyticsService')
+
+<div class="analytics-dashboard">
+    <div class="stat">
+        <span class="number">{{ $metrics->totalUsers() }}</span>
+        <span class="label">Total Users</span>
+    </div>
+    
+    <div class="stat">
+        <span class="number">{{ $metrics->activeToday() }}</span>
+        <span class="label">Active Today</span>
+    </div>
+</div>
+```
+
+### 9.4.2 Injection dengan Parameter
+
+```blade
+{{-- Injection dengan method call --}}
+@inject('cart', 'App\Services\CartService')
+
+<div class="cart-summary">
+    <p>Items: {{ $cart->count() }}</p>
+    <p>Total: {{ $cart->totalFormatted() }}</p>
+    
+    @if($cart->hasDiscount())
+        <p>Discount: {{ $cart->discountAmount() }}</p>
+    @endif
+</div>
+
+{{-- Multiple injections --}}
+@inject('settings', 'App\Services\SettingsService')
+@inject('translator', 'App\Services\TranslationService')
+
+<footer style="background-color: {{ $settings->get('footer_color') }}">
+    <p>{{ $translator->trans('footer.copyright') }}</p>
+</footer>
+```
+
+### 9.4.3 Best Practices untuk Injection
+
+> **caution**
+>
+  Hindari logic bisnis kompleks di view. Gunakan @inject hanya untuk helper/read-only services. Logic berat tetap di controller atau View Composer.
+
+```php
+<?php
+
+// app/Providers/AppServiceProvider.php
+
+public function boot(): void
+{
+    // Share data global daripada inject di setiap view
+    View::share('appSettings', app(SettingsService::class)->all());
+    
+    // Atau gunakan View Composer
+    View::composer('partials.analytics', function ($view) {
+        $view->with('metrics', app(AnalyticsService::class));
+    });
+}
+```
+
+---
+
+## 9.5 Custom Blade Directives
+
+### 9.5.1 Membuat Directive Sederhana
+
+```php
+<?php
+
+// app/Providers/AppServiceProvider.php atau BladeServiceProvider
+
+use Illuminate\Support\Facades\Blade;
+
+public function boot(): void
+{
+    // Directive tanpa parameter
+    Blade::directive('datetime', function () {
+        return "<?php echo now()->format('Y-m-d H:i:s'); ?>";
+    });
+    
+    // Directive dengan parameter
+    Blade::directive('money', function ($expression) {
+        return "<?php echo 'Rp ' . number_format($expression, 0, ',', '.'); ?>";
+    });
+    
+    // Directive dengan multiple parameter
+    Blade::directive('dateformat', function ($expression) {
+        // Expression: ($date, $format)
+        return "<?php echo ($expression[0] ?? now())->format($expression[1] ?? 'Y-m-d'); ?>";
+    });
+    
+    // Directive dengan kondisi
+    Blade::directive('admin', function () {
+        return "<?php if(auth()->check() && auth()->user()->isAdmin()): ?>";
+    });
+    
+    Blade::directive('endadmin', function () {
+        return "<?php endif; ?>";
+    });
+}
+```
+
+Penggunaan:
+
+```blade
+{{-- @datetime --}}
+<p>Current time: @datetime</p>
+
+{{-- @money --}}
+<p>Price: @money($product->price)</p>
+{{-- Output: Rp 150.000 --}}
+
+{{-- @dateformat --}}
+<p>Created: @dateformat($post->created_at, 'd M Y')</p>
+
+{{-- @admin --}}
+@admin
+    <a href="{{ route('admin.dashboard') }}">Admin Panel</a>
+@endadmin
+```
+
+### 9.5.2 Directive Kompleks dengan Class
+
+```php
+<?php
+
+// app/Blade/Directives/CacheDirective.php
+
+namespace App\Blade\Directives;
+
+use Illuminate\Support\Facades\Cache;
+
+class CacheDirective
+{
+    public static function open($expression)
+    {
+        // Parse: @cache($key, $minutes)
+        $params = explode(',', $expression);
+        $key = trim($params[0] ?? "'default'");
+        $minutes = trim($params[1] ?? '60');
+        
+        return "<?php 
+            \$__cacheKey = {$key};
+            \$__cacheMinutes = {$minutes};
+            
+            if(Cache::has(\$__cacheKey)):
+                echo Cache::get(\$__cacheKey);
+            else:
+                ob_start();
+        ?>";
+    }
+    
+    public static function close()
+    {
+        return "<?php 
+                \$__cachedContent = ob_get_clean();
+                Cache::put(\$__cacheKey, \$__cachedContent, \$__cacheMinutes);
+                echo \$__cachedContent;
+            endif;
+        ?>";
+    }
+}
+```
+
+```php
+<?php
+
+// Register di AppServiceProvider
+
+Blade::directive('cache', [CacheDirective::class, 'open']);
+Blade::directive('endcache', [CacheDirective::class, 'close']);
+```
+
+Penggunaan:
+
+```blade
+{{-- Cache expensive query --}}
+@cache('sidebar-categories', 3600)
+    <div class="sidebar">
+        @foreach(\App\Models\Category::withCount('posts')->get() as $category)
+            <a href="{{ route('categories.show', $category) }}">
+                {{ $category->name }} ({{ $category->posts_count }})
+            </a>
+        @endforeach
+    </div>
+@endcache
+```
+
+### 9.5.3 Directive untuk Permission (Spatie)
+
+```php
+<?php
+
+// Jika menggunakan spatie/laravel-permission
+
+Blade::directive('role', function ($expression) {
+    return "<?php if(auth()->check() && auth()->user()->hasRole({$expression})): ?>";
+});
+
+Blade::directive('endrole', function () {
+    return "<?php endif; ?>";
+});
+
+Blade::directive('permission', function ($expression) {
+    return "<?php if(auth()->check() && auth()->user()->hasPermissionTo({$expression})): ?>";
+});
+
+Blade::directive('endpermission', function () {
+    return "<?php endif; ?>";
+});
+
+Blade::directive('unlessrole', function ($expression) {
+    return "<?php if(auth()->check() && !auth()->user()->hasRole({$expression})): ?>";
+});
+
+Blade::directive('endunlessrole', function () {
+    return "<?php endif; ?>";
+});
+```
+
+Penggunaan:
+
+```blade
+@role('admin')
+    <x-admin-panel />
+@endrole
+
+@permission('edit posts')
+    <a href="{{ route('posts.edit', $post) }}">Edit</a>
+@endpermission
+
+@unlessrole('banned')
+    <form action="{{ route('comments.store') }}" method="POST">
+        @csrf
+        <textarea name="body"></textarea>
+        <button type="submit">Comment</button>
+    </form>
+@endunlessrole
+```
+
+### 9.5.4 Conditional Classes Directive
+
+```php
+<?php
+
+Blade::directive('class', function ($expression) {
+    return "<?php echo \Illuminate\Support\Arr::toCssClasses({$expression}); ?>";
+});
+```
+
+Penggunaan:
+
+```blade
+<div @class([
+    'p-4',
+    'bg-blue-100' => $active,
+    'bg-gray-100' => !$active,
+    'rounded-lg' => true,
+    'border' => $hasBorder,
+])>
+    Content
+</div>
+
+{{-- Output: class="p-4 bg-blue-100 rounded-lg" jika $active true --}}
+```
+
+> **tip**
+>
+  Laravel 8+ sudah memiliki directive `@class` built-in. Gunakan `@class([...])` untuk conditional classes yang lebih readable daripada `class="{{ $active ? 'bg-blue-100' : 'bg-gray-100' }}"`.
+
+---
+
+## 9.6 Blade Component Attributes dan Slots
+
+### 9.6.1 Attributes Merge
+
+```blade
+{{-- resources/views/components/button.blade.php --}}
+
+@props(['variant' => 'primary', 'size' => 'md', 'disabled' => false])
+
+@php
+$baseClasses = 'inline-flex items-center justify-center font-medium rounded-lg focus:outline-none focus:ring-2 focus:ring-offset-2';
+
+$variants = [
+    'primary' => 'bg-blue-600 text-white hover:bg-blue-700 focus:ring-blue-500',
+    'secondary' => 'bg-gray-200 text-gray-800 hover:bg-gray-300 focus:ring-gray-500',
+    'danger' => 'bg-red-600 text-white hover:bg-red-700 focus:ring-red-500',
+];
+
+$sizes = [
+    'sm' => 'px-3 py-1.5 text-sm',
+    'md' => 'px-4 py-2 text-base',
+    'lg' => 'px-6 py-3 text-lg',
+];
+
+$classes = "{$baseClasses} {$variants[$variant]} {$sizes[$size]}";
+@endphp
+
+<button 
+    {{ $attributes->merge([
+        'type' => 'button',
+        'class' => $classes . ($disabled ? ' opacity-50 cursor-not-allowed' : ''),
+    ])->class([
+        'shadow-sm' => !$disabled,
+    ]) }}
+    @if($disabled) disabled @endif
+>
+    {{ $slot }}
+</button>
+```
+
+Penggunaan advanced:
+
+```blade
+{{-- Merge dengan class tambahan --}}
+<x-button variant="primary" size="lg" class="w-full shadow-xl" id="submit-btn" data-loading="false">
+    Submit Order
+</x-button>
+
+{{-- Output: class="inline-flex ... bg-blue-600 ... px-6 py-3 ... w-full shadow-xl" --}}
+
+{{-- Hanya class tertentu yang di-merge --}}
+<x-button {{ $attributes->merge(['class' => 'my-class'])->only('class') }}>
+    Click me
+</x-button>
+
+{{-- Filter attributes --}}
+<x-button {{ $attributes->except('class') }}>
+    {{-- Tidak include class dari parent --}}
+</x-button>
+
+{{-- Where starts with --}}
+<x-input {{ $attributes->whereStartsWith('wire:model') }} />
+{{-- Hanya wire:model, wire:model.defer, dll --}}
+```
+
+### 9.6.2 Named Slots
+
+```blade
+{{-- resources/views/components/modal.blade.php --}}
+
+@props(['show' => false, 'maxWidth' => '2xl'])
+
+@php
+$maxWidths = [
+    'sm' => 'sm:max-w-sm',
+    'md' => 'sm:max-w-md',
+    'lg' => 'sm:max-w-lg',
+    'xl' => 'sm:max-w-xl',
+    '2xl' => 'sm:max-w-2xl',
+];
+@endphp
+
+<div x-data="{ show: @js($show) }" x-show="show" class="fixed inset-0 z-50 overflow-y-auto">
+    <div class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
+        {{-- Backdrop --}}
+        <div x-show="show" class="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity"></div>
+        
+        {{-- Modal panel --}}
+        <div class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle {{ $maxWidths[$maxWidth] }} sm:w-full">
+            
+            @if(isset($header))
+                <div class="bg-gray-50 px-4 py-3 border-b border-gray-200">
+                    {{ $header }}
+                </div>
+            @endif
+            
+            <div class="px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
+                {{ $slot }}
+            </div>
+            
+            @if(isset($footer))
+                <div class="bg-gray-50 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
+                    {{ $footer }}
+                </div>
+            @endif
+            
+        </div>
+    </div>
+</div>
+```
+
+Penggunaan:
+
+```blade
+<x-modal :show="true" maxWidth="lg">
+    <x-slot:header>
+        <h3 class="text-lg font-medium text-gray-900">Confirm Delete</h3>
+    </x-slot:header>
+    
+    <p class="text-sm text-gray-500">
+        Are you sure you want to delete this item? This action cannot be undone.
+    </p>
+    
+    <x-slot:footer>
+        <x-button variant="danger" @click="confirmDelete()">
+            Delete
+        </x-button>
+        <x-button variant="secondary" class="mt-3 sm:mt-0 sm:ml-3" @click="show = false">
+            Cancel
+        </x-button>
+    </x-slot:footer>
+</x-modal>
+```
+
+### 9.6.3 Scoped Slots (Laravel 8.80+)
+
+```blade
+{{-- resources/views/components/dropdown.blade.php --}}
+
+<div class="relative" x-data="{ open: false }">
+    <button @click="open = !open" {{ $trigger->attributes }}>
+        {{ $trigger }}
+    </button>
+    
+    <div x-show="open" class="absolute z-50 mt-2 w-48 rounded-md shadow-lg bg-white ring-1 ring-black ring-opacity-5">
+        <div class="py-1" role="menu">
+            {{ $content }}
+        </div>
+    </div>
+</div>
+```
+
+Penggunaan dengan scoped data:
+
+```blade
+<x-dropdown>
+    <x-slot:trigger>
+        <button>Options</button>
+    </x-slot:trigger>
+    
+    <x-slot:content>
+        <a href="#" class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">Edit</a>
+        <a href="#" class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">Delete</a>
+    </x-slot:content>
+</x-dropdown>
+```
+
+---
+
+## 9.7 Kesimpulan
+
+Blade templating advanced memberikan tools untuk membangun UI yang modular, reusable, dan maintainable:
+
+| Fitur | Gunakan Untuk |
+|-------|---------------|
+| **Anonymous Components** | UI sederhana tanpa logic PHP |
+| **Class-based Components** | Komponen dengan logic, DI, methods |
+| **Conditional Directives** | @auth, @env, @production untuk kondisi umum |
+| **$loop Variable** | Informasi loop untuk styling kondisional |
+| **@inject** | Service helper di view |
+| **Custom Directives** | Syntax kustom untuk kasus spesifik |
+| **Attributes Merge** | Komponen fleksibel dengan class/attribute dinamis |
+| **Named Slots** | Layout kompleks dengan multiple content area |
+
+**Best Practices:**
+- Komponen sekecil mungkin, sebesar necessary—single responsibility
+- Hindari logic bisnis di template, gunakan View Composer atau Controller
+- Manfaatkan `$loop` untuk alternating styles dan pagination info
+- Gunakan `@once` untuk scripts/styles yang hanya perlu sekali
+- Custom directives untuk syntax yang sering digunakan di codebase
+```

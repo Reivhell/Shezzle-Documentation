@@ -1,0 +1,331 @@
+---
+title: "Sesi 28: Eloquent Model Fundamentals"
+description: "**Security Best Practice:** Selalu gunakan `$fillable` untuk model yang menerima input dari user. `$guarded = []` atau `$guarded = ['id']` sangat beri..."
+category: "laravel"
+tags: ["laravel", "eloquent"]
+order: 28
+---
+
+## Konvensi Model & Konfigurasi
+
+### Table Name & Primary Key
+
+```php
+<?php
+
+namespace App\Models;
+
+use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Model;
+
+class Flight extends Model
+{
+    use HasFactory;
+
+    // Override table name (default: flights)
+    protected $table = 'my_flights';
+
+    // Override primary key (default: id)
+    protected $primaryKey = 'flight_id';
+
+    // Non-incrementing primary key
+    public $incrementing = false;
+
+    // UUID key type
+    protected $keyType = 'string';
+
+    // Disable timestamps
+    public $timestamps = false;
+
+    // Custom timestamp columns
+    const CREATED_AT = 'creation_date';
+    const UPDATED_AT = 'updated_date';
+
+    // Custom database connection
+    protected $connection = 'mysql_legacy';
+}
+```
+
+### Mass Assignment: $fillable vs $guarded
+
+<div class="tabs-container">
+
+### $fillable (Whitelist)
+
+```php
+<?php
+
+namespace App\Models;
+
+use Illuminate\Database\Eloquent\Model;
+
+class Post extends Model
+{
+    // Hanya field ini yang boleh di-mass assign
+    protected $fillable = [
+        'title',
+        'slug',
+        'content',
+        'published_at',
+        'category_id',
+    ];
+}
+
+// Penggunaan aman
+Post::create($request->validated());
+Post::update($request->only(['title', 'content']));
+```
+
+### $guarded (Blacklist)
+
+```php
+<?php
+
+namespace App\Models;
+
+use Illuminate\Database\Eloquent\Model;
+
+class User extends Model
+{
+    // Semua field boleh di-mass assign, KECUALI ini
+    protected $guarded = [
+        'id',
+        'is_admin',
+        'password_hash', // Hindari overwrite hash yang sudah ada
+    ];
+}
+
+// Penggunaan dengan hati-hati
+User::create($request->except(['is_admin']));
+```
+
+</div>
+
+> **danger**
+>
+**Security Best Practice:** Selalu gunakan `$fillable` untuk model yang menerima input dari user. `$guarded = []` atau `$guarded = ['id']` sangat berisiko untuk production.
+
+## Attribute Casting
+
+### Built-in Casts
+
+```php
+<?php
+
+namespace App\Models;
+
+use Illuminate\Database\Eloquent\Model;
+
+class Product extends Model
+{
+    protected $casts = [
+        // Datetime
+        'published_at' => 'datetime',
+        'deleted_at' => 'datetime:Y-m-d', // Custom format
+        
+        // Boolean
+        'is_active' => 'boolean',
+        
+        // Integer/Float
+        'stock_quantity' => 'integer',
+        'weight' => 'decimal:2',
+        'rating' => 'float',
+        
+        // Collections/Arrays
+        'tags' => 'array',
+        'metadata' => 'json',
+        'settings' => 'collection', // Laravel Collection
+        
+        // Objects
+        'options' => 'object',
+        
+        // Encryption
+        'ssn' => 'encrypted',
+        'api_key' => 'encrypted:array', // Encrypt then JSON encode
+        
+        // Enum (PHP 8.1+)
+        'status' => PostStatus::class,
+        
+        // Custom datetime timezone
+        'local_time' => 'datetime:Y-m-d H:i:s',
+    ];
+}
+```
+
+### Custom Casts (Laravel 9+)
+
+```php
+<?php
+
+namespace App\Casts;
+
+use Illuminate\Contracts\Database\Eloquent\CastsAttributes;
+use Illuminate\Database\Eloquent\Model;
+
+class MoneyCast implements CastsAttributes
+{
+    public function get(Model $model, string $key, mixed $value, array $attributes): Money
+    {
+        return new Money(
+            amount: (int) $value,
+            currency: $attributes['currency'] ?? 'IDR'
+        );
+    }
+
+    public function set(Model $model, string $key, mixed $value, array $attributes): int
+    {
+        if ($value instanceof Money) {
+            return $value->getAmount();
+        }
+        
+        return (int) $value;
+    }
+}
+```
+
+Pendaftaran di Model:
+
+```php
+<?php
+
+namespace App\Models;
+
+use App\Casts\MoneyCast;
+use Illuminate\Database\Eloquent\Model;
+
+class Order extends Model
+{
+    protected $casts = [
+        'total_amount' => MoneyCast::class,
+    ];
+}
+
+// Penggunaan
+$order->total_amount; // Instance of Money
+$order->total_amount = new Money(100000, 'IDR');
+```
+
+## Accessors & Mutators (Modern Syntax)
+
+```php
+<?php
+
+namespace App\Models;
+
+use Illuminate\Database\Eloquent\Casts\Attribute;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Str;
+
+class User extends Model
+{
+    // Laravel 9+ Style dengan Attribute::make()
+    protected function firstName(): Attribute
+    {
+        return Attribute::make(
+            // Accessor: transform saat di-retrieve
+            get: fn (string $value) => ucfirst($value),
+            
+            // Mutator: transform saat di-set
+            set: fn (string $value) => strtolower($value),
+        );
+    }
+
+    // Accessor dengan caching (avoid N+1 dalam accessor)
+    protected function fullName(): Attribute
+    {
+        return Attribute::make(
+            get: fn () => "{$this->first_name} {$this->last_name}",
+        )->shouldCache(); // Cache selama instance hidup
+    }
+
+    // Accessor dengan dependent attributes
+    protected function avatarUrl(): Attribute
+    {
+        return Attribute::make(
+            get: function (mixed $value, array $attributes) {
+                return $attributes['avatar'] 
+                    ? asset("storage/{$attributes['avatar']}")
+                    : "https://ui-avatars.com/api/?name={$attributes['name']}";
+            },
+        );
+    }
+
+    // Mutator dengan array return (multiple columns)
+    protected function password(): Attribute
+    {
+        return Attribute::make(
+            set: fn (string $value) => [
+                'password_hash' => bcrypt($value),
+                'password_changed_at' => now(),
+            ],
+        );
+    }
+}
+```
+
+## Model Serialization
+
+```php
+<?php
+
+$user = User::with('posts')->first();
+
+// Array conversion
+$array = $user->toArray();
+
+// JSON conversion
+$json = $user->toJson();
+$json = json_encode($user); // Auto-magis via JsonSerializable
+
+// Hidden attributes (tidak muncul di serialization)
+protected $hidden = ['password', 'remember_token', 'api_secret'];
+
+// Visible attributes (whitelist untuk serialization)
+protected $visible = ['id', 'name', 'email', 'created_at'];
+
+// Append computed attributes
+protected $appends = ['full_name', 'avatar_url'];
+
+// Temporary modification
+$user->makeHidden('email')->toArray();
+$user->makeVisible('password_hash')->toArray();
+$user->append('is_admin')->toArray();
+```
+
+### API Resource Integration
+
+```php
+<?php
+
+namespace App\Http\Resources;
+
+use Illuminate\Http\Request;
+use Illuminate\Http\Resources\Json\JsonResource;
+
+class UserResource extends JsonResource
+{
+    public function toArray(Request $request): array
+    {
+        return [
+            'id' => $this->id,
+            'name' => $this->full_name, // Accessor
+            'email' => $this->email,
+            'member_since' => $this->created_at->diffForHumans(),
+            'posts_count' => $this->whenCounted('posts'),
+            'is_owner' => $this->when($request->user()?->id === $this->id, true),
+        ];
+    }
+}
+```
+
+## Kesimpulan
+
+Sesi ini mencakup fundamental Eloquent yang krusial untuk development:
+- **Konvensi** memungkinkan zero-configuration, tapi fleksibel untuk override
+- **Mass Assignment Protection** (`$fillable`/`$guarded`) adalah defense utama terhadap mass-assignment vulnerabilities
+- **Attribute Casting** menyederhanakan transformasi data antara database dan aplikasi
+- **Accessors/Mutators modern** dengan `Attribute::make()` menyediakan syntax yang ekspresif dan type-safe
+- **Serialization** mengontrol representasi model untuk API responses
+
+Di **Sesi 29**, kita akan mendalami **Eloquent Relationships (One-to-One & One-to-Many)** termasuk eager loading dan N+1 problem solutions.
+```

@@ -1,0 +1,922 @@
+---
+title: "Sesi 73: Queue Architecture di Scale"
+description: "**Worker pool** adalah kumpulan dari multiple queue worker processes yang berjalan secara paralel untuk memproses jobs dari queue. Dalam aplikasi skal..."
+category: "laravel"
+tags: ["laravel"]
+order: 73
+---
+
+## 1. Queue Worker Pool Management
+
+### 1.1 Apa itu Worker Pool?
+
+**Worker pool** adalah kumpulan dari multiple queue worker processes yang berjalan secara paralel untuk memproses jobs dari queue. Dalam aplikasi skala besar, single worker tidak cukup untuk menangani volume jobs yang tinggi.
+
+**Arsitektur Worker Pool:**
+```
+┌─────────────────────────────────────────────────────────────┐
+│                        Redis Queue                           │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐         │
+│  │   high      │  │   default   │  │    low      │         │
+│  │  priority   │  │   queue     │  │  priority   │         │
+│  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘         │
+└─────────┼────────────────┼────────────────┼─────────────────┘
+          │                │                │
+          └────────────────┴────────────────┘
+                           │
+              ┌────────────┼────────────┐
+              │            │            │
+        ┌─────▼─────┐ ┌────▼────┐ ┌────▼────┐
+        │  Worker 1 │ │ Worker 2│ │ Worker 3│  ← Pool: 3 workers
+        │  (high)   │ │(default)│ │  (low)  │
+        └─────┬─────┘ └────┬────┘ └────┬────┘
+              │            │            │
+        ┌─────▼────────────▼────────────▼─────┐
+        │         Load Balancer               │
+        │    (distributes jobs evenly)        │
+        └─────────────────────────────────────┘
+```
+
+### 1.2 Supervisor Configuration untuk Worker Pools
+
+```ini
+; /etc/supervisor/conf.d/laravel-workers.conf
+
+; High priority queue - 4 workers
+[program:laravel-worker-high]
+process_name=%(program_name)s_%(process_num)02d
+command=php /var/www/html/artisan queue:work redis --queue=high --sleep=3 --tries=3 --max-jobs=1000 --max-time=3600 --memory=512
+autostart=true
+autorestart=true
+stopasgroup=true
+killasgroup=true
+user=www-data
+numprocs=4
+redirect_stderr=true
+stdout_logfile=/var/log/laravel-worker-high.log
+stopwaitsecs=3600
+
+; Default queue - 8 workers
+[program:laravel-worker-default]
+process_name=%(program_name)s_%(process_num)02d
+command=php /var/www/html/artisan queue:work redis --queue=default --sleep=3 --tries=3 --max-jobs=1000 --max-time=3600 --memory=512
+autostart=true
+autorestart=true
+stopasgroup=true
+killasgroup=true
+user=www-data
+numprocs=8
+redirect_stderr=true
+stdout_logfile=/var/www/html/storage/logs/worker-default.log
+stopwaitsecs=3600
+
+; Low priority queue - 2 workers
+[program:laravel-worker-low]
+process_name=%(program_name)s_%(process_num)02d
+command=php /var/www/html/artisan queue:work redis --queue=low --sleep=3 --tries=3 --max-jobs=1000 --max-time=3600 --memory=512
+autostart=true
+autorestart=true
+stopasgroup=true
+killasgroup=true
+user=www-data
+numprocs=2
+redirect_stderr=true
+stdout_logfile=/var/www/html/storage/logs/worker-low.log
+stopwaitsecs=3600
+
+; Group untuk manage semua workers
+[group:laravel-workers]
+programs=laravel-worker-high,laravel-worker-default,laravel-worker-low
+```
+
+### 1.3 Dynamic Worker Scaling
+
+```php
+<?php
+
+namespace App\Console\Commands;
+
+use Illuminate\Console\Command;
+use Illuminate\Support\Facades\Redis;
+
+class ScaleWorkersCommand extends Command
+{
+    protected $signature = 'queue:scale 
+                            {--queue=default : Queue name}
+                            {--min=2 : Minimum workers}
+                            {--max=20 : Maximum workers}
+                            {--threshold=100 : Scale up threshold}';
+
+    public function handle()
+    {
+        $queue = $this->option('queue');
+        $queueSize = Redis::llen("queues:{$queue}");
+        
+        $currentWorkers = $this->getCurrentWorkerCount($queue);
+        $desiredWorkers = $this->calculateDesiredWorkers(
+            $queueSize,
+            $currentWorkers,
+            $this->option('min'),
+            $this->option('max'),
+            $this->option('threshold')
+        );
+        
+        if ($desiredWorkers !== $currentWorkers) {
+            $this->scaleWorkers($queue, $desiredWorkers);
+            $this->info("Scaled {$queue} workers: {$currentWorkers} → {$desiredWorkers}");
+        }
+        
+        // Metrics untuk monitoring
+        $this->recordMetrics($queue, $queueSize, $desiredWorkers);
+    }
+    
+    private function calculateDesiredWorkers($queueSize, $current, $min, $max, $threshold): int
+    {
+        // Scale up: 1 worker per 100 jobs
+        $needed = ceil($queueSize / $threshold);
+        
+        // Scale down: gradually reduce jika queue kosong
+        if ($queueSize === 0 && $current > $min) {
+            return max($min, $current - 1);
+        }
+        
+        return max($min, min($max, $needed));
+    }
+    
+    private function scaleWorkers(string $queue, int $count): void
+    {
+        // Update supervisor config atau gunakan container orchestration
+        // Implementation depends on infrastructure (Docker Swarm, K8s, etc.)
+    }
+}
+```
+
+## 2. Queue Partitioning berdasarkan Priority
+
+### 2.1 Apa itu Queue Partitioning?
+
+**Queue partitioning** adalah strategi memisahkan jobs ke dalam multiple queues berdasarkan karakteristik tertentu (priority, resource usage, atau business domain). Ini mencegah "noisy neighbor" problem di mana satu tipe job memonopoli semua workers.
+
+**Tanpa Partitioning (Problem):**
+```
+Queue: [EmailJob, EmailJob, EmailJob, ..., CriticalPaymentJob]
+Semua workers sibuk mengirim email, payment job tertunda 10 menit
+```
+
+**Dengan Partitioning (Solution):**
+```
+high:     [CriticalPaymentJob, CriticalPaymentJob]     ← 4 workers
+default:  [EmailJob, EmailJob, EmailJob, ...]           ← 4 workers  
+low:      [ReportGenerationJob, CleanupJob]             ← 2 workers
+```
+
+### 2.2 Priority-based Queue Routing
+
+```php
+<?php
+
+namespace App\Jobs;
+
+use Illuminate\Bus\Queueable;
+use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Queue\InteractsWithQueue;
+use Illuminate\Queue\SerializesModels;
+
+class ProcessPayment implements ShouldQueue
+{
+    use InteractsWithQueue, Queueable, SerializesModels;
+
+    public $tries = 5;
+    public $backoff = [30, 60, 120, 300, 600];
+    
+    // High priority - selalu proses dulu
+    public function viaQueue(): string
+    {
+        return 'high';
+    }
+
+    public function handle(): void
+    {
+        // Critical payment processing
+    }
+}
+
+class SendEmailNotification implements ShouldQueue
+{
+    use InteractsWithQueue, Queueable, SerializesModels;
+
+    public $tries = 3;
+    
+    // Default priority
+    public function viaQueue(): string
+    {
+        return 'default';
+    }
+
+    public function handle(): void
+    {
+        // Email sending
+    }
+}
+
+class GenerateMonthlyReport implements ShouldQueue
+{
+    use InteractsWithQueue, Queueable, SerializesModels;
+
+    public $tries = 2;
+    public $timeout = 3600; // 1 hour
+    
+    // Low priority - process when resources available
+    public function viaQueue(): string
+    {
+        return 'low';
+    }
+
+    public function handle(): void
+    {
+        // Heavy computation
+    }
+}
+```
+
+### 2.3 Dynamic Queue Selection
+
+```php
+<?php
+
+namespace App\Services;
+
+class QueueRouter
+{
+    public static function dispatch($job, string $priority = 'auto'): void
+    {
+        $queue = match($priority) {
+            'high' => 'high',
+            'low' => 'low',
+            'auto' => self::determineQueue($job),
+            default => 'default',
+        };
+        
+        dispatch($job->onQueue($queue));
+    }
+    
+    private static function determineQueue($job): string
+    {
+        // Business logic untuk determine priority
+        if ($job instanceof PaymentJob || $job instanceof SecurityAlertJob) {
+            return 'high';
+        }
+        
+        if ($job instanceof ReportJob || $job instanceof CleanupJob) {
+            return 'low';
+        }
+        
+        // Check SLA requirements
+        if (method_exists($job, 'getSlaMinutes')) {
+            return $job->getSlaMinutes() < 5 ? 'high' : 'default';
+        }
+        
+        return 'default';
+    }
+}
+
+// Usage
+QueueRouter::dispatch(new ProcessPayment($order), 'high');
+QueueRouter::dispatch(new SendWelcomeEmail($user)); // auto-determine
+```
+
+## 3. Dead Letter Queues (DLQ)
+
+### 3.1 Apa itu Dead Letter Queue?
+
+**Dead Letter Queue** adalah queue khusus untuk menyimpan jobs yang gagal diproses setelah maximum retry attempts. Tanpa DLQ, failed jobs hanya tersimpan di database `failed_jobs` dan bisa ter-overlooked.
+
+**Flow dengan DLQ:**
+```
+Job dispatched → Worker process → Fail → Retry (3x) → Still fail 
+                                                        ↓
+                                              Move to DLQ (dead_letter)
+                                                        ↓
+                                              Manual inspection/replay
+```
+
+**Keuntungan DLQ:**
+- Isolasi failed jobs dari queue utama (tidak block processing)
+- Centralized location untuk debugging
+- Ability untuk replay jobs setelah fix
+- Metrics dan alerting spesifik untuk failures
+
+### 3.2 Implementasi DLQ
+
+```php
+<?php
+
+namespace App\Jobs;
+
+use Illuminate\Bus\Queueable;
+use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Queue\InteractsWithQueue;
+use Illuminate\Queue\Middleware\ThrottlesExceptions;
+use Illuminate\Support\Facades\Log;
+
+class ProcessWebhook implements ShouldQueue
+{
+    use InteractsWithQueue, Queueable;
+
+    public $tries = 3;
+    public $backoff = [60, 300, 900]; // 1min, 5min, 15min
+    
+    // Move to DLQ after all retries exhausted
+    public $deleteWhenMissingModels = true;
+
+    public function handle(): void
+    {
+        try {
+            $this->process();
+        } catch (\Exception $e) {
+            if ($this->attempts() >= $this->tries) {
+                $this->moveToDeadLetterQueue($e);
+            }
+            throw $e;
+        }
+    }
+    
+    private function moveToDeadLetterQueue(\Exception $e): void
+    {
+        $payload = [
+            'job' => static::class,
+            'payload' => $this->getPayload(),
+            'exception' => [
+                'message' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ],
+            'failed_at' => now()->toIso8601String(),
+            'attempts' => $this->attempts(),
+        ];
+        
+        // Push to DLQ
+        \Illuminate\Support\Facades\Queue::connection('redis')
+            ->pushRaw(json_encode($payload), 'dead_letter');
+        
+        // Notify team
+        \Illuminate\Support\Facades\Notification::route('slack', config('services.slack.webhook_url'))
+            ->notify(new JobMovedToDLQNotification($payload));
+    }
+    
+    private function getPayload(): array
+    {
+        return [
+            'webhook_id' => $this->webhook->id,
+            'payload' => $this->webhook->payload,
+            'endpoint' => $this->webhook->endpoint,
+        ];
+    }
+}
+```
+
+### 3.3 DLQ Management Command
+
+```php
+<?php
+
+namespace App\Console\Commands;
+
+use Illuminate\Console\Command;
+use Illuminate\Support\Facades\Queue;
+use Illuminate\Support\Facades\Redis;
+
+class ManageDeadLetterQueue extends Command
+{
+    protected $signature = 'queue:dlq:manage
+                            {action : list|replay|purge|stats}
+                            {--queue=dead_letter : DLQ name}
+                            {--job= : Specific job class to filter}
+                            {--limit=10 : Limit for replay}';
+
+    public function handle()
+    {
+        $action = $this->argument('action');
+        
+        match($action) {
+            'list' => $this->listFailedJobs(),
+            'replay' => $this->replayJobs(),
+            'purge' => $this->purgeJobs(),
+            'stats' => $this->showStats(),
+            default => $this->error("Unknown action: {$action}"),
+        };
+    }
+    
+    private function listFailedJobs(): void
+    {
+        $jobs = Redis::lrange('queues:dead_letter', 0, 49);
+        
+        $this->table(
+            ['Failed At', 'Job Class', 'Error', 'Attempts'],
+            collect($jobs)->map(function ($job) {
+                $data = json_decode($job, true);
+                return [
+                    $data['failed_at'],
+                    class_basename($data['job']),
+                    str_limit($data['exception']['message'], 50),
+                    $data['attempts'],
+                ];
+            })->toArray()
+        );
+    }
+    
+    private function replayJobs(): void
+    {
+        $limit = $this->option('limit');
+        $targetJob = $this->option('job');
+        $replayed = 0;
+        
+        for ($i = 0; $i < $limit; $i++) {
+            $job = Redis::rpop('queues:dead_letter');
+            
+            if (!$job) break;
+            
+            $data = json_decode($job, true);
+            
+            // Filter by job class jika specified
+            if ($targetJob && !str_contains($data['job'], $targetJob)) {
+                Redis::lpush('queues:dead_letter', $job); // Put back
+                continue;
+            }
+            
+            // Replay ke original queue
+            Queue::push($data['job'], $data['payload'], 'default');
+            $replayed++;
+        }
+        
+        $this->info("Replayed {$replayed} jobs to default queue");
+    }
+    
+    private function purgeJobs(): void
+    {
+        if (!$this->confirm('This will delete all jobs in DLQ. Continue?')) {
+            return;
+        }
+        
+        $count = Redis::llen('queues:dead_letter');
+        Redis::del('queues:dead_letter');
+        
+        $this->info("Purged {$count} jobs from DLQ");
+    }
+    
+    private function showStats(): void
+    {
+        $jobs = Redis::lrange('queues:dead_letter', 0, -1);
+        
+        $stats = collect($jobs)
+            ->map(fn ($j) => json_decode($j, true))
+            ->groupBy('job')
+            ->map(fn ($group) => $group->count());
+        
+        $this->info('DLQ Statistics:');
+        foreach ($stats as $job => $count) {
+            $this->line("  {$job}: {$count}");
+        }
+        
+        $this->line("\nTotal failed jobs: " . $jobs->count());
+    }
+}
+```
+
+## 4. Job Idempotency
+
+### 4.1 Apa itu Idempotency?
+
+**Idempotency** adalah property di mana sebuah operation menghasilkan hasil yang sama tidak peduli berapa kali dieksekusi. Dalam konteks queue, ini berarti job yang sama bisa di-run multiple times tanpa side effects (contoh: tidak mengirim email dua kali).
+
+**Contoh Non-Idempotent (Berbahaya):**
+```php
+// Job di-run 2x karena network timeout
+public function handle() {
+    // Charge credit card
+    PaymentGateway::charge($this->order->total); // User charged 2x!
+    
+    // Send email
+    Mail::to($this->user)->send(new OrderConfirmation()); // Email sent 2x!
+}
+```
+
+**Contoh Idempotent (Aman):**
+```php
+public function handle() {
+    // Check sudah diproses
+    if ($this->order->payment_processed_at) {
+        return; // Skip jika sudah processed
+    }
+    
+    // Idempotent charge dengan idempotency key
+    PaymentGateway::charge([
+        'amount' => $this->order->total,
+        'idempotency_key' => $this->order->uuid, // Gateway cek duplikat
+    ]);
+    
+    // Update dengan optimistic locking
+    $updated = Order::where('id', $this->order->id)
+        ->whereNull('payment_processed_at')
+        ->update(['payment_processed_at' => now()]);
+    
+    if (!$updated) {
+        return; // Another process already handled
+    }
+    
+    // Send email (hanya sekali karena update diatas atomic)
+    Mail::to($this->user)->send(new OrderConfirmation());
+}
+```
+
+### 4.2 Implementasi Idempotency Middleware
+
+```php
+<?php
+
+namespace App\Queue\Middleware;
+
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Log;
+
+class EnsureIdempotent
+{
+    public function handle($job, $next)
+    {
+        $key = $this->getIdempotencyKey($job);
+        $lockKey = "idempotency:{$key}";
+        
+        // Coba acquire lock dengan TTL
+        $acquired = Cache::add($lockKey, [
+            'started_at' => now()->toIso8601String(),
+            'job_id' => $job->uuid ?? uniqid(),
+        ], 3600); // 1 hour TTL
+        
+        if (!$acquired) {
+            // Lock sudah ada, job sedang/sudah diproses
+            Log::info('Skipping duplicate job', [
+                'job' => get_class($job),
+                'idempotency_key' => $key,
+            ]);
+            
+            return; // Delete job dari queue tanpa process
+        }
+        
+        try {
+            $result = $next($job);
+            
+            // Mark sebagai completed
+            Cache::put($lockKey, [
+                'completed_at' => now()->toIso8601String(),
+                'status' => 'completed',
+            ], 86400); // Keep for 24 hours
+            
+            return $result;
+            
+        } catch (\Exception $e) {
+            // Release lock agar bisa retry
+            Cache::forget($lockKey);
+            throw $e;
+        }
+    }
+    
+    private function getIdempotencyKey($job): string
+    {
+        // Gunakan uuid jika ada, atau generate dari payload
+        if (method_exists($job, 'idempotencyKey')) {
+            return $job->idempotencyKey();
+        }
+        
+        if (property_exists($job, 'uuid')) {
+            return $job->uuid;
+        }
+        
+        // Hash dari class + identifier
+        $identifier = $job->uniqueId ?? serialize($job);
+        return md5(get_class($job) . $identifier);
+    }
+}
+```
+
+### 4.3 Database-level Idempotency
+
+```php
+<?php
+
+// Migration untuk idempotency tracking
+Schema::create('processed_jobs', function (Blueprint $table) {
+    $table->string('idempotency_key')->primary();
+    $table->string('job_class');
+    $table->json('payload')->nullable();
+    $table->timestamp('processed_at');
+    $table->string('result')->nullable(); // success, failed, skipped
+    $table->timestamps();
+    
+    $table->index('processed_at');
+});
+
+// Model
+class ProcessedJob extends Model
+{
+    protected $primaryKey = 'idempotency_key';
+    public $incrementing = false;
+    protected $keyType = 'string';
+    
+    protected $casts = [
+        'payload' => 'array',
+        'processed_at' => 'datetime',
+    ];
+}
+
+// Trait untuk jobs
+trait IdempotentJob
+{
+    public function handleWithIdempotency(): void
+    {
+        $key = $this->getIdempotencyKey();
+        
+        // Atomic insert with ignore
+        $inserted = ProcessedJob::insertOrIgnore([
+            'idempotency_key' => $key,
+            'job_class' => static::class,
+            'payload' => $this->getPayloadForIdempotency(),
+            'processed_at' => now(),
+            'result' => 'processing',
+        ]);
+        
+        if (!$inserted) {
+            // Sudah ada, cek status
+            $existing = ProcessedJob::find($key);
+            
+            if ($existing->result === 'success') {
+                return; // Already completed successfully
+            }
+            
+            if ($existing->result === 'processing' && $existing->created_at->diffInMinutes(now()) < 30) {
+                return; // Another worker sedang process
+            }
+            
+            // Retry case: update status ke processing
+            $existing->update(['result' => 'processing', 'processed_at' => now()]);
+        }
+        
+        try {
+            $this->handle();
+            ProcessedJob::where('idempotency_key', $key)->update(['result' => 'success']);
+        } catch (\Exception $e) {
+            ProcessedJob::where('idempotency_key', $key)->update(['result' => 'failed']);
+            throw $e;
+        }
+    }
+    
+    abstract public function getIdempotencyKey(): string;
+    abstract public function getPayloadForIdempotency(): array;
+}
+```
+
+## 5. Rate Limiting External APIs
+
+### 5.1 Apa itu Rate Limiting dalam Queue?
+
+Saat queue workers memanggil external APIs (Stripe, SendGrid, AWS), kita harus respect rate limits mereka. Tanpa rate limiting, workers bisa membuat terlalu banyak requests dan diblokir.
+
+**Problem:**
+```
+10 workers × 100 requests/detik = 1000 req/s ke API yang limit 100 req/s
+Result: API returns 429 Too Many Requests, jobs fail
+```
+
+**Solusi:**
+```
+Rate limiter: 100 tokens/detik
+Workers request token sebelum API call
+Excess jobs wait in queue atau delayed
+```
+
+### 5.2 Token Bucket Rate Limiter
+
+```php
+<?php
+
+namespace App\Services;
+
+use Illuminate\Support\Facades\Redis;
+
+class ApiRateLimiter
+{
+    public function __construct(
+        private string $key,
+        private int $maxTokens,
+        private int $refillRate // tokens per second
+    ) {}
+    
+    public function acquire(int $tokens = 1, int $timeout = 30): bool
+    {
+        $script = <<<'LUA'
+            local key = KEYS[1]
+            local tokens = tonumber(ARGV[1])
+            local now = tonumber(ARGV[2])
+            local refill_rate = tonumber(ARGV[3])
+            local max_tokens = tonumber(ARGV[4])
+            local timeout = tonumber(ARGV[5])
+            
+            local bucket = redis.call('hmget', key, 'tokens', 'last_refill')
+            local current_tokens = tonumber(bucket[1]) or max_tokens
+            local last_refill = tonumber(bucket[2]) or now
+            
+            -- Refill tokens based on time passed
+            local time_passed = now - last_refill
+            local new_tokens = math.min(max_tokens, current_tokens + (time_passed * refill_rate))
+            
+            if new_tokens >= tokens then
+                new_tokens = new_tokens - tokens
+                redis.call('hset', key, 'tokens', new_tokens, 'last_refill', now)
+                redis.call('expire', key, 60)
+                return 1
+            else
+                redis.call('hset', key, 'tokens', new_tokens, 'last_refill', now)
+                return 0
+            end
+        LUA;
+        
+        $start = time();
+        
+        while (time() - $start < $timeout) {
+            $result = Redis::eval(
+                $script,
+                1,
+                $this->key,
+                $tokens,
+                microtime(true),
+                $this->refillRate,
+                $this->maxTokens,
+                $timeout
+            );
+            
+            if ($result) {
+                return true;
+            }
+            
+            usleep(100000); // Wait 100ms before retry
+        }
+        
+        return false;
+    }
+    
+    public function getAvailableTokens(): int
+    {
+        // Implementation untuk monitoring
+    }
+}
+
+// Usage dalam Job
+class SendEmailJob implements ShouldQueue
+{
+    public function handle(EmailService $service): void
+    {
+        $limiter = new ApiRateLimiter(
+            key: 'rate_limit:sendgrid',
+            maxTokens: 100,        // 100 requests
+            refillRate: 10         // per 10 seconds = 600/minute
+        );
+        
+        // Tunggu sampai token available
+        if (!$limiter->acquire(tokens: 1, timeout: 60)) {
+            // Release job back to queue dengan delay
+            $this->release(10);
+            return;
+        }
+        
+        // Safe to make API call
+        $service->send($this->email);
+    }
+}
+```
+
+### 5.3 Laravel-native Rate Limiting
+
+```php
+<?php
+
+// config/rate-limiter.php
+use Illuminate\Cache\RateLimiting\Limit;
+use Illuminate\Support\Facades\RateLimiter;
+
+// Service provider
+public function boot(): void
+{
+    // Define limiter untuk external APIs
+    RateLimiter::for('stripe', function () {
+        return Limit::perSecond(100); // Stripe default
+    });
+    
+    RateLimiter::for('sendgrid', function () {
+        return Limit::perMinute(600);
+    });
+    
+    RateLimiter::for('aws-ses', function () {
+        return Limit::perSecond(14); // SES sending rate
+    });
+}
+
+// Dalam Job dengan middleware
+class ApiCallJob implements ShouldQueue
+{
+    public function middleware(): array
+    {
+        return [
+            new RateLimited('stripe'),
+            new ThrottlesExceptions(10, 60), // 10 attempts per minute
+        ];
+    }
+    
+    public function handle(): void
+    {
+        // This will automatically respect rate limits
+        // Jika limit tercapai, job akan delayed
+    }
+}
+
+// Custom RateLimited middleware
+class RateLimited
+{
+    public function __construct(private string $limiter) {}
+    
+    public function handle($job, $next)
+    {
+        $key = "{$this->limiter}:" . getmypid();
+        
+        return RateLimiter::attempt(
+            $key,
+            $maxAttempts = 1,
+            function () use ($job, $next) {
+                return $next($job);
+            },
+            $decaySeconds = 1
+        ) ?: $job->release(1); // Delay 1 second jika rate limited
+    }
+}
+```
+
+## 6. Queue Monitoring & Observability
+
+```php
+<?php
+
+// app/Providers/AppServiceProvider.php
+use Illuminate\Queue\Events\JobProcessed;
+use Illuminate\Queue\Events\JobFailed;
+use Illuminate\Queue\Events\JobProcessing;
+use Illuminate\Support\Facades\Queue;
+
+public function boot(): void
+{
+    // Track queue metrics
+    Queue::before(function (JobProcessing $event) {
+        $job = $event->job;
+        
+        // Start timer
+        $job->metricsStartedAt = microtime(true);
+        
+        Log::info('Job started', [
+            'job' => $job->resolveName(),
+            'queue' => $job->getQueue(),
+            'attempt' => $job->attempts(),
+        ]);
+    });
+    
+    Queue::after(function (JobProcessed $event) {
+        $job = $event->job;
+        $duration = (microtime(true) - $job->metricsStartedAt) * 1000;
+        
+        // Send ke metrics system
+        app(MetricsService::class)->recordTiming('queue.job_duration', $duration, [
+            'job' => $job->resolveName(),
+            'queue' => $job->getQueue(),
+            'status' => 'success',
+        ]);
+    });
+    
+    Queue::failing(function (JobFailed $event) {
+        $job = $event->job;
+        
+        app(MetricsService::class)->incrementCounter('queue.job_failed', [
+            'job' => $job->resolveName(),
+            'queue' => $job->getQueue(),
+            'exception' => class_basename($event->exception),
+        ]);
+    });
+}
+```
+
+## Kesimpulan
+
+Queue Architecture di Scale mencakup:
+- **Worker Pools**: Multiple workers dengan priority-based allocation
+- **Queue Partitioning**: Isolasi jobs berdasarkan priority dan resource usage
+- **Dead Letter Queues**: Handling permanent failures tanpa block main queue
+- **Job Idempotency**: Mencegah duplicate processing dan side effects
+- **Rate Limiting**: Respect external API limits dengan token bucket algorithm
+- **Observability**: Metrics dan monitoring untuk queue health
+
+Selanjutnya di **Sesi 74**, kita akan membahas Multi-tenancy Strategies: database per tenant, shared database, tenant isolation, dan cache/queue segregation.
+```

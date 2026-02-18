@@ -1,0 +1,953 @@
+---
+title: "Sesi 6: Client Directives"
+description: "Client directives adalah instruksi untuk Astro tentang **kapan dan bagaimana** mengirim JavaScript ke browser. Ini adalah kunci dari Islands Architect..."
+category: "astrojs"
+tags: ["astrojs"]
+order: 6
+---
+
+## 6.1 Client Directives Overview
+
+Client directives adalah instruksi untuk Astro tentang **kapan dan bagaimana** mengirim JavaScript ke browser. Ini adalah kunci dari Islands Architecture - kamu mengontrol hidrasi (hydration) setiap komponen secara granular.
+
+### Analogi Sederhana:
+
+> Bayangkan kamu mengadakan pesta. Client directives seperti **jadwal kedatangan tamu**:
+> - `client:load` = Tamu VIP yang harus datang saat pesta mulai
+> - `client:idle` = Tamu biasa, datang saat antrian di pintu sepi
+> - `client:visible` = Tamu yang datang hanya saat dipanggil ke meja
+> - `client:media` = Tamu khusus yang datang hanya jika tema pesta sesuai selera mereka
+> - `client:only` = Tamu yang menolak direkam kamera, hanya mau datang langsung
+
+### Daftar Client Directives:
+
+| Directive | Waktu Hidrasi | Use Case | Prioritas |
+|-----------|--------------|----------|-----------|
+| `client:load` | Segera saat page load | Komponen kritis, above the fold | Tinggi |
+| `client:idle` | Saat browser idle | Komponen sekunder, tidak urgent | Sedang |
+| `client:visible` | Saat masuk viewport | Below fold, lazy load | Rendah |
+| `client:media` | Saat media query match | Responsive components | Kondisional |
+| `client:only` | Skip SSR, client-only | Browser-only APIs | Khusus |
+
+### Tanpa Directive = Zero JavaScript:
+
+```astro
+---
+import ReactComponent from '../components/react/Component.jsx';
+---
+
+<!-- Tanpa directive: Hanya render HTML statis, tidak ada JS -->
+<ReactComponent />
+<!-- Output: HTML kosong dari React (tidak interaktif) -->
+```
+
+### Dengan Directive = Hidrasi Aktif:
+
+```astro
+---
+import ReactComponent from '../components/react/Component.jsx';
+---
+
+<!-- Dengan directive: Full interaktivitas -->
+<ReactComponent client:load />
+<!-- Output: HTML + JavaScript bundle + hidrasi -->
+```
+
+---
+
+## 6.2 client:load
+
+Directive paling agresif - hidrasi segera saat halaman dimuat.
+
+### Karakteristik:
+
+- **Kapan**: Segera setelah HTML parsed
+- **Blocking**: Ya, mempengaruhi Largest Contentful Paint (LCP)
+- **Use case**: Komponen kritis yang harus interaktif segera
+- **Bundle**: Dikirim bersama HTML utama
+
+### Contoh Penggunaan:
+
+```astro
+---
+// src/pages/checkout.astro
+import Layout from '../layouts/Layout.astro';
+import PaymentForm from '../components/react/PaymentForm.jsx';
+import CartSummary from '../components/vue/CartSummary.vue';
+---
+
+<Layout title="Checkout">
+  <h1>Selesaikan Pembelian</h1>
+  
+  <!-- 
+    PaymentForm: HARUS interaktif segera
+    User ingin memasukkan data kartu kredit tanpa delay
+  -->
+  <PaymentForm client:load />
+  
+  <!-- 
+    CartSummary: Juga penting, user mau edit quantity
+    Tapi bisa sedikit delay, gunakan client:idle
+  -->
+  <CartSummary client:idle />
+</Layout>
+```
+
+```jsx
+// src/components/react/PaymentForm.jsx
+import { useState } from 'react';
+
+export default function PaymentForm() {
+  const [cardNumber, setCardNumber] = useState('');
+  const [isValid, setIsValid] = useState(false);
+  
+  // Validasi real-time - harus responsif segera
+  const handleChange = (e) => {
+    const value = e.target.value.replace(/\D/g, '');
+    setCardNumber(value);
+    setIsValid(value.length >= 16);
+  };
+  
+  return (
+    <form className="payment-form">
+      <label>
+        Nomor Kartu
+        <input
+          type="text"
+          value={cardNumber}
+          onChange={handleChange}
+          placeholder="1234 5678 9012 3456"
+          maxLength={16}
+        />
+      </label>
+      
+      <button type="submit" disabled={!isValid}>
+        Bayar Sekarang
+      </button>
+    </form>
+  );
+}
+```
+
+### Kapan Menggunakan:
+
+✅ **Gunakan untuk:**
+- Form pembayaran/login
+- Navigation menu mobile (hamburger)
+- Search bar di header
+- Tombol CTA utama
+- Komponen yang user interaksi dalam 1-2 detik pertama
+
+❌ **Hindari untuk:**
+- Konten di bawah fold (user scroll dulu)
+- Widget sekunder (social share, related posts)
+- Analytics scripts (gunakan `client:idle`)
+
+---
+
+## 6.3 client:idle
+
+Directive yang menunggu browser "tidak sibuk" sebelum hidrasi.
+
+### Karakteristik:
+
+- **Kapan**: Saat main thread idle (requestIdleCallback)
+- **Blocking**: Tidak, tidak mempengaruhi LCP
+- **Use case**: Komponen penting tapi tidak kritis
+- **Bundle**: Dikirim bersama HTML, tapi hidrasi ditunda
+
+### Contoh Penggunaan:
+
+```astro
+---
+// src/pages/blog/[slug].astro
+import Layout from '../../layouts/Layout.astro';
+import ArticleContent from '../../components/ArticleContent.astro'; // Astro - statis
+import TableOfContents from '../components/react/TOC.jsx';
+import NewsletterForm from '../components/vue/NewsletterForm.vue';
+import RelatedArticles from '../../components/RelatedArticles.astro'; // Astro - statis
+---
+
+<Layout>
+  <article>
+    <!-- Konten utama: Statis, zero JS -->
+    <ArticleContent />
+    
+    <!-- 
+      TOC: Penting untuk navigasi, tapi tidak urgent
+      User butuh scroll dulu sebelum pakai
+    -->
+    <TableOfContents client:idle />
+  </article>
+  
+  <!-- 
+    Newsletter: Konversi penting, tapi tidak block reading experience
+  -->
+  <aside class="newsletter-section">
+    <NewsletterForm client:idle />
+  </aside>
+  
+  <!-- Related articles: Statis, link saja -->
+  <RelatedArticles />
+</Layout>
+```
+
+```jsx
+// src/components/react/TOC.jsx
+import { useState, useEffect } from 'react';
+
+export default function TableOfContents() {
+  const [headings, setHeadings] = useState([]);
+  const [activeId, setActiveId] = useState('');
+  
+  useEffect(() => {
+    // Ambil semua heading dari DOM
+    const elements = Array.from(document.querySelectorAll('h2, h3'));
+    setHeadings(elements.map(el => ({
+      id: el.id,
+      text: el.textContent,
+      level: el.tagName
+    })));
+    
+    // Intersection Observer untuk highlight active
+    const observer = new IntersectionObserver((entries) => {
+      entries.forEach(entry => {
+        if (entry.isIntersecting) {
+          setActiveId(entry.target.id);
+        }
+      });
+    }, { rootMargin: '-20% 0% -35% 0%' });
+    
+    elements.forEach(el => observer.observe(el));
+    
+    return () => observer.disconnect();
+  }, []);
+  
+  const scrollTo = (id) => {
+    document.getElementById(id)?.scrollIntoView({ behavior: 'smooth' });
+  };
+  
+  return (
+    <nav className="toc" aria-label="Table of contents">
+      <h3>Daftar Isi</h3>
+      <ul>
+        {headings.map(heading => (
+          <li 
+            key={heading.id}
+            className={heading.level === 'H3' ? 'indent' : ''}
+          >
+            <button
+              onClick={() => scrollTo(heading.id)}
+              className={activeId === heading.id ? 'active' : ''}
+            >
+              {heading.text}
+            </button>
+          </li>
+        ))}
+      </ul>
+    </nav>
+  );
+}
+```
+
+### Perbedaan dengan client:load:
+
+```astro
+---
+import CriticalForm from '../components/CriticalForm.jsx';
+import SecondaryWidget from '../components/SecondaryWidget.jsx';
+---
+
+<!-- Load segera - block main thread jika perlu -->
+<CriticalForm client:load />
+
+<!-- Tunggu idle - tidak ganggu initial paint -->
+<SecondaryWidget client:idle />
+```
+
+---
+
+## 6.4 client:visible
+
+Directive paling efisien untuk performa - hidrasi hanya saat komponen terlihat di layar.
+
+### Karakteristik:
+
+- **Kapan**: Saat elemen masuk viewport (Intersection Observer)
+- **Blocking**: Tidak sama sekali
+- **Use case**: Below fold content, lazy loading
+- **Bundle**: Dikirim terpisah (lazy loaded)
+
+### Contoh Penggunaan:
+
+```astro
+---
+// src/pages/home.astro
+import Layout from '../layouts/Layout.astro';
+import Hero from '../components/Hero.astro'; // Statis
+import Features from '../components/Features.astro'; // Statis
+import TestimonialCarousel from '../components/react/TestimonialCarousel.jsx';
+import PricingCalculator from '../components/vue/PricingCalculator.vue';
+import MapLocation from '../components/react/MapLocation.jsx';
+---
+
+<Layout>
+  <!-- Above fold: Statis, zero JS -->
+  <Hero />
+  <Features />
+  
+  <!-- Below fold: Hidrasi saat scroll -->
+  <section class="testimonials">
+    <h2>Apa Kata Mereka</h2>
+    <!-- 
+      Carousel: Butuh JS, tapi user scroll dulu
+      Hidrasi otomatis saat section ini terlihat
+    -->
+    <TestimonialCarousel client:visible />
+  </section>
+  
+  <section class="pricing">
+    <h2>Harga</h2>
+    <!-- 
+      Calculator: Kompleks, tapi di bawah fold
+    -->
+    <PricingCalculator client:visible />
+  </section>
+  
+  <section class="location">
+    <h2>Lokasi Kami</h2>
+    <!-- 
+      Map: Butuh Google Maps API, berat
+      Jangan load sampai user scroll ke sini!
+    -->
+    <MapLocation client:visible />
+  </section>
+</Layout>
+```
+
+```vue
+<!-- src/components/vue/PricingCalculator.vue -->
+<template>
+  <div class="calculator">
+    <div class="tier-selector">
+      <button 
+        v-for="tier in tiers" 
+        :key="tier.name"
+        :class="{ active: selectedTier === tier }"
+        @click="selectedTier = tier"
+      >
+        {{ tier.name }}
+      </button>
+    </div>
+    
+    <div class="calculator-body">
+      <label>
+        Jumlah User
+        <input 
+          type="range" 
+          v-model="userCount" 
+          :min="selectedTier.minUsers"
+          :max="selectedTier.maxUsers"
+        />
+        <span>{{ userCount }} users</span>
+      </label>
+      
+      <div class="price-display">
+        <h3>Total: {{ calculatedPrice }}</h3>
+        <p class="billing">{{ selectedTier.billing }}</p>
+      </div>
+      
+      <button class="cta" @click="subscribe">
+        Berlangganan Sekarang
+      </button>
+    </div>
+  </div>
+</template>
+
+<script setup>
+import { ref, computed } from 'vue';
+
+const tiers = [
+  { name: 'Starter', minUsers: 1, maxUsers: 10, pricePerUser: 50000, billing: '/bulan' },
+  { name: 'Pro', minUsers: 11, maxUsers: 100, pricePerUser: 40000, billing: '/bulan' },
+  { name: 'Enterprise', minUsers: 101, maxUsers: 1000, pricePerUser: 30000, billing: '/bulan' },
+];
+
+const selectedTier = ref(tiers[0]);
+const userCount = ref(5);
+
+const calculatedPrice = computed(() => {
+  const total = userCount.value * selectedTier.value.pricePerUser;
+  return new Intl.NumberFormat('id-ID', {
+    style: 'currency',
+    currency: 'IDR',
+    minimumFractionDigits: 0
+  }).format(total);
+});
+
+const subscribe = () => {
+  window.location.href = `/checkout?tier=${selectedTier.value.name}&users=${userCount.value}`;
+};
+</script>
+```
+
+### Root Margin (Opsional):
+
+Kamu bisa menambahkan margin agar hidrasi terjadi sedikit sebelum elemen terlihat:
+
+```astro
+<!-- Hidrasi saat elemen 100px sebelum masuk viewport -->
+<TestimonialCarousel client:visible={{ rootMargin: '100px' }} />
+
+<!-- Hidrasi saat elemen 50% masuk viewport -->
+<PricingCalculator client:visible={{ threshold: 0.5 }} />
+```
+
+---
+
+## 6.5 client:media
+
+Directive kondisional berdasarkan media query CSS.
+
+### Karakteristik:
+
+- **Kapan**: Saat media query match
+- **Blocking**: Tidak
+- **Use case**: Responsive components, mobile/desktop spesifik
+- **Bundle**: Dikirim terpisah, kondisional
+
+### Contoh Penggunaan:
+
+```astro
+---
+// src/pages/dashboard.astro
+import Layout from '../layouts/Layout.astro';
+import DesktopSidebar from '../components/react/DesktopSidebar.jsx';
+import MobileNav from '../components/react/MobileNav.jsx';
+import DataTable from '../components/react/DataTable.jsx';
+import MobileCards from '../components/react/MobileCards.jsx';
+---
+
+<Layout>
+  <!-- 
+    DesktopSidebar: Hanya untuk layar besar
+    Tidak perlu load JS-nya di mobile!
+  -->
+  <DesktopSidebar client:media="(min-width: 1024px)" />
+  
+  <!-- 
+    MobileNav: Hanya untuk layar kecil
+    Tidak perlu load JS-nya di desktop!
+  -->
+  <MobileNav client:media="(max-width: 1023px)" />
+  
+  <main>
+    <!-- 
+      DataTable: Kompleks, cocok untuk desktop
+      MobileCards: Simplified view untuk mobile
+    -->
+    <DataTable client:media="(min-width: 768px)" data={tableData} />
+    <MobileCards client:media="(max-width: 767px)" data={tableData} />
+  </main>
+</Layout>
+```
+
+```jsx
+// src/components/react/DesktopSidebar.jsx
+export default function DesktopSidebar() {
+  return (
+    <aside className="sidebar">
+      <nav>
+        <a href="/dashboard">Overview</a>
+        <a href="/dashboard/analytics">Analytics</a>
+        <a href="/dashboard/users">Users</a>
+        <a href="/dashboard/settings">Settings</a>
+      </nav>
+      
+      <div className="user-profile">
+        <img src="/avatar.jpg" alt="User" />
+        <span>Budi Santoso</span>
+      </div>
+    </aside>
+  );
+}
+```
+
+```jsx
+// src/components/react/MobileNav.jsx
+import { useState } from 'react';
+
+export default function MobileNav() {
+  const [isOpen, setIsOpen] = useState(false);
+  
+  return (
+    <>
+      <button 
+        className="menu-toggle"
+        onClick={() => setIsOpen(!isOpen)}
+        aria-label="Toggle menu"
+      >
+        {isOpen ? '✕' : '☰'}
+      </button>
+      
+      {isOpen && (
+        <nav className="mobile-nav">
+          <a href="/dashboard">Overview</a>
+          <a href="/dashboard/analytics">Analytics</a>
+          <a href="/dashboard/users">Users</a>
+          <a href="/dashboard/settings">Settings</a>
+        </nav>
+      )}
+    </>
+  );
+}
+```
+
+### Menghemat Bundle Size:
+
+```astro
+---
+// Tanpa client:media - KEDUANYA di-load!
+<DesktopSidebar client:load />
+<MobileNav client:load />
+
+// Dengan client:media - Hanya satu yang di-load berdasarkan device!
+<DesktopSidebar client:media="(min-width: 1024px)" />
+<MobileNav client:media="(max-width: 1023px)" />
+```
+
+---
+
+## 6.6 client:only
+
+Directive untuk komponen yang **hanya berjalan di client**, skip SSR sepenuhnya.
+
+### Karakteristik:
+
+- **Kapan**: Hanya di browser, tidak di server
+- **SSR**: Tidak ada (skip rendering server)
+- **Use case**: Browser-only APIs, localStorage, WebSocket, Canvas
+- **Loading state**: Perlu ditangani manual
+
+### Contoh Penggunaan:
+
+```astro
+---
+// src/pages/editor.astro
+import Layout from '../layouts/Layout.astro';
+import TextEditor from '../components/react/TextEditor.jsx';
+import CodePlayground from '../components/svelte/CodePlayground.svelte';
+import LivePreview from '../components/vue/LivePreview.vue';
+---
+
+<Layout>
+  <h1>Online Code Editor</h1>
+  
+  <!-- 
+    TextEditor: Butuh document API, tidak bisa SSR
+    client:only="react" = skip SSR, hydrate di client
+  -->
+  <TextEditor client:only="react" />
+  
+  <!-- 
+    CodePlayground: Butuh localStorage untuk auto-save
+  -->
+  <CodePlayground client:only="svelte" />
+  
+  <!-- 
+    LivePreview: Butuh iframe manipulation
+  -->
+  <LivePreview client:only="vue" />
+</Layout>
+```
+
+```jsx
+// src/components/react/TextEditor.jsx
+import { useEffect, useState } from 'react';
+import { Editor } from '@monaco-editor/react';
+
+export default function TextEditor() {
+  const [code, setCode] = useState('');
+  const [isReady, setIsReady] = useState(false);
+  
+  useEffect(() => {
+    // Aman menggunakan localStorage karena client-only
+    const saved = localStorage.getItem('draft-code');
+    if (saved) setCode(saved);
+    setIsReady(true);
+  }, []);
+  
+  const handleChange = (value) => {
+    setCode(value);
+    localStorage.setItem('draft-code', value);
+  };
+  
+  if (!isReady) {
+    return <div className="editor-loading">Loading editor...</div>;
+  }
+  
+  return (
+    <Editor
+      height="500px"
+      defaultLanguage="javascript"
+      value={code}
+      onChange={handleChange}
+      theme="vs-dark"
+    />
+  );
+}
+```
+
+```svelte
+<!-- src/components/svelte/CodePlayground.svelte -->
+<script>
+  import { onMount } from 'svelte';
+  
+  let code = '';
+  let output = '';
+  let isReady = false;
+  
+  onMount(() => {
+    // Browser-only: Web Workers untuk sandbox
+    const worker = new Worker('/js/sandbox-worker.js');
+    
+    worker.onmessage = (e) => {
+      output = e.data;
+    };
+    
+    code = localStorage.getItem('playground-code') || 'console.log("Hello!");';
+    isReady = true;
+    
+    return () => worker.terminate();
+  });
+  
+  function runCode() {
+    // Kirim ke worker (tidak bisa di server)
+    worker.postMessage(code);
+    localStorage.setItem('playground-code', code);
+  }
+</script>
+
+{#if !isReady}
+  <div class="loading">Initializing playground...</div>
+{:else}
+  <div class="playground">
+    <textarea bind:value={code} rows="10" />
+    <button on:click={runCode}>Run Code</button>
+    <pre class="output">{output}</pre>
+  </div>
+{/if}
+```
+
+### Loading State Pattern:
+
+Karena `client:only` tidak render apa pun di server, kamu harus menyediakan fallback:
+
+```astro
+---
+import HeavyComponent from '../components/react/HeavyComponent.jsx';
+---
+
+<!-- ❌ Tidak ada fallback - user lihat blank -->
+<HeavyComponent client:only="react" />
+
+<!-- ✅ Dengan fallback slot -->
+<HeavyComponent client:only="react">
+  <div slot="fallback" class="skeleton-loader">
+    <div class="skeleton-header"></div>
+    <div class="skeleton-body"></div>
+    <div class="skeleton-footer"></div>
+  </div>
+</HeavyComponent>
+```
+
+```jsx
+// HeavyComponent.jsx dengan fallback support
+export default function HeavyComponent({ children }) {
+  const [isLoaded, setIsLoaded] = useState(false);
+  
+  useEffect(() => {
+    // Simulasi load heavy library
+    import('heavy-chart-library').then(() => {
+      setIsLoaded(true);
+    });
+  }, []);
+  
+  if (!isLoaded) {
+    // Render fallback dari slot Astro
+    return children || <div>Loading...</div>;
+  }
+  
+  return <ActualChartComponent />;
+}
+```
+
+---
+
+## 6.7 Custom Client Directives
+
+Membuat directive hidrasi kustom untuk kebutuhan spesifik.
+
+### Konsep:
+
+Custom directives memungkinkan kamu mendefinisikan kapan hidrasi terjadi berdasarkan logika sendiri.
+
+### Contoh: `client:interaction`
+
+Hidrasi saat user berinteraksi (hover, focus, atau click):
+
+```javascript
+// src/directives/interaction.js
+/**
+ * @type {import('astro').ClientDirective}
+ */
+export default (load, opts, el) => {
+  const events = ['mouseenter', 'focusin', 'touchstart', 'click'];
+  
+  const handler = async () => {
+    // Hapus semua listener setelah trigger
+    events.forEach(event => {
+      el.removeEventListener(event, handler);
+    });
+    
+    // Load dan hydrate component
+    const hydrate = await load();
+    await hydrate();
+  };
+  
+  events.forEach(event => {
+    el.addEventListener(event, handler, { once: true, passive: true });
+  });
+};
+```
+
+```javascript
+// astro.config.mjs
+import { defineConfig } from 'astro/config';
+
+export default defineConfig({
+  experimental: {
+    clientDirectives: [
+      './src/directives/interaction.js'
+    ]
+  }
+});
+```
+
+**Penggunaan:**
+
+```astro
+---
+import HeavyChart from '../components/react/HeavyChart.jsx';
+---
+
+<!-- Hidrasi hanya saat user hover/click -->
+<HeavyChart client:interaction data={chartData} />
+```
+
+### Contoh: `client:timer`
+
+Hidrasi setelah delay tertentu:
+
+```javascript
+// src/directives/timer.js
+export default (load, opts, el) => {
+  const delay = parseInt(opts.value) || 5000; // default 5 detik
+  
+  setTimeout(async () => {
+    const hydrate = await load();
+    await hydrate();
+  }, delay);
+};
+```
+
+```astro
+<!-- Hidrasi setelah 3 detik -->
+<NewsletterPopup client:timer="3000" />
+
+<!-- Hidrasi setelah 10 detik -->
+<LiveChatWidget client:timer="10000" />
+```
+
+---
+
+## 6.8 Transition Directives
+
+Directives khusus untuk View Transitions API (Astro 3.0+).
+
+### `transition:name`
+
+Menandai elemen untuk morphing animation saat navigasi:
+
+```astro
+---
+// src/pages/products/[id].astro
+import Layout from '../../layouts/Layout.astro';
+import { getProduct } from '../../lib/products';
+
+const { id } = Astro.params;
+const product = await getProduct(id);
+---
+
+<Layout title={product.name} transition:animate="slide">
+  <!-- 
+    transition:name="product-image"
+    Elemen ini akan "morph" dari halaman list ke detail
+  -->
+  <img 
+    src={product.image} 
+    alt={product.name}
+    transition:name={`product-image-${id}`}
+  />
+  
+  <h1 transition:name={`product-title-${id}`}>
+    {product.name}
+  </h1>
+  
+  <p class="price" transition:name={`product-price-${id}`}>
+    {product.price}
+  </p>
+</Layout>
+```
+
+```astro
+---
+// src/pages/products/index.astro
+import Layout from '../../layouts/Layout.astro';
+import { getAllProducts } from '../../lib/products';
+
+const products = await getAllProducts();
+---
+
+<Layout title="Products">
+  <div class="product-grid">
+    {products.map(product => (
+      <a href={`/products/${product.id}`} class="product-card">
+        <!-- 
+          Nama transition harus sama dengan halaman detail
+          tapi dengan ID yang berbeda untuk setiap produk
+        -->
+        <img 
+          src={product.image} 
+          alt={product.name}
+          transition:name={`product-image-${product.id}`}
+        />
+        <h3 transition:name={`product-title-${product.id}`}>
+          {product.name}
+        </h3>
+        <p transition:name={`product-price-${product.id}`}>
+          {product.price}
+        </p>
+      </a>
+    ))}
+  </div>
+</Layout>
+```
+
+### `transition:animate`
+
+Mengontrol jenis animasi:
+
+```astro
+---
+import Layout from '../layouts/Layout.astro';
+---
+
+<!-- 
+  slide: Geser dari kanan (default)
+  fade: Fade in/out
+  none: Tidak ada animasi
+-->
+<Layout transition:animate="fade">
+  <main>
+    <h1>Halaman dengan Fade Transition</h1>
+  </main>
+</Layout>
+```
+
+### `transition:persist`
+
+Pertahankan state komponen saat navigasi:
+
+```astro
+---
+// src/layouts/Layout.astro
+import MusicPlayer from '../components/react/MusicPlayer.jsx';
+---
+
+<!DOCTYPE html>
+<html>
+  <head>...</head>
+  <body>
+    <header>...</header>
+    
+    <main>
+      <slot />
+    </main>
+    
+    <!-- 
+      MusicPlayer tetap play saat navigasi halaman
+      Tidak di-reset atau re-mount
+    -->
+    <div transition:persist="music-player">
+      <MusicPlayer client:load />
+    </div>
+  </body>
+</html>
+```
+
+```astro
+---
+// src/pages/song/[id].astro
+import Layout from '../../layouts/Layout.astro';
+
+const { id } = Astro.params;
+const song = await getSong(id);
+---
+
+<Layout>
+  <!-- 
+    transition:persist-props
+    Props di-update tapi component tidak re-mount
+  -->
+  <div transition:persist="now-playing" transition:persist-props>
+    <NowPlaying 
+      client:load 
+      songId={id}
+      title={song.title}
+      artist={song.artist}
+    />
+  </div>
+</Layout>
+```
+
+---
+
+## Ringkasan Sesi 6
+
+| Directive | Trigger | Use Case | Performance Impact |
+|-----------|---------|----------|-------------------|
+| `client:load` | Segera | Komponen kritis | Tinggi (block LCP) |
+| `client:idle` | Browser idle | Komponen sekunder | Rendah |
+| `client:visible` | Masuk viewport | Below fold | Minimal (lazy) |
+| `client:media` | Media query match | Responsive | Kondisional |
+| `client:only` | Skip SSR | Browser-only APIs | N/A (no SSR) |
+| `transition:*` | Navigasi | View transitions | Variable |
+
+### Decision Tree:
+
+```
+Apakah komponen butuh JS?
+├── Tidak → Tanpa directive (zero JS)
+└── Ya → Butuh segera?
+    ├── Ya → Above fold?
+    │   ├── Ya → client:load
+    │   └── Tidak → client:visible
+    └── Tidak → client:idle
+        └── Responsive/conditional?
+            └── Ya → client:media
+```
+
+---
+
+**Selanjutnya:** Di Sesi 7, kita akan membahas **Layouts & Templates** - cara membuat layout reusable, nested layouts, dan mengelola template secara efisien.

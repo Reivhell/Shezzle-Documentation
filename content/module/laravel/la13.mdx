@@ -1,0 +1,733 @@
+---
+title: "Sesi 13: Facades & Contracts"
+description: "Facades menyediakan \"static-like\" interface ke class di service container. Mereka seperti pintu depan yang megah—terlihat simpel dari luar, tapi di ba..."
+category: "laravel"
+tags: ["laravel"]
+order: 13
+---
+
+## 13.1 Facade Pattern Explanation
+
+Facades menyediakan "static-like" interface ke class di service container. Mereka seperti pintu depan yang megah—terlihat simpel dari luar, tapi di baliknya ada sistem kompleks yang terorganisir.
+
+> **tip**
+>
+  Analogi sederhana: Bayangkan facade seperti remote TV. Anda menekan tombol "volume up" (static method), tapi di baliknya ada sinyal inframerah, sensor, dan circuit board yang bekerja (instance di container).
+
+### 13.1.1 Cara Kerja Facade
+
+```php
+<?php
+
+// Tanpa facade - verbose
+$cache = app()->make('cache');
+$value = $cache->get('key');
+
+// Dengan facade - clean dan expressive
+use Illuminate\Support\Facades\Cache;
+
+$value = Cache::get('key');
+```
+
+**Apa yang terjadi di balik layar:**
+
+```php
+<?php
+
+// Cache::get() sebenarnya melakukan:
+public static function get($key, $default = null)
+{
+    // 1. Resolve 'cache' dari container
+    $instance = static::getFacadeRoot(); // app('cache')
+    
+    // 2. Panggil method pada instance
+    return $instance->get($key, $default);
+}
+```
+
+### 13.1.2 Struktur Facade Class
+
+```php
+<?php
+
+namespace Illuminate\Support\Facades;
+
+use Illuminate\Support\Facades\Facade;
+
+class Cache extends Facade
+{
+    /**
+     * Get the registered name of the component.
+     *
+     * @return string
+     */
+    protected static function getFacadeAccessor(): string
+    {
+        return 'cache'; // Key di service container
+    }
+}
+```
+
+### 13.1.3 Common Facades dan Accessor-nya
+
+| Facade | Accessor | Instance Class |
+|--------|----------|----------------|
+| `Cache` | `cache` | `CacheManager` |
+| `DB` | `db` | `DatabaseManager` |
+| `Log` | `log` | `LogManager` |
+| `Storage` | `filesystem` | `FilesystemManager` |
+| `Route` | `router` | `Router` |
+| `View` | `view` | `Factory` |
+| `Config` | `config` | `Repository` |
+| `App` | `app` | `Application` |
+| `Auth` | `auth` | `AuthManager` |
+| `Session` | `session` | `SessionManager` |
+| `Queue` | `queue` | `QueueManager` |
+| `Mail` | `mailer` | `MailManager` |
+| `Hash` | `hash` | `HashManager` |
+| `Crypt` | `encrypter` | `Encrypter` |
+| `Event` | `events` | `Dispatcher` |
+| `File` | `files` | `Filesystem` |
+| `Http` | - | `Factory` (Laravel 7+) |
+| `Schema` | - | `Builder` |
+
+---
+
+## 13.2 Real-time Facades (Facades\ClassName)
+
+Real-time facades memungkinkan Anda mengubah class apapun menjadi facade secara dinamis—tanpa membuat facade class.
+
+### 13.2.1 Penggunaan Real-time Facade
+
+```php
+<?php
+
+use Facades\App\Services\PaymentGateway;
+
+class OrderController extends Controller
+{
+    public function store(Request $request)
+    {
+        // PaymentGateway di-resolve dari container
+        // dan method dipanggil secara static-like
+        $result = PaymentGateway::process($request->all());
+        
+        return response()->json($result);
+    }
+}
+```
+
+### 13.2.2 Perbandingan: Regular vs Real-time Facade
+
+<div class="tabs-container">
+  
+### Regular Class
+
+```php
+<?php
+
+// app/Services/AnalyticsService.php
+namespace App\Services;
+
+class AnalyticsService
+{
+    public function __construct(
+        protected string $apiKey,
+        protected string $endpoint
+    ) {}
+    
+    public function track(string $event, array $properties): void
+    {
+        // Send to analytics API
+    }
+    
+    public function identify(string $userId, array $traits): void
+    {
+        // Identify user
+    }
+}
+
+// Penggunaan - perlu instantiate atau inject
+$analytics = new AnalyticsService(
+    config('services.analytics.key'),
+    config('services.analytics.endpoint')
+);
+$analytics->track('purchase', ['amount' => 100]);
+```
+  
+
+  
+  
+### Real-time Facade
+
+```php
+<?php
+
+use Facades\App\Services\AnalyticsService;
+
+// Otomatis resolve dari container dengan dependencies
+AnalyticsService::track('purchase', ['amount' => 100]);
+
+// Sama dengan:
+// app(AnalyticsService::class)->track('purchase', ['amount' => 100]);
+```
+  
+
+  
+  
+### Dengan Binding
+
+```php
+<?php
+
+// app/Providers/AppServiceProvider.php
+public function register(): void
+{
+    $this->app->singleton(AnalyticsService::class, function ($app) {
+        return new AnalyticsService(
+            config('services.analytics.key'),
+            config('services.analytics.endpoint')
+        );
+    });
+}
+
+// Sekarang bisa digunakan di manapun
+use Facades\App\Services\AnalyticsService;
+
+AnalyticsService::track('page_view', ['url' => '/home']);
+```
+  
+
+</div>
+
+### 13.2.3 Kapan Menggunakan Real-time Facade?
+
+| Skenario | Gunakan? |
+|----------|----------|
+| Service jarang digunakan di class | ✅ Ya |
+| Static-like syntax lebih readable | ✅ Ya |
+| Testing dengan mocking | ✅ Ya |
+| Service sering digunakan di class | ❌ Constructor injection lebih baik |
+| Complex dependencies | ❌ Explicit injection lebih jelas |
+
+### 13.2.4 Mocking Real-time Facade di Test
+
+```php
+<?php
+
+use Facades\App\Services\PaymentGateway;
+use Tests\TestCase;
+
+class OrderControllerTest extends TestCase
+{
+    public function test_order_creation()
+    {
+        // Mock real-time facade
+        PaymentGateway::shouldReceive('process')
+            ->once()
+            ->with(['amount' => 10000])
+            ->andReturn(['status' => 'success']);
+        
+        $response = $this->postJson('/api/orders', [
+            'amount' => 10000,
+        ]);
+        
+        $response->assertCreated();
+    }
+}
+```
+
+---
+
+## 13.3 Common Facades: Cache, DB, Log, Storage
+
+### 13.3.1 Cache Facade
+
+```php
+<?php
+
+use Illuminate\Support\Facades\Cache;
+
+// Basic operations
+Cache::put('key', 'value', $seconds = 3600);
+Cache::put('key', 'value', now()->addHours(24));
+
+$value = Cache::get('key');
+$value = Cache::get('key', 'default');
+$value = Cache::get('key', fn() => 'computed default');
+
+// Remember pattern
+$users = Cache::remember('users', 3600, function () {
+    return User::all(); // Hanya dijalankan jika cache miss
+});
+
+// Remember forever
+$settings = Cache::rememberForever('settings', function () {
+    return Setting::all()->pluck('value', 'key');
+});
+
+// Conditional operations
+Cache::add('key', 'value', 3600); // Hanya jika key belum ada
+Cache::forever('key', 'value');
+Cache::forget('key');
+Cache::flush(); // Hati-hati! Hapus semua cache
+
+// Increment/Decrement
+Cache::increment('counter');
+Cache::increment('counter', 5);
+Cache::decrement('counter');
+
+// Tags (Redis/Memcached only)
+Cache::tags(['people', 'artists'])->put('John', $john, 3600);
+Cache::tags(['people', 'artists'])->flush(); // Hapus tagged cache
+Cache::tags('people')->flush();
+
+// Lock untuk atomic operations
+$lock = Cache::lock('processing', 10); // 10 detik timeout
+
+if ($lock->get()) {
+    // Process job
+    ProcessPodcast::dispatch($podcast);
+    
+    $lock->release();
+}
+
+// atau dengan block
+Cache::lock('processing', 10)->block(5, function () {
+    // Tunggu max 5 detik untuk mendapatkan lock
+    ProcessPodcast::dispatch($podcast);
+});
+```
+
+### 13.3.2 DB Facade
+
+```php
+<?php
+
+use Illuminate\Support\Facades\DB;
+
+// Raw queries
+$users = DB::select('select * from users where active = ?', [1]);
+DB::insert('insert into users (name, email) values (?, ?)', ['John', 'john@example.com']);
+DB::update('update users set votes = 100 where name = ?', ['John']);
+DB::delete('delete from users where id = ?', [1]);
+DB::statement('drop table users');
+
+// Query builder via facade
+$users = DB::table('users')
+    ->where('active', true)
+    ->orderBy('name')
+    ->get();
+
+// Transactions
+DB::transaction(function () {
+    DB::table('users')->update(['votes' => 0]);
+    DB::table('posts')->delete();
+});
+
+DB::beginTransaction();
+try {
+    DB::table('users')->update(['votes' => 0]);
+    DB::commit();
+} catch (\Exception $e) {
+    DB::rollBack();
+    throw $e;
+}
+
+// Multiple connections
+$users = DB::connection('mysql')->table('users')->get();
+$orders = DB::connection('pgsql')->table('orders')->get();
+
+// Listen to queries (debugging)
+DB::listen(function ($query) {
+    logger($query->sql, $query->bindings);
+});
+```
+
+### 13.3.3 Log Facade
+
+```php
+<?php
+
+use Illuminate\Support\Facades\Log;
+use Psr\Log\LogLevel;
+
+// Level-based logging
+Log::emergency($message);
+Log::alert($message);
+Log::critical($message);
+Log::error($message);
+Log::warning($message);
+Log::notice($message);
+Log::info($message);
+Log::debug($message);
+
+// With context
+Log::info('User logged in', ['id' => $user->id, 'email' => $user->email]);
+Log::error('Payment failed', [
+    'order_id' => $order->id,
+    'error' => $exception->getMessage(),
+    'trace' => $exception->getTraceAsString(),
+]);
+
+// Channel-specific
+Log::channel('slack')->info('Something happened!');
+Log::channel('single')->debug('Debug info');
+
+// Stack (multiple channels)
+Log::stack(['single', 'slack'])->info('Important message');
+
+// On-demand channel
+Log::build([
+    'driver' => 'single',
+    'path' => storage_path('logs/custom.log'),
+])->info('Custom log entry');
+
+// With closure untuk lazy evaluation
+Log::debug(fn() => 'Expensive operation: ' . heavyComputation());
+```
+
+### 13.3.4 Storage Facade
+
+```php
+<?php
+
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Http\UploadedFile;
+
+// Disk selection
+$local = Storage::disk('local');
+$public = Storage::disk('public');
+$s3 = Storage::disk('s3');
+
+// Read operations
+$content = Storage::get('file.txt');
+$exists = Storage::exists('file.txt');
+$missing = Storage::missing('file.txt');
+$url = Storage::url('file.txt');
+$temporaryUrl = Storage::temporaryUrl('file.txt', now()->addMinutes(5));
+$size = Storage::size('file.txt');
+$lastModified = Storage::lastModified('file.txt');
+$mimeType = Storage::mimeType('file.txt');
+
+// Write operations
+Storage::put('file.txt', 'Contents');
+Storage::put('path/to/file.txt', 'Contents');
+Storage::putFile('photos', $request->file('avatar')); // Auto generate filename
+Storage::putFileAs('photos', $request->file('avatar'), 'custom-name.jpg');
+
+// Append/Prepend
+Storage::append('log.txt', 'Appended text');
+Storage::prepend('log.txt', 'Prepended text');
+
+// Copy/Move
+Storage::copy('old/file.txt', 'new/file.txt');
+Storage::move('old/file.txt', 'new/file.txt');
+
+// Delete
+Storage::delete('file.txt');
+Storage::delete(['file1.txt', 'file2.txt']);
+Storage::directoryExists('directory');
+Storage::makeDirectory('directory');
+Storage::deleteDirectory('directory');
+
+// File upload handling
+public function upload(Request $request)
+{
+    $request->validate(['avatar' => 'required|image']);
+    
+    $path = Storage::putFile('avatars', $request->file('avatar'));
+    // storage/app/avatars/random-string.jpg
+    
+    $path = Storage::putFileAs(
+        'avatars', 
+        $request->file('avatar'), 
+        auth()->id() . '.jpg'
+    );
+    
+    return Storage::url($path);
+}
+
+// Download
+return Storage::download('file.txt');
+return Storage::download('file.txt', 'custom-name.txt');
+
+// Image manipulation (dengan intervention/image)
+$image = Storage::get('photo.jpg');
+$compressed = Image::make($image)->resize(300, null, function ($constraint) {
+    $constraint->aspectRatio();
+})->encode('jpg', 75);
+Storage::put('thumbnails/photo.jpg', $compressed);
+```
+
+---
+
+## 13.4 Contracts (Interfaces) vs Facades
+
+Contracts adalah interface yang mendefinisikan behavior, sementara facades adalah cara mengakses implementation.
+
+### 13.4.1 Perbandingan Penggunaan
+
+<div class="tabs-container">
+  
+### Dengan Contract (DI)
+
+```php
+<?php
+
+namespace App\Http\Controllers;
+
+use Illuminate\Contracts\Cache\Repository as Cache;
+use Illuminate\Contracts\Filesystem\Filesystem as Storage;
+
+class DocumentController extends Controller
+{
+    public function __construct(
+        protected Cache $cache,
+        protected Storage $storage
+    ) {}
+    
+    public function show($id)
+    {
+        return $this->cache->remember("doc.{$id}", 3600, function () use ($id) {
+            return $this->storage->get("documents/{$id}.pdf");
+        });
+    }
+}
+```
+  
+
+  
+  
+### Dengan Facade
+
+```php
+<?php
+
+namespace App\Http\Controllers;
+
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Storage;
+
+class DocumentController extends Controller
+{
+    public function show($id)
+    {
+        return Cache::remember("doc.{$id}", 3600, function () use ($id) {
+            return Storage::get("documents/{$id}.pdf");
+        });
+    }
+}
+```
+  
+
+</div>
+
+### 13.4.2 Daftar Important Contracts
+
+| Contract | Facade | Fungsi |
+|----------|--------|--------|
+| `Illuminate\Contracts\Cache\Repository` | `Cache` | Cache operations |
+| `Illuminate\Contracts\Filesystem\Filesystem` | `Storage` | File storage |
+| `Illuminate\Contracts\Logging\Log` | `Log` | Logging |
+| `Illuminate\Contracts\Mail\Mailer` | `Mail` | Email sending |
+| `Illuminate\Contracts\Queue\Queue` | `Queue` | Job queueing |
+| `Illuminate\Contracts\Routing\ResponseFactory` | `Response` | HTTP responses |
+| `Illuminate\Contracts\Validation\Factory` | `Validator` | Data validation |
+| `Illuminate\Contracts\View\Factory` | `View` | View rendering |
+| `Illuminate\Contracts\Auth\Guard` | `Auth` | Authentication |
+| `Illuminate\Contracts\Hashing\Hasher` | `Hash` | Password hashing |
+| `Illuminate\Contracts\Encryption\Encrypter` | `Crypt` | Encryption |
+| `Illuminate\Contracts\Events\Dispatcher` | `Event` | Event dispatching |
+| `Illuminate\Contracts\Broadcasting\Broadcaster` | `Broadcast` | Broadcasting |
+| `Illuminate\Contracts\Notifications\Dispatcher` | `Notification` | Notifications |
+
+### 13.4.3 When to Use Contracts over Facades
+
+> **tip**
+>
+  Pilih contracts (DI) untuk: testability, explicit dependencies, dan flexibility. Pilih facades untuk: convenience, readability, dan rapid development.
+
+| Gunakan Contracts | Gunakan Facades |
+|-------------------|-----------------|
+| Package/library development | Application development |
+| Complex business logic | Simple controller methods |
+| Need swap implementation | Standard Laravel features |
+| Team preference explicit DI | Rapid prototyping |
+| Long-term maintenance | Short-term projects |
+
+### 13.4.4 Swapping Implementation dengan Contracts
+
+```php
+<?php
+
+// app/Providers/AppServiceProvider.php
+
+use Illuminate\Contracts\Cache\Repository;
+use App\Services\Cache\RedisTagAwareCache;
+
+public function register(): void
+{
+    // Bind implementation custom ke contract
+    $this->app->singleton(Repository::class, function ($app) {
+        return new RedisTagAwareCache($app['redis']);
+    });
+}
+
+// Sekarang DI akan mendapatkan implementation custom
+class MyController extends Controller
+{
+    public function __construct(
+        protected Repository $cache // Mendapat RedisTagAwareCache
+    ) {}
+}
+```
+
+---
+
+## 13.5 Custom Facades
+
+### 13.5.1 Membuat Facade
+
+```php
+<?php
+
+// app/Services/Payment/PaymentProcessor.php
+namespace App\Services\Payment;
+
+class PaymentProcessor
+{
+    protected string $apiKey;
+    protected string $secret;
+    
+    public function __construct(string $apiKey, string $secret)
+    {
+        $this->apiKey = $apiKey;
+        $this->secret = $secret;
+    }
+    
+    public function charge(array $data): array
+    {
+        // Process payment
+        return ['status' => 'success', 'id' => 'pay_123'];
+    }
+    
+    public function refund(string $transactionId): array
+    {
+        // Process refund
+        return ['status' => 'refunded'];
+    }
+}
+```
+
+```php
+<?php
+
+// app/Facades/Payment.php
+namespace App\Facades;
+
+use Illuminate\Support\Facades\Facade;
+
+class Payment extends Facade
+{
+    protected static function getFacadeAccessor(): string
+    {
+        return 'payment.processor';
+    }
+}
+```
+
+```php
+<?php
+
+// app/Providers/PaymentServiceProvider.php
+namespace App\Providers;
+
+use App\Services\Payment\PaymentProcessor;
+use Illuminate\Support\ServiceProvider;
+
+class PaymentServiceProvider extends ServiceProvider
+{
+    public function register(): void
+    {
+        $this->app->singleton('payment.processor', function ($app) {
+            return new PaymentProcessor(
+                config('services.payment.key'),
+                config('services.payment.secret')
+            );
+        });
+    }
+}
+```
+
+```php
+<?php
+
+// config/app.php - tambah ke aliases
+'aliases' => [
+    // ...
+    'Payment' => App\Facades\Payment::class,
+],
+```
+
+Penggunaan:
+
+```php
+<?php
+
+use App\Facades\Payment;
+
+$result = Payment::charge([
+    'amount' => 10000,
+    'currency' => 'idr',
+]);
+
+$refund = Payment::refund('pay_123');
+```
+
+### 13.5.2 Facade dengan Mocking Support
+
+```php
+<?php
+
+// Test dengan mocking
+use App\Facades\Payment;
+
+class OrderTest extends TestCase
+{
+    public function test_order_payment()
+    {
+        Payment::shouldReceive('charge')
+            ->once()
+            ->with(['amount' => 50000])
+            ->andReturn(['status' => 'success', 'id' => 'pay_123']);
+        
+        $order = Order::factory()->create(['total' => 50000]);
+        $order->processPayment();
+        
+        $this->assertEquals('paid', $order->status);
+    }
+}
+```
+
+---
+
+## 13.6 Kesimpulan
+
+Facades dan contracts adalah dua sisi mata uang Laravel—keduanya mengakses service container, dengan trade-off berbeda:
+
+| Aspek | Facades | Contracts |
+|-------|---------|-----------|
+| **Syntax** | Static-like, clean | Type-hinted, explicit |
+| **Testability** | Mockable dengan `shouldReceive()` | Mockable dengan DI |
+| **Flexibility** | Tergantung facade accessor | Full interface swap |
+| **Readability** | Expressive, familiar | Explicit, self-documenting |
+| **IDE Support** | Perlu plugin untuk autocomplete | Native autocomplete |
+
+**Best Practices:**
+- Gunakan facades untuk rapid development dan code yang familiar
+- Gunakan contracts untuk package development dan explicit dependencies
+- Manfaatkan real-time facades untuk convenience tanpa boilerplate
+- Mock facades di testing untuk isolation
+- Pahami accessor di balik facade untuk debugging
+```

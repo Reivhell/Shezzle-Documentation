@@ -1,0 +1,515 @@
+---
+title: "Sesi 63: Inertia.js Integration"
+description: "Menguasai Inertia.js untuk membangun Single Page Applications (SPA) tanpa API, dengan seamless integration antara Laravel dan Vue/React."
+category: "laravel"
+tags: ["laravel"]
+order: 63
+---
+
+## Tujuan Pembelajaran
+
+Menguasai Inertia.js untuk membangun Single Page Applications (SPA) tanpa API, dengan seamless integration antara Laravel dan Vue/React.
+
+## 1. Instalasi & Konsep Dasar
+
+### 1.1 Instalasi Inertia
+
+```bash
+# Server-side (Laravel)
+composer require inertiajs/inertia-laravel
+
+# Publish middleware
+php artisan inertia:middleware
+
+# Client-side (Vue 3)
+npm install @inertiajs/vue3
+
+# Atau React
+npm install @inertiajs/react
+```
+
+### 1.2 Setup Middleware
+
+```php
+<?php
+
+// app/Http/Kernel.php
+protected $middlewareGroups = [
+    'web' => [
+        // ... other middleware
+        \App\Http\Middleware\HandleInertiaRequests::class,
+    ],
+];
+```
+
+```php
+<?php
+
+// app/Http/Middleware/HandleInertiaRequests.php
+namespace App\Http\Middleware;
+
+use Illuminate\Http\Request;
+use Inertia\Middleware;
+
+class HandleInertiaRequests extends Middleware
+{
+    protected $rootView = 'app';
+
+    public function version(Request $request): ?string
+    {
+        return parent::version($request);
+    }
+
+    public function share(Request $request): array
+    {
+        return [
+            ...parent::share($request),
+            'auth' => [
+                'user' => $request->user()?->only('id', 'name', 'email'),
+            ],
+            'flash' => [
+                'success' => fn () => $request->session()->get('success'),
+                'error' => fn () => $request->session()->get('error'),
+            ],
+            'app' => [
+                'name' => config('app.name'),
+                'locale' => app()->getLocale(),
+            ],
+        ];
+    }
+}
+```
+
+### 1.3 Root Template
+
+```blade
+{{-- resources/views/app.blade.php --}}
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title inertia>{{ config('app.name') }}</title>
+    
+    @vite(['resources/js/app.js', 'resources/css/app.css'])
+    @inertiaHead
+</head>
+<body>
+    @inertia
+</body>
+</html>
+```
+
+## 2. Pages & Routing
+
+### 2.1 Creating Pages
+
+```php
+<?php
+
+// routes/web.php
+use Inertia\Inertia;
+
+// Simple page
+Route::get('/', function () {
+    return Inertia::render('Home', [
+        'canLogin' => Route::has('login'),
+        'canRegister' => Route::has('register'),
+    ]);
+});
+
+// Dengan data dari database
+Route::get('/users', function () {
+    return Inertia::render('Users/Index', [
+        'users' => User::query()
+            ->when(Request::input('search'), function ($query, $search) {
+                $query->where('name', 'like', "%{$search}%");
+            })
+            ->paginate(10)
+            ->withQueryString()
+            ->through(fn ($user) => [
+                'id' => $user->id,
+                'name' => $user->name,
+                'email' => $user->email,
+                'can' => [
+                    'edit' => Auth::user()->can('edit', $user),
+                ],
+            ]),
+        'filters' => Request::only(['search']),
+    ]);
+})->name('users.index');
+
+// Controller-based
+Route::get('/users/{user}/edit', [UserController::class, 'edit'])
+    ->name('users.edit');
+
+// Route model binding
+Route::get('/posts/{post}', function (Post $post) {
+    return Inertia::render('Posts/Show', [
+        'post' => $post->only('id', 'title', 'content', 'published_at'),
+        'author' => $post->user->only('name', 'avatar'),
+    ]);
+})->name('posts.show');
+```
+
+```vue
+<!-- resources/js/Pages/Users/Index.vue -->
+<script setup>
+import { Head, Link, router } from '@inertiajs/vue3'
+import { ref, watch } from 'vue'
+import debounce from 'lodash/debounce'
+
+const props = defineProps({
+    users: Object,
+    filters: Object,
+})
+
+const search = ref(props.filters.search)
+
+watch(search, debounce((value) => {
+    router.get('/users', { search: value }, {
+        preserveState: true,
+        preserveScroll: true,
+        replace: true,
+    })
+}, 300))
+</script>
+
+<template>
+    <Head title="Users" />
+    
+    <div>
+        <h1>Users</h1>
+        
+        <input 
+            v-model="search" 
+            type="text" 
+            placeholder="Search users..."
+            class="border rounded px-4 py-2"
+        >
+        
+        <table>
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Email</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr v-for="user in users.data" :key="user.id">
+                    <td>{{ user.name }}</td>
+                    <td>{{ user.email }}</td>
+                    <td>
+                        <Link 
+                            v-if="user.can.edit"
+                            :href="`/users/${user.id}/edit`"
+                            class="text-blue-600"
+                        >
+                            Edit
+                        </Link>
+                    </td>
+                </tr>
+            </tbody>
+        </table>
+        
+        <!-- Pagination -->
+        <div class="mt-4">
+            <Link 
+                v-for="link in users.links" 
+                :key="link.label"
+                :href="link.url"
+                v-html="link.label"
+                :class="{ 'font-bold': link.active }"
+                class="px-3 py-1 mx-1"
+            />
+        </div>
+    </div>
+</template>
+```
+
+## 3. Shared Data
+
+### 3.1 Flash Messages
+
+```php
+<?php
+
+// Controller
+public function store(Request $request)
+{
+    $user = User::create($request->validated());
+    
+    return redirect()->route('users.index')->with('success', 'User created successfully.');
+}
+```
+
+```vue
+<!-- resources/js/Components/FlashMessages.vue -->
+<script setup>
+import { usePage } from '@inertiajs/vue3'
+import { computed } from 'vue'
+
+const page = usePage()
+
+const flashSuccess = computed(() => page.props.flash.success)
+const flashError = computed(() => page.props.flash.error)
+</script>
+
+<template>
+    <div>
+        <div v-if="flashSuccess" class="bg-green-100 p-4 rounded">
+            {{ flashSuccess }}
+        </div>
+        <div v-if="flashError" class="bg-red-100 p-4 rounded">
+            {{ flashError }}
+        </div>
+    </div>
+</template>
+```
+
+### 3.2 Remembering State
+
+```vue
+<script setup>
+import { useRemember } from '@inertiajs/vue3'
+
+// State yang di-preserve saat navigation
+const form = useRemember({
+    name: '',
+    email: '',
+    message: '',
+}, 'ContactForm')
+</script>
+```
+
+## 4. Forms & Actions
+
+### 4.1 Form Handling
+
+```vue
+<!-- resources/js/Pages/Users/Create.vue -->
+<script setup>
+import { useForm } from '@inertiajs/vue3'
+
+const form = useForm({
+    name: '',
+    email: '',
+    password: '',
+    password_confirmation: '',
+})
+
+const submit = () => {
+    form.post('/users', {
+        onSuccess: () => form.reset(),
+        preserveScroll: true,
+    })
+}
+</script>
+
+<template>
+    <form @submit.prevent="submit">
+        <div>
+            <label>Name</label>
+            <input v-model="form.name" type="text">
+            <div v-if="form.errors.name" class="text-red-500">
+                {{ form.errors.name }}
+            </div>
+        </div>
+        
+        <div>
+            <label>Email</label>
+            <input v-model="form.email" type="email">
+            <div v-if="form.errors.email" class="text-red-500">
+                {{ form.errors.email }}
+            </div>
+        </div>
+        
+        <div>
+            <label>Password</label>
+            <input v-model="form.password" type="password">
+        </div>
+        
+        <div>
+            <label>Confirm Password</label>
+            <input v-model="form.password_confirmation" type="password">
+        </div>
+        
+        <button type="submit" :disabled="form.processing">
+            <span v-if="form.processing">Creating...</span>
+            <span v-else>Create User</span>
+        </button>
+    </form>
+</template>
+```
+
+### 4.2 Progress Indicators
+
+```vue
+<script setup>
+import { router } from '@inertiajs/vue3'
+import { ref } from 'vue'
+
+const loading = ref(false)
+
+router.on('start', () => loading.value = true)
+router.on('finish', () => loading.value = false)
+</script>
+
+<template>
+    <div v-if="loading" class="fixed top-0 left-0 w-full h-1 bg-blue-500 animate-pulse">
+        Loading...
+    </div>
+</template>
+```
+
+## 5. Server-Side Rendering (SSR)
+
+### 5.1 Setup SSR
+
+```bash
+# Install Node.js SSR dependencies
+npm install @vue/server-renderer
+
+# Build untuk SSR
+npm run build
+```
+
+```javascript
+// resources/js/ssr.js
+import { createSSRApp, h } from 'vue'
+import { renderToString } from '@vue/server-renderer'
+import { createInertiaApp } from '@inertiajs/vue3'
+import createServer from '@inertiajs/vue3/server'
+
+createServer((page) => createInertiaApp({
+    page,
+    render: renderToString,
+    resolve: (name) => {
+        const pages = import.meta.glob('./Pages/**/*.vue', { eager: true })
+        return pages[`./Pages/${name}.vue`]
+    },
+    setup({ App, props, plugin }) {
+        return createSSRApp({
+            render: () => h(App, props),
+        }).use(plugin)
+    },
+}))
+```
+
+```json
+// package.json
+{
+    "scripts": {
+        "build": "vite build && vite build --ssr",
+        "ssr": "node bootstrap/ssr/ssr.js"
+    }
+}
+```
+
+```php
+<?php
+
+// routes/web.php
+Route::get('/users', function () {
+    return Inertia::render('Users/Index', [
+        'users' => User::paginate(),
+    ]);
+})->middleware('inertia:ssr'); // Enable SSR untuk route ini
+```
+
+## 6. Error Handling
+
+```vue
+<!-- resources/js/Pages/Errors/404.vue -->
+<script setup>
+import { Head } from '@inertiajs/vue3'
+
+defineProps({ status: Number })
+</script>
+
+<template>
+    <Head title="Page Not Found" />
+    
+    <div class="text-center">
+        <h1 class="text-4xl font-bold">{{ status }}</h1>
+        <p>Page not found.</p>
+        <Link href="/" class="text-blue-600">Go home</Link>
+    </div>
+</template>
+```
+
+```php
+<?php
+
+// app/Exceptions/Handler.php
+use Inertia\Inertia;
+
+public function register(): void
+{
+    $this->renderable(function (NotFoundHttpException $e, $request) {
+        if ($request->inertia()) {
+            return Inertia::render('Errors/404', ['status' => 404])
+                ->toResponse($request)
+                ->setStatusCode(404);
+        }
+    });
+}
+```
+
+## 7. Testing Inertia
+
+```php
+<?php
+
+// tests/Feature/InertiaTest.php
+use Inertia\Testing\AssertableInertia as Assert;
+
+class InertiaTest extends TestCase
+{
+    public function test_users_page_renders_correctly()
+    {
+        $response = $this->get('/users');
+        
+        $response->assertInertia(fn (Assert $page) => 
+            $page->component('Users/Index')
+                ->has('users.data', 10)
+                ->has('users.links')
+                ->where('filters.search', null)
+        );
+    }
+
+    public function test_user_can_be_created()
+    {
+        $response = $this->post('/users', [
+            'name' => 'John Doe',
+            'email' => 'john@example.com',
+            'password' => 'password',
+        ]);
+        
+        $response->assertRedirect('/users')
+            ->assertSessionHas('success');
+    }
+
+    public function test_404_renders_inertia_page()
+    {
+        $response = $this->get('/non-existent-page');
+        
+        $response->assertInertia(fn (Assert $page) => 
+            $page->component('Errors/404')
+        );
+    }
+}
+```
+
+## Kesimpulan
+
+Inertia.js menyediakan modern SPA development:
+- **No API needed**: Server-side routing dan data fetching
+- **Backend freedom**: Full access to Laravel features
+- **Frontend freedom**: Use Vue, React, atau Svelte
+- **SSR support**: SEO-friendly dan fast first load
+- **Seamless navigation**: SPA feel tanpa complexity
+
+Selanjutnya di **Sesi 64**, kita akan mempelajari Alpine.js Essentials.
+```

@@ -1,0 +1,540 @@
+---
+title: "Sesi 35: Database Optimization"
+description: "Menguasai teknik-teknik optimasi database untuk aplikasi skala besar, mulai dari debugging query hingga implementasi caching strategy yang efektif."
+category: "laravel"
+tags: ["laravel", "database", "performance"]
+order: 35
+---
+
+## Tujuan Pembelajaran
+
+Menguasai teknik-teknik optimasi database untuk aplikasi skala besar, mulai dari debugging query hingga implementasi caching strategy yang efektif.
+
+## 1. Query Debugging
+
+### 1.1 Basic Debugging Methods
+
+```php
+<?php
+
+// Melihat SQL query yang di-generate
+$query = User::where('status', 'active')->toSql();
+// Output: "select * from `users` where `status` = ?"
+
+// Dengan bindings
+$query = User::where('status', 'active');
+dd($query->toSql(), $query->getBindings());
+
+// Dump and die query
+User::where('id', 1)->dd();
+User::where('id', 1)->dump();
+
+// Listen to all queries
+DB::listen(function ($query) {
+    Log::info($query->sql, $query->bindings, $query->time);
+});
+```
+
+### 1.2 Query Log
+
+```php
+<?php
+
+// Enable query log
+DB::enableQueryLog();
+
+// Run queries
+User::all();
+Post::with('author')->get();
+Order::where('status', 'pending')->count();
+
+// Get all executed queries
+$queries = DB::getQueryLog();
+// Format: [['query' => '...', 'bindings' => [...], 'time' => 12.34], ...]
+
+// Clear log
+DB::flushQueryLog();
+
+// Disable log
+DB::disableQueryLog();
+```
+
+### 1.3 Debugbar & Telescope
+
+```php
+<?php
+
+// Install Laravel Debugbar (barryvdh/laravel-debugbar)
+// composer require barryvdh/laravel-debugbar --dev
+
+// Akses di view atau controller
+debug($users); // Dump ke debugbar
+
+// Telescope query watcher (sudah diinstall)
+// Akses via /telescope untuk melihat:
+// - Query execution time
+// - Slow queries (configurable threshold)
+// - Duplicate queries detection
+```
+
+### 1.4 Explain Query
+
+```php
+<?php
+
+// MySQL EXPLAIN
+$explanation = DB::select('EXPLAIN ' . User::where('email', 'test@example.com')->toSql());
+
+// Atau raw
+$plan = DB::select('EXPLAIN ANALYZE SELECT * FROM users WHERE email = ?', ['test@example.com']);
+
+// PostgreSQL EXPLAIN
+$plan = DB::select('EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) SELECT * FROM users');
+```
+
+## 2. Index Optimization Strategies
+
+### 2.1 Identifying Missing Indexes
+
+```php
+<?php
+
+// Query tanpa index (FULL TABLE SCAN)
+User::where('last_login_ip', '192.168.1.1')->get(); // ❌ Slow jika tabel besar
+
+// Solusi: Tambah index
+Schema::table('users', function (Blueprint $table) {
+    $table->index('last_login_ip');
+});
+```
+
+### 2.2 Composite Index Strategy
+
+```php
+<?php
+
+// ❌ Kurang optimal: separate indexes
+$table->index('status');
+$table->index('created_at');
+
+// ✅ Lebih baik: composite index untuk query range
+$table->index(['status', 'created_at']);
+
+// Query yang di-optimize:
+Order::where('status', 'pending')
+    ->where('created_at', '<', now()->subHours(24))
+    ->get();
+```
+
+> **tip**
+>
+**Cardinality & Index Order:**
+Urutan kolom dalam composite index sangat penting. Kolom dengan equality check (=) harus di awal, range queries (>, <, BETWEEN) di akhir.
+
+### 2.3 Covering Indexes
+
+```php
+<?php
+
+// Index yang mencakup semua kolom yang di-query (MySQL/PostgreSQL)
+Schema::table('orders', function (Blueprint $table) {
+    // INCLUDE untuk PostgreSQL, atau composite untuk MySQL
+    $table->index(['user_id', 'status', 'created_at']);
+    // Atau partial index untuk data spesifik
+    $table->index(['status', 'created_at'])->where('status', 'pending');
+});
+
+// Query yang hanya membaca dari index (INDEX ONLY SCAN)
+$orders = Order::select('id', 'user_id', 'status', 'created_at')
+    ->where('user_id', $userId)
+    ->where('status', 'completed')
+    ->orderBy('created_at', 'desc')
+    ->get();
+```
+
+### 2.4 Index Maintenance
+
+```php
+<?php
+
+// Analyze table setelah bulk insert (PostgreSQL/MySQL)
+DB::statement('ANALYZE orders');
+
+// Rebuild index (MySQL)
+DB::statement('OPTIMIZE TABLE orders');
+
+// Reindex (PostgreSQL)
+DB::statement('REINDEX INDEX CONCURRENTLY idx_orders_status');
+
+// Monitor index usage (PostgreSQL)
+$usage = DB::select("
+    SELECT schemaname, tablename, attname, n_tup_read, n_tup_fetch
+    FROM pg_stats
+    WHERE tablename = 'orders'
+");
+```
+
+## 3. Chunking Large Results
+
+### 3.1 chunk() vs chunkById()
+
+```php
+<?php
+
+// ❌ chunk() - bisa skip/miss data jika ada update/delete selama processing
+User::where('is_active', false)->chunk(1000, function ($users) {
+    foreach ($users as $user) {
+        $user->delete(); // Dangerous! IDs shift, bisa skip records
+    }
+});
+
+// ✅ chunkById() - aman untuk update/delete, order by ID
+User::where('is_active', false)->chunkById(1000, function ($users) {
+    foreach ($users as $user) {
+        $user->delete(); // Safe, uses ID range
+    }
+});
+
+// Custom ID column
+Order::chunkById(1000, function ($orders) {
+    // Process
+}, 'order_id'); // Custom column name
+```
+
+### 3.2 Lazy Collections untuk Memory Efficiency
+
+```php
+<?php
+
+// cursor() - Generator, satu per satu
+foreach (User::cursor() as $user) {
+    ProcessUser::dispatch($user);
+}
+
+// lazy() - LazyCollection dengan chunking internal
+User::lazy()->each(function ($user) {
+    ProcessUser::dispatch($user);
+});
+
+// lazyById() - Sama seperti chunkById tapi lazy
+User::lazyById()->each(function ($user) {
+    // Process
+});
+
+// Dengan chunk size custom
+User::lazy(1000)->each(function ($user) {
+    // Fetch 1000 per query
+});
+```
+
+### 3.3 Batch Processing Patterns
+
+```php
+<?php
+
+// Update massal dengan chunk
+User::where('last_login_at', '<', now()->subYear())
+    ->chunkById(1000, function ($users) {
+        $ids = $users->pluck('id');
+        
+        // Single query update (lebih cepat dari individual saves)
+        User::whereIn('id', $ids)->update(['status' => 'inactive']);
+    });
+
+// Upsert batch
+$records = $users->map(fn ($user) => [
+    'email' => $user['email'],
+    'name' => $user['name'],
+    'updated_at' => now(),
+])->toArray();
+
+User::upsert($records, ['email'], ['name', 'updated_at']);
+
+// Insert batch dengan chunk
+$chunks = $largeDataset->chunk(1000);
+foreach ($chunks as $chunk) {
+    User::insert($chunk->toArray());
+}
+```
+
+## 4. Pagination Strategies
+
+### 4.1 Offset vs Cursor Pagination
+
+```php
+<?php
+
+// ❌ Offset pagination - lambat di page besar
+User::paginate(20); // LIMIT 20 OFFSET 10000 = scan 10020 rows
+
+// ✅ Cursor pagination - konsisten, cepat
+User::orderBy('id')->cursorPaginate(20);
+// WHERE id > last_seen_id LIMIT 20
+
+// Cursor dengan multiple columns
+User::orderBy('created_at', 'desc')
+    ->orderBy('id', 'desc')
+    ->cursorPaginate(20);
+```
+
+> **caution**
+>
+**Cursor Pagination Limitations:**
+- Tidak bisa ke page sembarang (hanya next/prev)
+- Tidak bisa sort dengan null values di kolom non-unique
+- Lebih cocok untuk infinite scroll daripada numbered pagination
+
+### 4.2 Fast Pagination untuk Offset
+
+```php
+<?php
+
+// Teknik "Deferred Join" untuk offset pagination cepat
+$page = 5;
+$perPage = 20;
+$offset = ($page - 1) * $perPage;
+
+// Subquery untuk dapatkan IDs saja
+$ids = User::select('id')
+    ->orderBy('created_at', 'desc')
+    ->offset($offset)
+    ->limit($perPage)
+    ->pluck('id');
+
+// Query lengkap hanya untuk IDs tersebut
+$users = User::whereIn('id', $ids)
+    ->orderBy('created_at', 'desc')
+    ->get();
+```
+
+### 4.3 Simple Pagination untuk Performance
+
+```php
+<?php
+
+// simplePaginate tidak hitung total (lebih cepat)
+User::simplePaginate(20); // Hanya prev/next, tanpa total pages
+
+// Paginate dengan columns spesifik
+User::select('id', 'name', 'email')->paginate(20);
+
+// Paginate dengan relasi
+User::with(['profile:id,user_id,avatar'])->paginate(20);
+```
+
+## 5. Database Query Caching
+
+### 5.1 Query Result Caching
+
+```php
+<?php
+
+// Cache query result
+$users = User::remember(3600)->get(); // Cache 1 jam
+
+// Cache dengan tag
+$users = User::cacheTags(['users', 'list'])->remember(3600)->get();
+
+// Cache forever
+$settings = Setting::rememberForever()->get();
+
+// Forget cache
+User::flushCache();
+
+// Atau manual
+Cache::tags(['users'])->flush();
+```
+
+### 5.2 Cache Lock untuk Race Condition
+
+```php
+<?php
+
+// Cache lock untuk prevent cache stampede
+$value = Cache::lock('report-generation', 10)->get(function () {
+    // Hanya satu proses yang bisa eksekusi ini
+    return Report::generate();
+});
+
+// Atau dengan block
+$value = Cache::lock('report-generation', 30)->block(5, function () {
+    // Tunggu max 5 detik untuk acquire lock
+    return Report::generate();
+});
+```
+
+### 5.3 Cache Warming Strategy
+
+```php
+<?php
+
+// Command untuk warm cache
+class WarmCacheCommand extends Command
+{
+    public function handle()
+    {
+        // Warm popular queries
+        $popularUsers = User::withCount('posts')
+            ->orderBy('posts_count', 'desc')
+            ->take(100)
+            ->remember(3600)
+            ->get();
+
+        // Warm dengan queue
+        WarmCacheJob::dispatch()->onQueue('cache-warming');
+    }
+}
+```
+
+## 6. Advanced Optimization Techniques
+
+### 6.1 Select Specific Columns
+
+```php
+<?php
+
+// ❌ Select *
+User::all();
+
+// ✅ Select spesifik
+User::select('id', 'name', 'email')->get();
+
+// Untuk relasi, selalu include foreign key
+Post::with(['author:id,name,email'])->get(); // ✅ Include 'id'
+
+// Exclude kolom besar (JSON/text)
+User::select(['*'])->selectRaw('metadata as _metadata')->get();
+```
+
+### 6.2 Eager Loading Optimization
+
+```php
+<?php
+
+// ❌ N+1 problem
+$posts = Post::all();
+foreach ($posts as $post) {
+    echo $post->author->name; // Query per post!
+}
+
+// ✅ Eager load
+$posts = Post::with('author:id,name')->get();
+
+// Nested eager load dengan constraints
+$posts = Post::with(['comments' => function ($query) {
+    $query->latest()->limit(5);
+}, 'author.profile'])->get();
+
+// Lazy eager load dengan filter
+$posts = Post::all();
+$posts->load(['comments' => fn ($q) => $q->where('is_approved', true)]);
+```
+
+### 6.3 Read/Write Splitting
+
+```php
+<?php
+
+// Config database.php
+'connections' => [
+    'mysql' => [
+        'read' => [
+            'host' => ['192.168.1.1', '192.168.1.2'],
+        ],
+        'write' => [
+            'host' => ['192.168.1.3'],
+        ],
+        'sticky' => true, // Read setelah write ke write connection
+    ],
+],
+
+// Otomatis: read queries ke replica, write ke primary
+$users = User::all(); // Read replica
+User::create([...]); // Write primary
+```
+
+### 6.4 Connection Pooling & Persistent
+
+```php
+<?php
+
+// Config untuk high concurrency
+'connections' => [
+    'mysql' => [
+        'options' => [
+            PDO::ATTR_PERSISTENT => true, // Persistent connections
+            PDO::ATTR_EMULATE_PREPARES => false, // True prepared statements
+        ],
+    ],
+],
+```
+
+## 7. Monitoring & Profiling
+
+### 7.1 Slow Query Log
+
+```php
+<?php
+
+// Enable slow query log (MySQL)
+DB::statement("SET GLOBAL slow_query_log = 'ON'");
+DB::statement("SET GLOBAL long_query_time = 1"); // Log query > 1 detik
+
+// Programmatic check
+DB::listen(function ($query) {
+    if ($query->time > 1000) { // > 1 detik
+        Log::warning('Slow query detected', [
+            'sql' => $query->sql,
+            'time' => $query->time,
+            'trace' => debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 10),
+        ]);
+    }
+});
+```
+
+### 7.2 Query Performance Dashboard
+
+```php
+<?php
+
+// Middleware untuk track query performance
+class QueryPerformanceMiddleware
+{
+    public function handle($request, $next)
+    {
+        $start = microtime(true);
+        DB::enableQueryLog();
+        
+        $response = $next($request);
+        
+        $queries = DB::getQueryLog();
+        $totalTime = array_sum(array_column($queries, 'time'));
+        
+        $response->headers->set('X-Query-Count', count($queries));
+        $response->headers->set('X-Query-Time', round($totalTime, 2));
+        
+        if ($totalTime > 1000) {
+            Log::warning('Slow request', [
+                'url' => $request->url(),
+                'queries' => count($queries),
+                'time' => $totalTime,
+            ]);
+        }
+        
+        return $response;
+    }
+}
+```
+
+## Kesimpulan
+
+Database optimization adalah continuous process:
+- **Debugging tools** (toSql, EXPLAIN, Telescope) untuk identify bottlenecks
+- **Strategic indexing** dengan composite dan covering indexes
+- **Chunking & cursor** untuk memory-efficient large dataset processing
+- **Cursor pagination** untuk infinite scroll, **deferred join** untuk numbered pagination
+- **Query caching** dengan tags dan cache warming
+- **Read/write splitting** untuk scale horizontally
+
+Selanjutnya di **Sesi 36**, kita akan memasuki Bagian IV: Authentication Architecture dengan Guards, Providers, dan Security Hardening.
+```

@@ -1,0 +1,672 @@
+---
+title: "Sesi 5: Routing System"
+description: "Routing adalah \"jalan raya\" aplikasi web Anda. Bayangkan Laravel sebagai kota besar—routing adalah papan penunjuk yang mengarahkan pengunjung ke tujua..."
+category: "laravel"
+tags: ["laravel", "routing"]
+order: 5
+---
+
+## 5.1 Basic Routing: GET, POST, PUT, PATCH, DELETE
+
+Routing adalah "jalan raya" aplikasi web Anda. Bayangkan Laravel sebagai kota besar—routing adalah papan penunjuk yang mengarahkan pengunjung ke tujuan yang benar.
+
+### 5.1.1 HTTP Methods dan Fungsinya
+
+| Method | Fungsi | Analogi |
+|--------|--------|---------|
+| **GET** | Mengambil data | Membaca buku di perpustakaan |
+| **POST** | Membuat data baru | Menulis buku baru |
+| **PUT** | Mengupdate seluruh data | Mengganti buku lama dengan yang baru |
+| **PATCH** | Mengupdate sebagian data | Mengedit beberapa halaman buku |
+| **DELETE** | Menghapus data | Membuang buku |
+
+### 5.1.2 Definisi Route Dasar
+
+Semua route didefinisikan di folder `routes/`:
+
+<div class="tabs-container">
+  
+### web.php
+
+```php
+<?php
+
+use Illuminate\Support\Facades\Route;
+
+// Route GET sederhana
+Route::get('/', function () {
+    return 'Selamat datang di Laravel!';
+});
+
+// Route dengan view
+Route::get('/welcome', function () {
+    return view('welcome');
+});
+
+// Route POST untuk form submission
+Route::post('/users', function () {
+    // Logic menyimpan user baru
+    return 'User berhasil dibuat!';
+});
+
+// Route PUT untuk update
+Route::put('/users/{id}', function ($id) {
+    return "User {$id} diupdate sepenuhnya";
+});
+
+// Route PATCH untuk partial update
+Route::patch('/users/{id}', function ($id) {
+    return "User {$id} diupdate sebagian";
+});
+
+// Route DELETE untuk menghapus
+Route::delete('/users/{id}', function ($id) {
+    return "User {$id} dihapus";
+});
+```
+  
+
+  
+  
+### api.php
+
+```php
+<?php
+
+use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\Api\UserController;
+
+// API routes otomatis memiliki prefix /api
+Route::get('/users', [UserController::class, 'index']);
+Route::post('/users', [UserController::class, 'store']);
+Route::get('/users/{user}', [UserController::class, 'show']);
+Route::put('/users/{user}', [UserController::class, 'update']);
+Route::delete('/users/{user}', [UserController::class, 'destroy']);
+```
+  
+
+</div>
+
+> **tip**
+>
+  Route di `api.php` secara otomatis memiliki prefix `/api` dan middleware `api` yang mengatur JSON response dan rate limiting.
+
+### 5.1.3 Route dengan Controller
+
+Lebih baik menggunakan Controller daripada closure untuk logic yang kompleks:
+
+```php
+<?php
+
+use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\PostController;
+
+// Route ke method controller
+Route::get('/posts', [PostController::class, 'index']);
+Route::get('/posts/create', [PostController::class, 'create']);
+Route::post('/posts', [PostController::class, 'store']);
+Route::get('/posts/{post}', [PostController::class, 'show']);
+Route::get('/posts/{post}/edit', [PostController::class, 'edit']);
+Route::put('/posts/{post}', [PostController::class, 'update']);
+Route::delete('/posts/{post}', [PostController::class, 'destroy']);
+```
+
+---
+
+## 5.2 Route Parameters, Constraints, dan Patterns
+
+### 5.2.1 Required Parameters
+
+Parameter yang wajib disediakan dalam URL:
+
+```php
+<?php
+
+// Parameter wajib {id}
+Route::get('/users/{id}', function ($id) {
+    return "Detail user dengan ID: {$id}";
+});
+
+// Multiple parameters
+Route::get('/posts/{postId}/comments/{commentId}', function ($postId, $commentId) {
+    return "Post: {$postId}, Comment: {$commentId}";
+});
+```
+
+> **caution**
+>
+  Jika parameter tidak disediakan, Laravel akan melempar 404 Not Found.
+
+### 5.2.2 Optional Parameters
+
+Parameter yang boleh tidak ada:
+
+```php
+<?php
+
+// Parameter opsional dengan tanda ?
+Route::get('/users/{name?}', function ($name = 'Guest') {
+    return "Hello, {$name}!";
+});
+
+// URL yang valid:
+// /users        → Hello, Guest!
+// /users/John   → Hello, John!
+```
+
+### 5.2.3 Regular Expression Constraints
+
+Batasi format parameter dengan regex:
+
+```php
+<?php
+
+// Hanya menerima angka
+Route::get('/users/{id}', function ($id) {
+    return "User ID: {$id}";
+})->where('id', '[0-9]+');
+
+// Hanya menerima huruf
+Route::get('/search/{query}', function ($query) {
+    return "Searching for: {$query}";
+})->where('query', '[A-Za-z]+');
+
+// Format UUID
+Route::get('/files/{uuid}', function ($uuid) {
+    return "File UUID: {$uuid}";
+})->where('uuid', '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}');
+
+// Format slug (huruf, angka, dash)
+Route::get('/articles/{slug}', function ($slug) {
+    return "Article: {$slug}";
+})->where('slug', '[a-z0-9-]+');
+```
+
+### 5.2.4 Global Pattern Constraints
+
+Definisi pattern yang berlaku untuk semua route di `boot()` method `RouteServiceProvider`:
+
+```php
+<?php
+
+namespace App\Providers;
+
+use Illuminate\Support\Facades\Route;
+use Illuminate\Foundation\Support\Providers\RouteServiceProvider as ServiceProvider;
+
+class RouteServiceProvider extends ServiceProvider
+{
+    public function boot(): void
+    {
+        // Pattern global untuk parameter 'id'
+        Route::pattern('id', '[0-9]+');
+        
+        // Pattern global untuk parameter 'slug'
+        Route::pattern('slug', '[a-z0-9-]+');
+        
+        parent::boot();
+    }
+}
+```
+
+Sekarang semua route dengan parameter `id` otomatis hanya menerima angka:
+
+```php
+<?php
+
+// Tidak perlu ->where() lagi karena sudah global
+Route::get('/users/{id}', function ($id) {
+    return "User ID: {$id}"; // $id pasti angka
+});
+
+Route::get('/posts/{id}', function ($id) {
+    return "Post ID: {$id}"; // $id pasti angka
+});
+```
+
+### 5.2.5 Enum Binding (Laravel 9+)
+
+Binding langsung ke PHP Enum:
+
+```php
+<?php
+
+namespace App\Enums;
+
+enum UserStatus: string
+{
+    case ACTIVE = 'active';
+    case INACTIVE = 'inactive';
+    case BANNED = 'banned';
+}
+```
+
+```php
+<?php
+
+use App\Enums\UserStatus;
+use Illuminate\Support\Facades\Route;
+
+Route::get('/users/{status}', function (UserStatus $status) {
+    return "Users with status: {$status->value}";
+    
+    // /users/active    → status: active
+    // /users/inactive  → status: inactive
+    // /users/unknown   → 404 Not Found
+});
+```
+
+---
+
+## 5.3 Named Routes dan URL Generation
+
+### 5.3.1 Memberi Nama Route
+
+Named routes memudahkan pembuatan URL dan redirect:
+
+```php
+<?php
+
+use Illuminate\Support\Facades\Route;
+
+// Route dengan nama
+Route::get('/dashboard', function () {
+    return view('dashboard');
+})->name('dashboard');
+
+// Route parameter dengan nama
+Route::get('/users/{id}/profile', function ($id) {
+    return view('profile', ['id' => $id]);
+})->name('user.profile');
+
+// Route controller dengan nama
+Route::get('/posts/{post}', [PostController::class, 'show'])
+    ->name('posts.show');
+```
+
+### 5.3.2 Generate URL dengan Helper
+
+```php
+<?php
+
+// Di controller atau view
+$url = route('dashboard'); 
+// Result: http://example.com/dashboard
+
+$url = route('user.profile', ['id' => 123]);
+// Result: http://example.com/users/123/profile
+
+$url = route('posts.show', ['post' => 456]);
+// Result: http://example.com/posts/456
+
+// Dengan query parameters tambahan
+$url = route('user.profile', ['id' => 123, 'tab' => 'settings']);
+// Result: http://example.com/users/123/profile?tab=settings
+```
+
+### 5.3.3 Redirect ke Named Route
+
+```php
+<?php
+
+use Illuminate\Support\Facades\Route;
+
+Route::get('/old-dashboard', function () {
+    // Redirect ke named route
+    return redirect()->route('dashboard');
+});
+
+// Atau dengan parameter
+Route::get('/old-profile/{id}', function ($id) {
+    return redirect()->route('user.profile', ['id' => $id]);
+});
+```
+
+### 5.3.4 Current Route Detection
+
+```php
+<?php
+
+// Cek apakah current route adalah nama tertentu
+if (request()->routeIs('dashboard')) {
+    // Active menu styling, dll
+}
+
+// Cek multiple routes
+if (request()->routeIs(['user.*', 'admin.*'])) {
+    // Berada di area user atau admin
+}
+
+// Di Blade template
+@if(request()->routeIs('dashboard'))
+    <li class="active">Dashboard</li>
+@endif
+```
+
+### 5.3.5 URL Helper Tambahan
+
+```php
+<?php
+
+// Base URL
+$url = url('/');           // http://example.com
+$url = url('users/123');   // http://example.com/users/123
+
+// Secure URL (HTTPS)
+$url = secure_url('users/123');
+
+// Asset URL
+$url = asset('images/logo.png');        // http://example.com/images/logo.png
+$url = asset('css/app.css', true);      // Force HTTPS
+
+// Route URL dengan signed URL (tamper-proof)
+$url = URL::signedRoute('unsubscribe', ['user' => 123]);
+// URL dengan signature hash untuk keamanan
+
+// Temporary signed URL (expired)
+$url = URL::temporarySignedRoute(
+    'unsubscribe', 
+    now()->addHours(24), 
+    ['user' => 123]
+);
+```
+
+---
+
+## 5.4 Route Groups: Prefix, Middleware, Namespace, Controllers
+
+### 5.4.1 Group dengan Middleware
+
+Terapkan middleware ke grup route:
+
+```php
+<?php
+
+use Illuminate\Support\Facades\Route;
+
+// Semua route dalam group memerlukan authentication
+Route::middleware(['auth'])->group(function () {
+    
+    Route::get('/dashboard', function () {
+        return view('dashboard');
+    })->name('dashboard');
+    
+    Route::get('/settings', function () {
+        return view('settings');
+    })->name('settings');
+    
+    Route::get('/profile', [ProfileController::class, 'index'])
+        ->name('profile');
+});
+
+// Multiple middleware
+Route::middleware(['auth', 'verified', 'role:admin'])->group(function () {
+    Route::get('/admin', [AdminController::class, 'index']);
+    Route::get('/admin/users', [AdminController::class, 'users']);
+});
+```
+
+### 5.4.2 Group dengan Prefix
+
+Tambahkan URL prefix ke grup route:
+
+```php
+<?php
+
+// Semua route memiliki prefix /admin
+Route::prefix('admin')->group(function () {
+    
+    Route::get('/dashboard', function () {
+        return 'Admin Dashboard';
+    }); // URL: /admin/dashboard
+    
+    Route::get('/users', function () {
+        return 'Manage Users';
+    }); // URL: /admin/users
+    
+    Route::get('/settings', function () {
+        return 'Admin Settings';
+    }); // URL: /admin/settings
+});
+
+// Prefix dengan parameter
+Route::prefix('api/v1')->group(function () {
+    Route::get('/users', [Api\UserController::class, 'index']); 
+    // URL: /api/v1/users
+    
+    Route::get('/posts', [Api\PostController::class, 'index']);
+    // URL: /api/v1/posts
+});
+```
+
+### 5.4.3 Group dengan Namespace
+
+Atur namespace controller untuk grup:
+
+```php
+<?php
+
+// Semua controller di namespace App\Http\Controllers\Admin
+Route::namespace('Admin')->group(function () {
+    
+    Route::get('/dashboard', 'DashboardController@index');
+    // Mengarah ke App\Http\Controllers\Admin\DashboardController
+    
+    Route::get('/users', 'UserController@index');
+    // Mengarah ke App\Http\Controllers\Admin\UserController
+});
+
+// Laravel 8+ dengan class syntax
+use App\Http\Controllers\Admin\DashboardController;
+use App\Http\Controllers\Admin\UserController;
+
+Route::prefix('admin')->group(function () {
+    Route::get('/dashboard', [DashboardController::class, 'index']);
+    Route::get('/users', [UserController::class, 'index']);
+});
+```
+
+### 5.4.4 Group dengan Name Prefix
+
+Prefix untuk named routes:
+
+```php
+<?php
+
+Route::name('admin.')->prefix('admin')->group(function () {
+    
+    Route::get('/dashboard', function () {
+        return view('admin.dashboard');
+    })->name('dashboard'); 
+    // Name: admin.dashboard
+    // URL: /admin/dashboard
+    
+    Route::get('/users', function () {
+        return view('admin.users');
+    })->name('users');
+    // Name: admin.users
+    // URL: /admin/users
+});
+
+// Penggunaan
+$url = route('admin.dashboard'); // /admin/dashboard
+$url = route('admin.users');     // /admin/users
+```
+
+### 5.4.5 Group dengan Controller (Laravel 10+)
+
+Semua route dalam group menggunakan controller yang sama:
+
+```php
+<?php
+
+use App\Http\Controllers\PhotoController;
+
+Route::controller(PhotoController::class)->group(function () {
+    
+    Route::get('/photos', 'index')->name('photos.index');
+    Route::get('/photos/create', 'create')->name('photos.create');
+    Route::post('/photos', 'store')->name('photos.store');
+    Route::get('/photos/{photo}', 'show')->name('photos.show');
+    Route::get('/photos/{photo}/edit', 'edit')->name('photos.edit');
+    Route::put('/photos/{photo}', 'update')->name('photos.update');
+    Route::delete('/photos/{photo}', 'destroy')->name('photos.destroy');
+});
+```
+
+### 5.4.6 Kombinasi Lengkap Route Group
+
+```php
+<?php
+
+use App\Http\Controllers\Admin\UserController;
+use App\Http\Controllers\Admin\PostController;
+
+Route::middleware(['auth', 'role:admin'])
+    ->prefix('admin')
+    ->name('admin.')
+    ->group(function () {
+        
+        // Dashboard
+        Route::get('/dashboard', function () {
+            return view('admin.dashboard');
+        })->name('dashboard');
+        
+        // User Management
+        Route::controller(UserController::class)->group(function () {
+            Route::get('/users', 'index')->name('users.index');
+            Route::post('/users', 'store')->name('users.store');
+            Route::get('/users/{user}/edit', 'edit')->name('users.edit');
+            Route::put('/users/{user}', 'update')->name('users.update');
+            Route::delete('/users/{user}', 'destroy')->name('users.destroy');
+        });
+        
+        // Post Management
+        Route::controller(PostController::class)->prefix('posts')->group(function () {
+            Route::get('/', 'index')->name('posts.index');
+            Route::get('/create', 'create')->name('posts.create');
+            Route::post('/', 'store')->name('posts.store');
+        });
+    });
+
+// Hasil URL dan Name:
+// GET  /admin/dashboard       → admin.dashboard
+// GET  /admin/users           → admin.users.index
+// POST /admin/users           → admin.users.store
+// GET  /admin/users/1/edit    → admin.users.edit
+// GET  /admin/posts           → admin.posts.index
+// GET  /admin/posts/create    → admin.posts.create
+```
+
+---
+
+## 5.5 Route Caching untuk Production
+
+### 5.5.1 Mengapa Route Caching?
+
+> **tip**
+>
+  Route caching mengubah file route PHP menjadi serialized array yang di-cache, mempercepat loading aplikasi signifikan.
+
+- **Tanpa cache**: Laravel mem-parsing file route setiap request
+- **Dengan cache**: Route langsung dimuat dari memory
+- **Improvement**: Bisa 5-10x lebih cepat untuk aplikasi dengan banyak route
+
+### 5.5.2 Membuat Route Cache
+
+```bash
+# Cache semua route
+php artisan route:cache
+
+# Output:
+# INFO  Routes cached successfully.
+```
+
+File cache tersimpan di `bootstrap/cache/routes.php`.
+
+### 5.5.3 Clear Route Cache
+
+```bash
+# Hapus cache (saat development atau deploy baru)
+php artisan route:clear
+
+# Atau cache ulang
+php artisan route:cache
+```
+
+### 5.5.4 Batasan Route Cache
+
+> **caution**
+>
+  Route caching hanya works dengan route yang menggunakan controller atau string action. Closure-based routes tidak bisa di-cache!
+
+```php
+<?php
+
+// ❌ JANGAN: Closure-based routes tidak bisa di-cache
+Route::get('/hello', function () {
+    return 'Hello World';
+});
+
+// ✅ DO: Gunakan controller untuk route cache
+Route::get('/hello', [HelloController::class, 'index']);
+
+// Atau invokable controller
+Route::get('/hello', HelloController::class);
+```
+
+### 5.5.5 Route Cache di Deployment
+
+1. **Sebelum deploy**: Clear cache lama
+   ```bash
+   php artisan route:clear
+   ```
+
+2. **Deploy kode baru**: Upload file baru
+
+3. **Setelah deploy**: Cache ulang
+   ```bash
+   php artisan route:cache
+   ```
+
+### 5.5.6 Cek Route yang Terdaftar
+
+```bash
+# List semua route
+php artisan route:list
+
+# Filter dengan nama
+php artisan route:list --name=admin
+
+# Filter dengan method
+php artisan route:list --method=POST
+
+# Hanya route yang ter-cache
+php artisan route:list --cached
+
+# Format JSON
+php artisan route:list --json
+```
+
+Output contoh:
+```
+  GET|HEAD   / ........................................... 
+  GET|HEAD   api/user .................................... 
+  GET|HEAD   dashboard ........................ dashboard › DashboardController@index
+  GET|HEAD   admin/users ...................... admin.users.index › Admin\UserController@index
+  POST       admin/users ...................... admin.users.store › Admin\UserController@store
+```
+
+---
+
+## 5.6 Kesimpulan
+
+Sistem routing Laravel adalah salah satu yang paling ekspresif dan fleksibel di dunia PHP. Dari route sederhana hingga grup kompleks dengan middleware, prefix, dan namespace—semua didesain untuk readability dan maintainability.
+
+**Best Practices:**
+- Gunakan **named routes** untuk semua route yang akan di-reference di code
+- Manfaatkan **route groups** untuk mengurangi duplikasi
+- Selalu gunakan **controllers** daripada closures untuk production (agar bisa di-cache)
+- Terapkan **route model binding** (dibahas di sesi berikutnya) untuk parameter yang berhubungan dengan model
+- **Cache route** di production untuk performa optimal
+```

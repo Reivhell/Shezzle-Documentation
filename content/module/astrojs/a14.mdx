@@ -1,0 +1,598 @@
+---
+title: "Sesi 14: Middleware & Server-Side Features"
+description: "Middleware adalah kode yang berjalan di server sebelum request mencapai halaman atau API route. Middleware memungkinkan kamu memanipulasi request/resp..."
+category: "astrojs"
+tags: ["astrojs", "middleware"]
+order: 14
+---
+
+# Sesi 14: Middleware & Server-Side Features
+
+## 14.1 Middleware Overview
+
+Middleware adalah kode yang berjalan di server sebelum request mencapai halaman atau API route. Middleware memungkinkan kamu memanipulasi request/response, autentikasi, logging, dan lainnya secara terpusat.
+
+### Analogi Sederhana:
+
+> Bayangkan middleware seperti **security checkpoint di bandara**. Setiap penumpang (request) harus melewati pemeriksaan sebelum masuk ke pesawat (page/API). Pemeriksaan bisa berupa verifikasi identitas (auth), pemeriksaan barang bawaan (validation), atau pencatatan data (logging).
+
+### Arsitektur Middleware:
+
+```
+Request → Middleware 1 → Middleware 2 → ... → Page/API → Response
+              ↓               ↓
+         (modify req)    (check auth)
+              ↓               ↓
+         (add headers)   (redirect if fail)
+```
+
+### Konfigurasi Middleware:
+
+```javascript
+// src/middleware.js (atau .ts)
+import { defineMiddleware } from 'astro:middleware';
+
+// Sequence: urutan execution middleware
+export const onRequest = defineMiddleware((context, next) => {
+  console.log('Request received:', context.url.pathname);
+  
+  // Lanjut ke middleware berikutnya atau page
+  return next();
+});
+```
+
+---
+
+## 14.2 Creating Middleware
+
+Membuat middleware dengan berbagai fungsi.
+
+### Basic Middleware:
+
+```javascript
+// src/middleware.js
+import { defineMiddleware } from 'astro:middleware';
+
+export const onRequest = defineMiddleware(async (context, next) => {
+  // Context berisi:
+  // - context.url: URL object
+  // - context.request: Request object
+  // - context.cookies: Cookie utilities
+  // - context.locals: Data sharing ke page
+  // - context.redirect(): Redirect helper
+  
+  console.log(`[${new Date().toISOString()}] ${context.request.method} ${context.url.pathname}`);
+  
+  // Tambahkan data ke locals (tersedia di page via Astro.locals)
+  context.locals.requestTime = Date.now();
+  
+  // Lanjut ke handler berikutnya
+  const response = await next();
+  
+  // Modifikasi response setelah page render
+  response.headers.set('X-Response-Time', String(Date.now() - context.locals.requestTime));
+  
+  return response;
+});
+```
+
+### Penggunaan di Page:
+
+```astro
+---
+// src/pages/test.astro
+// Akses data dari middleware
+const requestTime = Astro.locals.requestTime;
+const duration = Date.now() - requestTime;
+---
+
+<p>Request processed in {duration}ms</p>
+<p>User agent: {Astro.request.headers.get('user-agent')}</p>
+```
+
+### Conditional Middleware:
+
+```javascript
+// src/middleware.js
+import { defineMiddleware } from 'astro:middleware';
+
+export const onRequest = defineMiddleware(async (context, next) => {
+  // Skip middleware untuk static assets
+  if (context.url.pathname.match(/\.(jpg|png|css|js|svg)$/)) {
+    return next();
+  }
+  
+  // Hanya run untuk routes tertentu
+  if (context.url.pathname.startsWith('/api/')) {
+    // API-specific logic
+    context.locals.isApiRequest = true;
+  }
+  
+  return next();
+});
+```
+
+---
+
+## 14.3 Middleware Chain
+
+Menggabungkan multiple middleware dengan sequence.
+
+### File-based Middleware:
+
+```
+src/
+├── middleware/
+│   ├── 01_logging.js      # Run first
+│   ├── 02_auth.js         # Run second
+│   └── 03_i18n.js         # Run third
+└── pages/
+```
+
+### Programmatic Sequence:
+
+```javascript
+// src/middleware.js
+import { sequence } from 'astro:middleware';
+import { loggingMiddleware } from './middleware/logging';
+import { authMiddleware } from './middleware/auth';
+import { i18nMiddleware } from './middleware/i18n';
+
+export const onRequest = sequence(
+  loggingMiddleware,
+  authMiddleware,
+  i18nMiddleware
+);
+```
+
+### Individual Middleware Files:
+
+```javascript
+// src/middleware/logging.js
+import { defineMiddleware } from 'astro:middleware';
+
+export const loggingMiddleware = defineMiddleware(async (context, next) => {
+  const start = Date.now();
+  
+  console.log(`→ ${context.request.method} ${context.url.pathname}`);
+  
+  const response = await next();
+  
+  const duration = Date.now() - start;
+  console.log(`← ${response.status} in ${duration}ms`);
+  
+  return response;
+});
+```
+
+```javascript
+// src/middleware/auth.js
+import { defineMiddleware } from 'astro:middleware';
+
+export const authMiddleware = defineMiddleware(async (context, next) => {
+  // Public paths yang tidak perlu auth
+  const publicPaths = ['/login', '/register', '/api/auth'];
+  if (publicPaths.some(path => context.url.pathname.startsWith(path))) {
+    return next();
+  }
+  
+  // Check auth token
+  const token = context.cookies.get('auth-token')?.value;
+  
+  if (!token) {
+    // Redirect ke login jika bukan API request
+    if (!context.url.pathname.startsWith('/api/')) {
+      return context.redirect('/login?redirect=' + encodeURIComponent(context.url.pathname));
+    }
+    
+    // Return 401 untuk API
+    return new Response('Unauthorized', { status: 401 });
+  }
+  
+  // Verify token (simplified)
+  try {
+    const user = await verifyToken(token);
+    context.locals.user = user;
+  } catch (error) {
+    context.cookies.delete('auth-token');
+    return context.redirect('/login');
+  }
+  
+  return next();
+});
+```
+
+```javascript
+// src/middleware/i18n.js
+import { defineMiddleware } from 'astro:middleware';
+
+const supportedLocales = ['id', 'en'];
+const defaultLocale = 'id';
+
+export const i18nMiddleware = defineMiddleware(async (context, next) => {
+  // Detect locale dari URL, cookie, atau header
+  const urlLocale = context.url.pathname.split('/')[1];
+  const cookieLocale = context.cookies.get('locale')?.value;
+  const headerLocale = context.request.headers.get('accept-language')?.split(',')[0].slice(0, 2);
+  
+  const locale = supportedLocales.includes(urlLocale) 
+    ? urlLocale 
+    : supportedLocales.includes(cookieLocale)
+      ? cookieLocale
+      : supportedLocales.includes(headerLocale)
+        ? headerLocale
+        : defaultLocale;
+  
+  // Set locale di locals
+  context.locals.locale = locale;
+  
+  // Rewrite URL jika perlu
+  if (!supportedLocales.includes(urlLocale)) {
+    const newPath = `/${locale}${context.url.pathname}`;
+    return context.rewrite(newPath);
+  }
+  
+  return next();
+});
+```
+
+---
+
+## 14.4 Route Guards
+
+Melindungi routes berdasarkan kondisi tertentu.
+
+### Authentication Guard:
+
+```javascript
+// src/middleware.js
+import { defineMiddleware } from 'astro:middleware';
+
+const PROTECTED_ROUTES = ['/dashboard', '/profile', '/settings'];
+const ADMIN_ROUTES = ['/admin', '/api/admin'];
+
+export const onRequest = defineMiddleware(async (context, next) => {
+  const { pathname } = context.url;
+  
+  // Check protected routes
+  const isProtected = PROTECTED_ROUTES.some(route => pathname.startsWith(route));
+  const isAdmin = ADMIN_ROUTES.some(route => pathname.startsWith(route));
+  
+  if (isProtected || isAdmin) {
+    const session = context.cookies.get('session')?.value;
+    
+    if (!session) {
+      return context.redirect(`/login?redirect=${encodeURIComponent(pathname)}`);
+    }
+    
+    // Verify session
+    const user = await getUserFromSession(session);
+    
+    if (!user) {
+      context.cookies.delete('session');
+      return context.redirect('/login');
+    }
+    
+    // Check admin role
+    if (isAdmin && user.role !== 'admin') {
+      return new Response('Forbidden', { status: 403 });
+    }
+    
+    // Set user data
+    context.locals.user = user;
+  }
+  
+  return next();
+});
+```
+
+### Rate Limiting:
+
+```javascript
+// src/middleware/rate-limit.js
+import { defineMiddleware } from 'astro:middleware';
+
+// Simple in-memory store (gunakan Redis di production)
+const requestCounts = new Map();
+
+export const rateLimitMiddleware = defineMiddleware(async (context, next) => {
+  // Hanya rate limit API routes
+  if (!context.url.pathname.startsWith('/api/')) {
+    return next();
+  }
+  
+  const ip = context.request.headers.get('x-forwarded-for') || 'unknown';
+  const now = Date.now();
+  const windowStart = now - 60 * 1000; // 1 menit window
+  
+  // Get existing requests
+  const requests = requestCounts.get(ip) || [];
+  const recentRequests = requests.filter(time => time > windowStart);
+  
+  // Check limit (100 requests per minute)
+  if (recentRequests.length >= 100) {
+    return new Response('Rate limit exceeded', { 
+      status: 429,
+      headers: {
+        'Retry-After': '60',
+        'X-RateLimit-Limit': '100',
+        'X-RateLimit-Remaining': '0',
+      }
+    });
+  }
+  
+  // Record request
+  recentRequests.push(now);
+  requestCounts.set(ip, recentRequests);
+  
+  // Clean up old entries periodically
+  if (Math.random() < 0.01) {
+    for (const [key, times] of requestCounts) {
+      requestCounts.set(key, times.filter(t => t > windowStart));
+    }
+  }
+  
+  // Add rate limit headers
+  const response = await next();
+  response.headers.set('X-RateLimit-Limit', '100');
+  response.headers.set('X-RateLimit-Remaining', String(100 - recentRequests.length - 1));
+  
+  return response;
+});
+```
+
+---
+
+## 14.5 Request & Response Objects
+
+Manipulasi request dan response di middleware.
+
+### Request Modification:
+
+```javascript
+// src/middleware.js
+export const onRequest = defineMiddleware(async (context, next) => {
+  // Clone dan modifikasi request
+  const modifiedRequest = new Request(context.request, {
+    headers: {
+      ...Object.fromEntries(context.request.headers),
+      'X-Request-ID': crypto.randomUUID(),
+      'X-Forwarded-Host': context.url.host,
+    }
+  });
+  
+  // Replace context request
+  Object.defineProperty(context, 'request', {
+    value: modifiedRequest,
+  });
+  
+  return next();
+});
+```
+
+### Response Modification:
+
+```javascript
+// src/middleware.js
+export const onRequest = defineMiddleware(async (context, next) => {
+  const response = await next();
+  
+  // Tambahkan security headers
+  const modifiedHeaders = new Headers(response.headers);
+  modifiedHeaders.set('X-Frame-Options', 'DENY');
+  modifiedHeaders.set('X-Content-Type-Options', 'nosniff');
+  modifiedHeaders.set('Referrer-Policy', 'strict-origin-when-cross-origin');
+  
+  // Content Security Policy
+  modifiedHeaders.set('Content-Security-Policy', 
+    "default-src 'self'; " +
+    "script-src 'self' 'unsafe-inline' 'unsafe-eval'; " +
+    "style-src 'self' 'unsafe-inline'; " +
+    "img-src 'self' data: https:; " +
+    "font-src 'self';"
+  );
+  
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: modifiedHeaders,
+  });
+});
+```
+
+---
+
+## 14.6 Sessions
+
+Mengelola user sessions di Astro.
+
+### Session Middleware:
+
+```javascript
+// src/middleware/session.js
+import { defineMiddleware } from 'astro:middleware';
+
+// Session store (gunakan database di production)
+const sessions = new Map();
+
+export const sessionMiddleware = defineMiddleware(async (context, next) => {
+  // Get atau create session ID
+  let sessionId = context.cookies.get('sessionId')?.value;
+  
+  if (!sessionId) {
+    sessionId = crypto.randomUUID();
+    context.cookies.set('sessionId', sessionId, {
+      httpOnly: true,
+      secure: true,
+      sameSite: 'strict',
+      maxAge: 60 * 60 * 24 * 7, // 7 hari
+    });
+  }
+  
+  // Get atau create session data
+  let session = sessions.get(sessionId) || {};
+  
+  // Session API
+  context.locals.session = {
+    get: (key) => session[key],
+    set: (key, value) => {
+      session[key] = value;
+      sessions.set(sessionId, session);
+    },
+    delete: (key) => {
+      delete session[key];
+      sessions.set(sessionId, session);
+    },
+    destroy: () => {
+      sessions.delete(sessionId);
+      context.cookies.delete('sessionId');
+    },
+    id: sessionId,
+  };
+  
+  return next();
+});
+```
+
+### Penggunaan Session:
+
+```astro
+---
+// src/pages/cart.astro
+// Simpan cart di session
+
+const cart = Astro.locals.session.get('cart') || [];
+
+if (Astro.request.method === 'POST') {
+  const formData = await Astro.request.formData();
+  const productId = formData.get('productId');
+  
+  const newCart = [...cart, productId];
+  Astro.locals.session.set('cart', newCart);
+  
+  return Astro.redirect('/cart');
+}
+---
+
+<h1>Shopping Cart ({cart.length} items)</h1>
+
+<form method="POST">
+  <input type="hidden" name="productId" value="123" />
+  <button type="submit">Add Product</button>
+</form>
+```
+
+---
+
+## 14.7 Cookies
+
+Manipulasi cookies di middleware dan pages.
+
+### Cookie Utilities:
+
+```javascript
+// src/middleware.js
+export const onRequest = defineMiddleware(async (context, next) => {
+  // Set cookie
+  context.cookies.set('preferences', JSON.stringify({
+    theme: 'dark',
+    lang: 'id',
+  }), {
+    httpOnly: false, // Accessible dari JavaScript
+    secure: true,
+    sameSite: 'lax',
+    maxAge: 60 * 60 * 24 * 365, // 1 tahun
+    path: '/',
+  });
+  
+  // Get cookie
+  const prefs = context.cookies.get('preferences');
+  if (prefs) {
+    context.locals.preferences = JSON.parse(prefs.value);
+  }
+  
+  // Delete cookie
+  // context.cookies.delete('preferences');
+  
+  return next();
+});
+```
+
+### Cookie di Page:
+
+```astro
+---
+// src/pages/settings.astro
+// Read dan update cookies
+
+const currentPrefs = Astro.cookies.get('preferences')?.json() || {
+  theme: 'light',
+  notifications: true,
+};
+
+if (Astro.request.method === 'POST') {
+  const formData = await Astro.request.formData();
+  
+  const newPrefs = {
+    theme: formData.get('theme'),
+    notifications: formData.get('notifications') === 'on',
+  };
+  
+  Astro.cookies.set('preferences', JSON.stringify(newPrefs), {
+    httpOnly: false,
+    secure: true,
+    sameSite: 'lax',
+    maxAge: 60 * 60 * 24 * 365,
+  });
+  
+  return Astro.redirect('/settings?success=1');
+}
+---
+
+<form method="POST">
+  <label>
+    Theme
+    <select name="theme">
+      <option value="light" selected={currentPrefs.theme === 'light'}>Light</option>
+      <option value="dark" selected={currentPrefs.theme === 'dark'}>Dark</option>
+    </select>
+  </label>
+  
+  <label>
+    <input 
+      type="checkbox" 
+      name="notifications" 
+      checked={currentPrefs.notifications}
+    />
+    Enable notifications
+  </label>
+  
+  <button type="submit">Save Preferences</button>
+</form>
+```
+
+---
+
+## Ringkasan Sesi 14
+
+| Fitur | Fungsi | Contoh Use Case |
+|-------|--------|-----------------|
+| **Middleware** | Intercept request/response | Auth, logging, i18n |
+| **Sequence** | Chain multiple middleware | logging → auth → i18n |
+| **Route Guards** | Protect specific routes | /admin, /dashboard |
+| **Rate Limiting** | Prevent abuse | API throttling |
+| **locals** | Share data ke pages | User data, preferences |
+| **Cookies** | Client state | Sessions, preferences |
+| **Response Modification** | Add headers | Security headers |
+
+### Best Practices:
+
+1. **Order Matters**: Logging pertama, auth kedua, business logic terakhir
+2. **Early Return**: Redirect/reject secepat mungkin untuk invalid requests
+3. **Minimal Processing**: Jangan blocking untuk static assets
+4. **Security**: HttpOnly, Secure, SameSite untuk cookies sensitive
+5. **External Store**: Gunakan Redis/database untuk sessions di production
+
+---
+
+**Selanjutnya:** Di Sesi 15, kita akan membahas **Actions & Form Handling** - form submissions, validation, type-safe actions, dan error handling.

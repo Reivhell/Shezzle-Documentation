@@ -1,0 +1,604 @@
+---
+title: "Sesi 29: Eloquent Relationships (One-to-One & One-to-Many)"
+description: "title: \"Sesi 29: Eloquent Relationships (One-to-One & One-to-Many)\""
+category: "laravel"
+tags: ["laravel", "eloquent"]
+order: 29
+---
+
+l---
+title: "Sesi 29: Eloquent Relationships (One-to-One & One-to-Many)"
+description: "Menguasai relasi database fundamental, eager loading, dan mengatasi N+1 problem di Laravel Eloquent"
+---
+
+## Tujuan Pembelajaran
+
+Menguasai fundamental relationships Eloquent, memahami perbedaan lazy vs eager loading, dan mengimplementasikan solusi N+1 problem untuk aplikasi performant.
+
+## 1. One-to-One Relationships
+
+### 1.1 hasOne() Pattern
+
+Relasi one-to-one digunakan ketika satu record di tabel A berhubungan dengan tepat satu record di tabel B.
+
+```php
+<?php
+
+namespace App\Models;
+
+use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\HasOne;
+
+class User extends Model
+{
+    use HasFactory;
+
+    protected $fillable = ['name', 'email'];
+
+    /**
+     * User memiliki satu profile
+     */
+    public function profile(): HasOne
+    {
+        return $this->hasOne(Profile::class);
+    }
+
+    /**
+     * Dengan foreign key eksplisit (jika tidak mengikuti konvensi)
+     */
+    public function passport(): HasOne
+    {
+        return $this->hasOne(Passport::class, 'owner_id');
+    }
+
+    /**
+     * Dengan local key berbeda
+     */
+    public function settings(): HasOne
+    {
+        return $this->hasOne(UserSetting::class, 'user_id', 'uuid');
+    }
+}
+```
+
+```php
+<?php
+
+namespace App\Models;
+
+use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
+
+class Profile extends Model
+{
+    use HasFactory;
+
+    protected $fillable = ['user_id', 'bio', 'avatar', 'phone'];
+
+    /**
+     * Profile milik satu user
+     */
+    public function user(): BelongsTo
+    {
+        return $this->belongsTo(User::class);
+    }
+}
+```
+
+### 1.2 Default Models & Nullable Relations
+
+```php
+<?php
+
+class User extends Model
+{
+    /**
+     * Return default model jika relationship null
+     */
+    public function profile(): HasOne
+    {
+        return $this->hasOne(Profile::class)
+            ->withDefault([
+                'bio' => 'No bio available',
+                'avatar' => 'default-avatar.png'
+            ]);
+    }
+
+    /**
+     * Atau dengan closure untuk logic kompleks
+     */
+    public function premiumInfo(): HasOne
+    {
+        return $this->hasOne(PremiumInfo::class)
+            ->withDefault(function (PremiumInfo $info, User $user) {
+                $info->tier = 'free';
+                $info->expires_at = now()->addDays(30);
+            });
+    }
+}
+```
+
+## 2. One-to-Many Relationships
+
+### 2.1 hasMany() Pattern
+
+```php
+<?php
+
+namespace App\Models;
+
+use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Database\Eloquent\Relations\HasMany;
+
+class Post extends Model
+{
+    protected $fillable = ['title', 'content', 'user_id'];
+
+    /**
+     * Post memiliki banyak comments
+     */
+    public function comments(): HasMany
+    {
+        return $this->hasMany(Comment::class);
+    }
+
+    /**
+     * Dengan ordering default
+     */
+    public function recentComments(): HasMany
+    {
+        return $this->hasMany(Comment::class)
+            ->latest()
+            ->limit(10);
+    }
+
+    /**
+     * Dengan kondisi
+     */
+    public function approvedComments(): HasMany
+    {
+        return $this->hasMany(Comment::class)
+            ->where('is_approved', true);
+    }
+}
+```
+
+```php
+<?php
+
+class Comment extends Model
+{
+    protected $fillable = ['post_id', 'user_id', 'content', 'is_approved'];
+
+    public function post(): BelongsTo
+    {
+        return $this->belongsTo(Post::class);
+    }
+
+    public function author(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'user_id');
+    }
+}
+```
+
+### 2.2 Inverse Relationships
+
+```php
+<?php
+
+class User extends Model
+{
+    /**
+     * User memiliki banyak posts
+     */
+    public function posts(): HasMany
+    {
+        return $this->hasMany(Post::class);
+    }
+
+    /**
+     * Latest post (hasOne of many)
+     */
+    public function latestPost(): HasOne
+    {
+        return $this->hasOne(Post::class)->latestOfMany();
+    }
+
+    /**
+     * Oldest post
+     */
+    public function oldestPost(): HasOne
+    {
+        return $this->hasOne(Post::class)->oldestOfMany();
+    }
+
+    /**
+     * Post dengan rating tertinggi (advanced)
+     */
+    public function highestRatedPost(): HasOne
+    {
+        return $this->hasOne(Post::class)
+            ->ofMany('rating', 'max');
+    }
+}
+```
+
+## 3. Eager Loading Fundamentals
+
+### 3.1 The N+1 Problem
+
+> **danger**
+>
+**N+1 Problem**: Terjadi ketika Anda mengambil N records, kemudian melakukan query tambahan untuk setiap record untuk mengambil relasinya. Total query: 1 + N.
+
+**Contoh kasus**: 100 posts + 100 queries untuk author = 101 total queries!
+
+```php
+<?php
+
+// ❌ N+1 Problem: 101 queries untuk 100 posts
+$posts = Post::all(); // 1 query
+
+foreach ($posts as $post) {
+    echo $post->author->name; // +100 queries (satu per post!)
+}
+
+// ✅ Eager Loading: Hanya 2 queries
+$posts = Post::with('author')->get(); // 2 queries total
+
+foreach ($posts as $post) {
+    echo $post->author->name; // Data sudah loaded
+}
+```
+
+### 3.2 with() - Eager Loading
+
+```php
+<?php
+
+// Single relationship
+$posts = Post::with('author')->get();
+
+// Multiple relationships
+$posts = Post::with(['author', 'comments', 'tags'])->get();
+
+// Nested relationships
+$posts = Post::with('author.profile')->get();
+$posts = Post::with('comments.author')->get();
+
+// Dengan query constraints
+$posts = Post::with(['comments' => function ($query) {
+    $query->where('is_approved', true)
+          ->orderBy('created_at', 'desc')
+          ->limit(5);
+}])->get();
+```
+
+### 3.3 load() - Lazy Eager Loading
+
+Gunakan `load()` ketika Anda sudah memiliki model instance tetapi perlu mengisi relasinya:
+
+```php
+<?php
+
+// Data sudah di-fetch, tapi belum ada relasi
+$posts = Post::all(); // 1 query
+
+// Nanti dalam kode, Anda butuh relasi
+if ($someCondition) {
+    $posts->load('author', 'comments'); // +2 queries
+}
+
+// Load dengan constraints
+$posts->load(['comments' => function ($query) {
+    $query->latest()->limit(10);
+}]);
+
+// Load missing (hanya load yang belum ada)
+$posts->loadMissing('author'); // Aman jika sudah di-load sebelumnya
+```
+
+### 3.4 loadMissing() - Conditional Loading
+
+```php
+<?php
+
+// Load hanya jika belum diload sebelumnya
+$posts = Post::with('author')->get();
+
+// Dalam controller lain atau queue
+$posts->loadMissing('comments'); // Load comments saja, author sudah ada
+
+// Berguna untuk reusable code dan preventing double queries
+```
+
+## 4. Relationship Constraints & Existence
+
+### 4.1 Querying Relationship Existence
+
+```php
+<?php
+
+// Posts yang punya comments
+$posts = Post::has('comments')->get();
+
+// Posts dengan minimal 3 comments
+$posts = Post::has('comments', '>=', 3)->get();
+
+// Dengan constraints pada relasi
+$posts = Post::whereHas('comments', function ($query) {
+    $query->where('rating', '>=', 4);
+})->get();
+
+// Where doesnt have
+$posts = Post::doesntHave('comments')->get();
+
+// Where has dengan OR
+$posts = Post::whereHas('comments', function ($query) {
+    $query->where('is_featured', true);
+})->orWhereHas('tags', function ($query) {
+    $query->where('name', 'featured');
+})->get();
+```
+
+### 4.2 withWhereHas() (Laravel 10+)
+
+```php
+<?php
+
+// Load relationship DAN filter parent dalam satu query
+$posts = Post::withWhereHas('comments', function ($query) {
+    $query->where('is_approved', true);
+})->get();
+
+// Equivalent dengan:
+$posts = Post::with(['comments' => function ($query) {
+    $query->where('is_approved', true);
+}])->whereHas('comments', function ($query) {
+    $query->where('is_approved', true);
+})->get();
+```
+
+### 4.3 Relationship Aggregates
+
+```php
+<?php
+
+// Dengan count (tanpa load seluruh relasi)
+$posts = Post::withCount('comments')->get();
+// Access: $post->comments_count
+
+// Dengan constraints
+$posts = Post::withCount(['comments' => function ($query) {
+    $query->where('is_approved', true);
+}])->get();
+// Access: $post->comments_count (hanya approved)
+
+// Multiple aggregates
+$posts = Post::withCount('comments')
+    ->withSum('comments', 'rating')
+    ->withAvg('comments', 'rating')
+    ->withMax('comments', 'created_at')
+    ->withMin('comments', 'created_at')
+    ->get();
+
+// Aliases
+$posts = Post::withCount([
+    'comments',
+    'comments as approved_comments_count' => function ($query) {
+        $query->where('is_approved', true);
+    }
+])->get();
+```
+
+## 5. Advanced Relationship Patterns
+
+### 5.1 Has One Through
+
+```php
+<?php
+
+// Mechanic -> Car -> Owner (Mechanic punya satu Owner melalui Car)
+class Mechanic extends Model
+{
+    public function carOwner(): HasOneThrough
+    {
+        return $this->hasOneThrough(
+            Owner::class,    // Target model
+            Car::class,      // Intermediate model
+            'mechanic_id',   // Foreign key on intermediate (cars)
+            'car_id',        // Foreign key on target (owners)
+            'id',            // Local key on mechanics
+            'id'             // Local key on cars
+        );
+    }
+}
+```
+
+### 5.2 Has Many Through
+
+```php
+<?php
+
+// Country -> Posts -> Comments (Country punya banyak Comments melalui Posts)
+class Country extends Model
+{
+    public function postComments(): HasManyThrough
+    {
+        return $this->hasManyThrough(
+            Comment::class,
+            Post::class,
+            'country_id',    // Foreign key on posts
+            'post_id',       // Foreign key on comments
+            'id',            // Local key on countries
+            'id'             // Local key on posts
+        );
+    }
+}
+```
+
+### 5.3 Morph To One (One-to-One Polymorphic)
+
+```php
+<?php
+
+class Image extends Model
+{
+    /**
+     * Get the parent imageable model (user or post).
+     */
+    public function imageable(): MorphTo
+    {
+        return $this->morphTo();
+    }
+}
+
+class User extends Model
+{
+    /**
+     * Get the user's image.
+     */
+    public function image(): MorphOne
+    {
+        return $this->morphOne(Image::class, 'imageable');
+    }
+}
+
+class Post extends Model
+{
+    /**
+     * Get the post's image.
+     */
+    public function image(): MorphOne
+    {
+        return $this->morphOne(Image::class, 'imageable');
+    }
+}
+```
+
+## 6. Performance Optimization
+
+### 6.1 Strict Loading (Prevent Lazy Loading)
+
+```php
+<?php
+
+// ModelServiceProvider atau AppServiceProvider
+use Illuminate\Database\Eloquent\Model;
+
+public function boot(): void
+{
+    // Prevent lazy loading di development
+    Model::preventLazyLoading(! $this->app->isProduction());
+    
+    // Atau throw exception
+    Model::preventLazyLoading();
+}
+
+// Exception handling
+public function boot(): void
+{
+    Model::handleLazyLoadingViolationUsing(function ($model, $relation) {
+        Log::warning("Lazy loading detected: {$relation} on " . get_class($model));
+    });
+}
+```
+
+### 6.2 Select Specific Columns
+
+```php
+<?php
+
+// Pilih hanya kolom yang diperlukan untuk menghemat memory
+$posts = Post::with(['author' => function ($query) {
+    $query->select('id', 'name', 'avatar');
+}])->get();
+
+// Hindari select * pada relasi besar
+$posts = Post::with(['comments' => function ($query) {
+    $query->select('id', 'post_id', 'content', 'created_at')
+          ->latest()
+          ->limit(20);
+}])->get();
+```
+
+### 6.3 Cursor & Lazy Collections untuk Large Datasets
+
+```php
+<?php
+
+// Untuk processing banyak data tanpa memory overflow
+Post::with('author')->cursor()->each(function ($post) {
+    // Process satu per satu, memory tetap rendah
+    ProcessPost::dispatch($post);
+});
+
+// Atau dengan lazy()
+Post::with('author')->lazy()->each(function ($post) {
+    ProcessPost::dispatch($post);
+});
+
+// Chunking dengan relasi
+Post::with('author')->chunk(100, function ($posts) {
+    foreach ($posts as $post) {
+        // Process batch
+    }
+});
+```
+
+## 7. Testing Relationships
+
+```php
+<?php
+
+class PostTest extends TestCase
+{
+    use RefreshDatabase;
+
+    public function test_post_belongs_to_user()
+    {
+        $user = User::factory()->create();
+        $post = Post::factory()->create(['user_id' => $user->id]);
+
+        $this->assertInstanceOf(User::class, $post->author);
+        $this->assertEquals($user->id, $post->author->id);
+    }
+
+    public function test_user_has_many_posts()
+    {
+        $user = User::factory()->create();
+        Post::factory()->count(3)->create(['user_id' => $user->id]);
+
+        $this->assertCount(3, $user->posts);
+        $this->assertInstanceOf(Collection::class, $user->posts);
+    }
+
+    public function test_eager_loading_prevents_n_plus_one()
+    {
+        Post::factory()->count(5)->create();
+
+        DB::enableQueryLog();
+        
+        $posts = Post::with('author')->get();
+        foreach ($posts as $post) {
+            $post->author->name;
+        }
+
+        $this->assertCount(2, DB::getQueryLog()); // 1 untuk posts, 1 untuk authors
+    }
+}
+```
+
+## Kesimpulan
+
+One-to-One dan One-to-Many adalah fondasi relasi database di Eloquent. Poin kunci:
+- **Gunakan eager loading** (`with()`, `load()`) untuk mengatasi N+1 problem
+- **Pilih lazy vs eager** berdasarkan use case: eager untuk list, lazy untuk detail
+- **Gunakan relationship constraints** (`has()`, `whereHas()`) untuk filtering efisien
+- **Optimasi dengan `withCount`** daripada `count()` pada collection
+- **Prevent lazy loading** di development untuk menangkap performance issue early
+
+Selanjutnya di **Sesi 30**, kita akan mempelajari Many-to-Many dan Polymorphic Relationships yang lebih kompleks dan powerful.

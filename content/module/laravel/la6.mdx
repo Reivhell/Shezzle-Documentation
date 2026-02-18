@@ -1,0 +1,941 @@
+---
+title: "Sesi 6: Controller Patterns"
+description: "Controllers adalah \"otak\" di balik route. Jika route adalah jalan raya, controller adalah gedung yang dituju—tempat semua logic diproses."
+category: "laravel"
+tags: ["laravel", "controller"]
+order: 6
+---
+
+## 6.1 Basic Controllers dan Single Action Controllers (Invokable)
+
+Controllers adalah "otak" di balik route. Jika route adalah jalan raya, controller adalah gedung yang dituju—tempat semua logic diproses.
+
+### 6.1.1 Membuat Controller Dasar
+
+Gunakan Artisan untuk generate controller:
+
+```bash
+# Controller dasar
+php artisan make:controller UserController
+
+# Controller dengan method resource
+php artisan make:controller UserController --resource
+
+# API Controller (tanpa method create/edit)
+php artisan make:controller Api/UserController --api
+
+# Invokable controller (single action)
+php artisan make:controller ShowProfileController --invokable
+```
+
+Struktur controller dasar:
+
+```php
+<?php
+
+namespace App\Http\Controllers;
+
+use Illuminate\Http\Request;
+
+class UserController extends Controller
+{
+    /**
+     * Display a listing of the resource.
+     */
+    public function index()
+    {
+        return view('users.index');
+    }
+
+    /**
+     * Show the form for creating a new resource.
+     */
+    public function create()
+    {
+        return view('users.create');
+    }
+
+    /**
+     * Store a newly created resource in storage.
+     */
+    public function store(Request $request)
+    {
+        // Validasi dan simpan
+        return redirect()->route('users.index');
+    }
+
+    /**
+     * Display the specified resource.
+     */
+    public function show(string $id)
+    {
+        return view('users.show', compact('id'));
+    }
+
+    /**
+     * Show the form for editing the specified resource.
+     */
+    public function edit(string $id)
+    {
+        return view('users.edit', compact('id'));
+    }
+
+    /**
+     * Update the specified resource in storage.
+     */
+    public function update(Request $request, string $id)
+    {
+        // Validasi dan update
+        return redirect()->route('users.index');
+    }
+
+    /**
+     * Remove the specified resource from storage.
+     */
+    public function destroy(string $id)
+    {
+        // Hapus resource
+        return redirect()->route('users.index');
+    }
+}
+```
+
+### 6.1.2 Single Action Controllers (Invokable)
+
+> **tip**
+>
+  Gunakan invokable controller untuk logic yang sangat spesifik dan hanya memiliki satu tujuan—seperti microservice dalam satu class.
+
+Invokable controller hanya memiliki satu method: `__invoke()`.
+
+```php
+<?php
+
+namespace App\Http\Controllers;
+
+use App\Models\User;
+use Illuminate\Http\Request;
+
+class ShowProfileController extends Controller
+{
+    /**
+     * Handle the incoming request.
+     */
+    public function __invoke(Request $request, User $user)
+    {
+        $posts = $user->posts()->latest()->take(5)->get();
+        $followersCount = $user->followers()->count();
+        
+        return view('profile.show', [
+            'user' => $user,
+            'recentPosts' => $posts,
+            'followersCount' => $followersCount,
+        ]);
+    }
+}
+```
+
+Route untuk invokable controller:
+
+```php
+<?php
+
+use App\Http\Controllers\ShowProfileController;
+use Illuminate\Support\Facades\Route;
+
+// Tidak perlu specify method, Laravel otomatis memanggil __invoke
+Route::get('/profile/{user}', ShowProfileController::class)->name('profile.show');
+
+// Atau dengan route group
+Route::get('/about', AboutController::class);
+Route::get('/contact', ContactController::class);
+Route::get('/terms', TermsController::class);
+```
+
+**Kapan menggunakan Invokable Controller?**
+
+| Skenario | Gunakan |
+|----------|---------|
+| Halaman static (About, Contact, Terms) | ✅ Invokable |
+| Dashboard dengan logic kompleks | ✅ Invokable |
+| Report generation | ✅ Invokable |
+| CRUD operations | ❌ Resource Controller |
+| Multiple related actions | ❌ Standard Controller |
+
+---
+
+## 6.2 Resource Controllers
+
+### 6.2.1 Konsep Resource Controller
+
+Resource controller mengikuti konvensi RESTful—satu controller menangani satu resource dengan 7 standard actions.
+
+> **note**
+>
+  Analogi sederhana: Resource controller seperti menu di restoran. Setiap resource (User, Post, Product) punya "menu" yang sama: Lihat Semua, Tambah Baru, Simpan, Lihat Detail, Edit, Update, Hapus.
+
+### 6.2.2 Membuat Resource Controller
+
+```bash
+php artisan make:controller PostController --resource
+```
+
+Method yang di-generate:
+
+| Method | HTTP Verb | URL | Fungsi |
+|--------|-----------|-----|--------|
+| `index()` | GET | `/posts` | List semua post |
+| `create()` | GET | `/posts/create` | Form tambah post |
+| `store()` | POST | `/posts` | Simpan post baru |
+| `show()` | GET | `/posts/{post}` | Detail satu post |
+| `edit()` | GET | `/posts/{post}/edit` | Form edit post |
+| `update()` | PUT/PATCH | `/posts/{post}` | Update post |
+| `destroy()` | DELETE | `/posts/{post}` | Hapus post |
+
+### 6.2.3 Route Resource
+
+Satu baris route untuk 7 endpoint:
+
+```php
+<?php
+
+use App\Http\Controllers\PostController;
+use Illuminate\Support\Facades\Route;
+
+// Semua 7 route RESTful otomatis terbuat
+Route::resource('posts', PostController::class);
+
+// List route yang terbuat:
+// GET       /posts              → posts.index
+// GET       /posts/create       → posts.create
+// POST      /posts              → posts.store
+// GET       /posts/{post}       → posts.show
+// GET       /posts/{post}/edit  → posts.edit
+// PUT       /posts/{post}       → posts.update
+// DELETE    /posts/{post}       → posts.destroy
+```
+
+### 6.2.4 Partial Resource Routes
+
+Jika hanya butuh beberapa method:
+
+```php
+<?php
+
+// Hanya index dan show
+Route::resource('posts', PostController::class)->only(['index', 'show']);
+
+// Semua kecuali create dan store
+Route::resource('posts', PostController::class)->except(['create', 'store']);
+
+// API Resource (tanpa create dan edit)
+Route::apiResource('posts', PostController::class);
+
+// Multiple resources
+Route::resources([
+    'posts' => PostController::class,
+    'users' => UserController::class,
+    'comments' => CommentController::class,
+]);
+```
+
+### 6.2.5 Nested Resource Controllers
+
+Resource di dalam resource:
+
+```php
+<?php
+
+use App\Http\Controllers\PostCommentController;
+
+// Posts memiliki banyak Comments
+Route::resource('posts.comments', PostCommentController::class);
+
+// Route yang terbuat:
+// GET    /posts/{post}/comments              → posts.comments.index
+// GET    /posts/{post}/comments/create       → posts.comments.create
+// POST   /posts/{post}/comments              → posts.comments.store
+// GET    /posts/{post}/comments/{comment}    → posts.comments.show
+// GET    /posts/{post}/comments/{comment}/edit → posts.comments.edit
+// PUT    /posts/{post}/comments/{comment}    → posts.comments.update
+// DELETE /posts/{post}/comments/{comment}    → posts.comments.destroy
+```
+
+Implementasi controller nested:
+
+```php
+<?php
+
+namespace App\Http\Controllers;
+
+use App\Models\Post;
+use App\Models\Comment;
+use Illuminate\Http\Request;
+
+class PostCommentController extends Controller
+{
+    public function index(Post $post)
+    {
+        $comments = $post->comments()->paginate(10);
+        return view('comments.index', compact('post', 'comments'));
+    }
+
+    public function store(Request $request, Post $post)
+    {
+        $validated = $request->validate([
+            'body' => 'required|string|max:1000',
+        ]);
+
+        $comment = $post->comments()->create([
+            'body' => $validated['body'],
+            'user_id' => auth()->id(),
+        ]);
+
+        return redirect()->route('posts.comments.index', $post);
+    }
+
+    public function destroy(Post $post, Comment $comment)
+    {
+        $this->authorize('delete', $comment);
+        $comment->delete();
+        
+        return redirect()->route('posts.comments.index', $post);
+    }
+}
+```
+
+### 6.2.6 Shallow Nesting
+
+Hindari nesting terlalu dalam dengan shallow nesting:
+
+```php
+<?php
+
+// Tanpa shallow: /posts/{post}/comments/{comment}/replies/{reply}/likes/{like}
+// Terlalu dalam!
+
+// Dengan shallow nesting
+Route::resource('posts.comments', CommentController::class)->shallow();
+
+// Route yang terbuat:
+// GET    /posts/{post}/comments              → posts.comments.index
+// GET    /posts/{post}/comments/create       → posts.comments.create
+// POST   /posts/{post}/comments              → posts.comments.store
+// GET    /comments/{comment}                 → comments.show
+// GET    /comments/{comment}/edit            → comments.edit
+// PUT    /comments/{comment}                 → comments.update
+// DELETE /comments/{comment}                 → comments.destroy
+
+// Comment tidak perlu post ID untuk show/edit/update/destroy
+// Karena comment sudah punya ID unik sendiri
+```
+
+---
+
+## 6.3 API Resource Controllers
+
+### 6.3.1 API Resource vs Web Resource
+
+> **tip**
+>
+  API Resource cocok untuk REST API yang mengembalikan JSON, tanpa form HTML.
+
+```bash
+php artisan make:controller Api/PostController --api
+```
+
+Perbedaan method:
+
+| Web Resource | API Resource | Keterangan |
+|--------------|--------------|------------|
+| `index()` | `index()` | Sama |
+| `create()` | ❌ Tidak ada | API tidak perlu form HTML |
+| `store()` | `store()` | Sama |
+| `show()` | `show()` | Sama |
+| `edit()` | ❌ Tidak ada | API tidak perlu form HTML |
+| `update()` | `update()` | Sama |
+| `destroy()` | `destroy()` | Sama |
+
+### 6.3.2 Implementasi API Controller
+
+```php
+<?php
+
+namespace App\Http\Controllers\Api;
+
+use App\Http\Controllers\Controller;
+use App\Http\Resources\PostResource;
+use App\Models\Post;
+use Illuminate\Http\Request;
+
+class PostController extends Controller
+{
+    public function index()
+    {
+        $posts = Post::with('user')->paginate(10);
+        return PostResource::collection($posts);
+    }
+
+    public function store(Request $request)
+    {
+        $validated = $request->validate([
+            'title' => 'required|string|max:255',
+            'body' => 'required|string',
+            'published_at' => 'nullable|date',
+        ]);
+
+        $post = auth()->user()->posts()->create($validated);
+
+        return new PostResource($post);
+    }
+
+    public function show(Post $post)
+    {
+        return new PostResource($post->load('user', 'comments'));
+    }
+
+    public function update(Request $request, Post $post)
+    {
+        $this->authorize('update', $post);
+
+        $validated = $request->validate([
+            'title' => 'sometimes|string|max:255',
+            'body' => 'sometimes|string',
+        ]);
+
+        $post->update($validated);
+
+        return new PostResource($post);
+    }
+
+    public function destroy(Post $post)
+    {
+        $this->authorize('delete', $post);
+        $post->delete();
+
+        return response()->json(['message' => 'Post deleted successfully']);
+    }
+}
+```
+
+### 6.3.3 Route API Resource
+
+```php
+<?php
+
+use App\Http\Controllers\Api\PostController;
+use Illuminate\Support\Facades\Route;
+
+Route::apiResource('posts', PostController::class);
+
+// Route yang terbuat (hanya 5, tanpa create dan edit):
+// GET    /api/posts          → posts.index
+// POST   /api/posts          → posts.store
+// GET    /api/posts/{post}   → posts.show
+// PUT    /api/posts/{post}   → posts.update
+// DELETE /api/posts/{post}   → posts.destroy
+```
+
+---
+
+## 6.4 Dependency Injection dalam Controllers
+
+### 6.4.1 Method Injection
+
+Laravel secara otomatis resolve dependencies dari container:
+
+```php
+<?php
+
+namespace App\Http\Controllers;
+
+use App\Repositories\UserRepository;
+use App\Services\EmailService;
+use Illuminate\Http\Request;
+
+class UserController extends Controller
+{
+    // Dependency injection di method
+    public function index(UserRepository $users)
+    {
+        // Laravel otomatis membuat instance UserRepository
+        $allUsers = $users->getAll();
+        return view('users.index', compact('allUsers'));
+    }
+
+    public function store(
+        Request $request, 
+        EmailService $email,
+        UserRepository $users
+    ) {
+        $user = $users->create($request->validated());
+        
+        // Kirim welcome email
+        $email->sendWelcome($user);
+        
+        return redirect()->route('users.index');
+    }
+}
+```
+
+### 6.4.2 Constructor Injection
+
+Inject dependency sekali untuk semua method:
+
+```php
+<?php
+
+namespace App\Http\Controllers;
+
+use App\Repositories\UserRepository;
+use App\Services\NotificationService;
+
+class UserController extends Controller
+{
+    protected $users;
+    protected $notifications;
+
+    // Dependencies di-resolve saat controller dibuat
+    public function __construct(
+        UserRepository $users,
+        NotificationService $notifications
+    ) {
+        $this->users = $users;
+        $this->notifications = $notifications;
+    }
+
+    public function index()
+    {
+        // Gunakan $this->users di semua method
+        return view('users.index', [
+            'users' => $this->users->getAll()
+        ]);
+    }
+
+    public function show($id)
+    {
+        $user = $this->users->find($id);
+        return view('users.show', compact('user'));
+    }
+
+    public function destroy($id)
+    {
+        $user = $this->users->find($id);
+        $this->users->delete($id);
+        
+        $this->notifications->send(
+            $user, 
+            'Your account has been deleted.'
+        );
+        
+        return redirect()->route('users.index');
+    }
+}
+```
+
+### 6.4.3 Route Model Binding
+
+Inject model langsung dari parameter URL:
+
+```php
+<?php
+
+namespace App\Http\Controllers;
+
+use App\Models\Post;
+use Illuminate\Http\Request;
+
+class PostController extends Controller
+{
+    // {post} di URL otomatis menjadi instance Post
+    public function show(Post $post)
+    {
+        // Tidak perlu: Post::findOrFail($id)
+        // $post sudah berisi model atau 404 otomatis
+        return view('posts.show', compact('post'));
+    }
+
+    public function update(Request $request, Post $post)
+    {
+        $this->authorize('update', $post);
+        
+        $post->update($request->validated());
+        
+        return redirect()->route('posts.show', $post);
+    }
+
+    public function destroy(Post $post)
+    {
+        $post->delete();
+        return redirect()->route('posts.index');
+    }
+}
+```
+
+Custom binding dengan key selain ID:
+
+```php
+<?php
+
+// Route dengan custom key
+Route::get('/posts/{post:slug}', [PostController::class, 'show']);
+
+// Controller
+public function show(Post $post)
+{
+    // $post dicari berdasarkan slug, bukan id
+    return view('posts.show', compact('post'));
+}
+```
+
+### 6.4.4 Request Injection dengan Form Request
+
+Inject validated request:
+
+```php
+<?php
+
+namespace App\Http\Controllers;
+
+use App\Http\Requests\StorePostRequest;
+use App\Http\Requests\UpdatePostRequest;
+use App\Models\Post;
+
+class PostController extends Controller
+{
+    // StorePostRequest sudah melakukan validasi dan otorisasi
+    public function store(StorePostRequest $request)
+    {
+        // Data sudah tervalidasi
+        $validated = $request->validated();
+        
+        // Atau langsung create
+        $post = Post::create($request->validated());
+        
+        return redirect()->route('posts.show', $post);
+    }
+
+    public function update(UpdatePostRequest $request, Post $post)
+    {
+        $post->update($request->validated());
+        
+        return redirect()->route('posts.show', $post);
+    }
+}
+```
+
+Form Request class:
+
+```php
+<?php
+
+namespace App\Http\Requests;
+
+use Illuminate\Foundation\Http\FormRequest;
+
+class StorePostRequest extends FormRequest
+{
+    public function authorize(): bool
+    {
+        // Logic otorisasi
+        return auth()->check();
+    }
+
+    public function rules(): array
+    {
+        return [
+            'title' => 'required|string|max:255|unique:posts',
+            'body' => 'required|string|min:10',
+            'published_at' => 'nullable|date',
+            'tags' => 'nullable|array',
+            'tags.*' => 'exists:tags,id',
+        ];
+    }
+
+    public function messages(): array
+    {
+        return [
+            'title.required' => 'Judul postingan wajib diisi.',
+            'title.unique' => 'Judul ini sudah digunakan.',
+            'body.min' => 'Konten minimal 10 karakter.',
+        ];
+    }
+}
+```
+
+---
+
+## 6.5 Controller Middleware dan Constructor Injection
+
+### 6.5.1 Middleware di Controller
+
+Terapkan middleware langsung di controller:
+
+```php
+<?php
+
+namespace App\Http\Controllers;
+
+use Illuminate\Support\Facades\Auth;
+
+class DashboardController extends Controller
+{
+    public function __construct()
+    {
+        // Semua method memerlukan authentication
+        $this->middleware('auth');
+        
+        // Hanya method admin
+        $this->middleware('role:admin')->only(['adminPanel']);
+        
+        // Kecuali method public
+        $this->middleware('auth')->except(['publicStats']);
+    }
+
+    public function index()
+    {
+        return view('dashboard');
+    }
+
+    public function adminPanel()
+    {
+        return view('admin.panel');
+    }
+
+    public function publicStats()
+    {
+        return view('stats.public');
+    }
+}
+```
+
+### 6.5.2 Middleware dengan Parameter
+
+```php
+<?php
+
+namespace App\Http\Controllers;
+
+class ProjectController extends Controller
+{
+    public function __construct()
+    {
+        // Middleware dengan parameter
+        $this->middleware('can:view,project')->only(['show']);
+        $this->middleware('can:update,project')->only(['edit', 'update']);
+        $this->middleware('can:delete,project')->only(['destroy']);
+    }
+}
+```
+
+### 6.5.3 Middleware dalam Route Definition
+
+Alternatif: definisi di route:
+
+```php
+<?php
+
+use App\Http\Controllers\AdminController;
+use Illuminate\Support\Facades\Route;
+
+Route::get('/admin', [AdminController::class, 'index'])
+    ->middleware(['auth', 'role:admin', 'verified']);
+
+Route::controller(AdminController::class)
+    ->middleware(['auth', 'role:admin'])
+    ->group(function () {
+        Route::get('/admin/dashboard', 'dashboard');
+        Route::get('/admin/users', 'users');
+        Route::get('/admin/settings', 'settings');
+    });
+```
+
+---
+
+## 6.6 Advanced Controller Patterns
+
+### 6.6.1 Controller dengan Traits
+
+Gunakan traits untuk reusable logic:
+
+```php
+<?php
+
+namespace App\Http\Controllers\Traits;
+
+use Illuminate\Http\Request;
+
+trait HasOrdering
+{
+    public function order(Request $request, $query)
+    {
+        $sortField = $request->get('sort', 'created_at');
+        $sortOrder = $request->get('order', 'desc');
+        
+        $allowedFields = $this->getSortableFields();
+        
+        if (in_array($sortField, $allowedFields)) {
+            return $query->orderBy($sortField, $sortOrder);
+        }
+        
+        return $query->latest();
+    }
+    
+    abstract protected function getSortableFields(): array;
+}
+```
+
+```php
+<?php
+
+namespace App\Http\Controllers;
+
+use App\Http\Controllers\Traits\HasOrdering;
+use App\Models\Post;
+
+class PostController extends Controller
+{
+    use HasOrdering;
+
+    protected function getSortableFields(): array
+    {
+        return ['title', 'created_at', 'published_at', 'views'];
+    }
+
+    public function index(Request $request)
+    {
+        $query = Post::query();
+        $query = $this->order($request, $query);
+        
+        $posts = $query->paginate(20);
+        
+        return view('posts.index', compact('posts'));
+    }
+}
+```
+
+### 6.6.2 Base Controller Pattern
+
+Buat base controller untuk shared functionality:
+
+```php
+<?php
+
+namespace App\Http\Controllers;
+
+use Illuminate\Foundation\Auth\Access\AuthorizesRequests;
+use Illuminate\Foundation\Validation\ValidatesRequests;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Routing\Controller as BaseController;
+
+abstract class Controller extends BaseController
+{
+    use AuthorizesRequests, ValidatesRequests;
+
+    /**
+     * Return JSON success response
+     */
+    protected function success($data, string $message = 'Success', int $code = 200): JsonResponse
+    {
+        return response()->json([
+            'success' => true,
+            'message' => $message,
+            'data' => $data,
+        ], $code);
+    }
+
+    /**
+     * Return JSON error response
+     */
+    protected function error(string $message, int $code = 400, $errors = null): JsonResponse
+    {
+        $response = [
+            'success' => false,
+            'message' => $message,
+        ];
+
+        if ($errors) {
+            $response['errors'] = $errors;
+        }
+
+        return response()->json($response, $code);
+    }
+
+    /**
+     * Return paginated response
+     */
+    protected function paginated($paginator, string $message = 'Success'): JsonResponse
+    {
+        return response()->json([
+            'success' => true,
+            'message' => $message,
+            'data' => $paginator->items(),
+            'pagination' => [
+                'current_page' => $paginator->currentPage(),
+                'last_page' => $paginator->lastPage(),
+                'per_page' => $paginator->perPage(),
+                'total' => $paginator->total(),
+            ],
+        ]);
+    }
+}
+```
+
+Penggunaan:
+
+```php
+<?php
+
+namespace App\Http\Controllers\Api;
+
+use App\Http\Controllers\Controller;
+use App\Models\User;
+
+class UserController extends Controller
+{
+    public function index()
+    {
+        $users = User::paginate(10);
+        return $this->paginated($users, 'Users retrieved successfully');
+    }
+
+    public function show(User $user)
+    {
+        return $this->success($user, 'User retrieved successfully');
+    }
+
+    public function store(Request $request)
+    {
+        try {
+            $user = User::create($request->validated());
+            return $this->success($user, 'User created successfully', 201);
+        } catch (\Exception $e) {
+            return $this->error('Failed to create user', 500);
+        }
+    }
+}
+```
+
+---
+
+## 6.7 Kesimpulan
+
+Controller adalah jantung aplikasi Laravel—tempat logic diolah dan keputusan dibuat. Pilih pola yang sesuai kebutuhan:
+
+| Pola | Gunakan Ketika |
+|------|---------------|
+| **Basic Controller** | Logic sederhana, CRUD standar |
+| **Invokable Controller** | Single action, halaman static, micro-endpoint |
+| **Resource Controller** | CRUD lengkap dengan konvensi RESTful |
+| **API Resource Controller** | REST API yang mengembalikan JSON |
+| **Nested Resource** | Relasi parent-child (Post-Comment) |
+| **Constructor Injection** | Dependency digunakan di banyak method |
+| **Method Injection** | Dependency hanya untuk method tertentu |
+
+**Best Practices:**
+- Pertahankan controller **thin**—logic bisnis pindahkan ke Service/Repository
+- Gunakan **Form Request** untuk validasi kompleks
+- Manfaatkan **Route Model Binding** untuk mengurangi boilerplate
+- Terapkan **single responsibility**—satu controller fokus pada satu resource
+- Gunakan **API Resources** untuk transformasi response API yang konsisten
+```

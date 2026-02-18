@@ -1,0 +1,664 @@
+---
+title: "Sesi 23: View Transitions"
+description: "View Transitions API adalah fitur browser modern yang memungkinkan transisi halus antar halaman, mirip dengan pengalaman aplikasi mobile (SPA) tapi de..."
+category: "astrojs"
+tags: ["astrojs", "frontend"]
+order: 23
+---
+
+# Sesi 23: View Transitions
+
+## 23.1 View Transitions API
+
+View Transitions API adalah fitur browser modern yang memungkinkan transisi halus antar halaman, mirip dengan pengalaman aplikasi mobile (SPA) tapi dengan Multi-Page Application (MPA).
+
+### Analogi Sederhana:
+
+> Bayangkan View Transitions seperti **magic portal di film sci-fi**. Saat kamu berjalan melewati portal, dunia di sekitarmu berubah secara mulus - elemen-elemen yang sama tetap ada tapi bertransformasi, sementara elemen baru muncul dengan elegan. Tidak ada "blink" atau "flash" yang mengganggu!
+
+### Perbandingan Navigasi:
+
+| Tanpa View Transitions | Dengan View Transitions |
+|------------------------|------------------------|
+| Halaman "blink" putih | Transisi mulus |
+| Scroll position reset | Animasi morphing |
+| Network loading jarring | State persists |
+| SPA-like feel dengan MPA | Progressive enhancement |
+
+### Enable View Transitions:
+
+```astro
+---
+// src/layouts/BaseLayout.astro
+---
+
+<!DOCTYPE html>
+<html lang="id">
+  <head>
+    <meta charset="utf-8" />
+    <title>My Site</title>
+    
+    <!-- Enable View Transitions -->
+    <ViewTransitions />
+  </head>
+  <body>
+    <slot />
+  </body>
+</html>
+```
+
+```javascript
+// astro.config.mjs
+import { defineConfig } from 'astro/config';
+
+export default defineConfig({
+  // View Transitions otomatis enabled untuk MPA
+  // Tidak perlu konfigurasi tambahan
+});
+```
+
+---
+
+## 23.2 Enabling View Transitions
+
+Menggunakan component `<ViewTransitions />` dan konfigurasi.
+
+### Basic Setup:
+
+```astro
+---
+// src/layouts/Layout.astro
+import { ViewTransitions } from 'astro:transitions';
+---
+
+<!DOCTYPE html>
+<html lang="id">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width" />
+    <title>My Website</title>
+    
+    <!-- Enable View Transitions -->
+    <ViewTransitions />
+    
+    <!-- Atau dengan fallback untuk browser lama -->
+    <ViewTransitions fallback="swap" />
+    <!-- 
+      fallback options:
+      - "animate": Animate even if browser doesn't support View Transitions
+      - "swap": Instant swap tanpa animasi
+    -->
+  </head>
+  <body>
+    <header>
+      <nav>
+        <a href="/">Home</a>
+        <a href="/about">About</a>
+        <a href="/contact">Contact</a>
+      </nav>
+    </header>
+    
+    <main>
+      <slot />
+    </main>
+  </body>
+</html>
+```
+
+### Transition Directives:
+
+```astro
+---
+// src/pages/index.astro
+import Layout from '../layouts/Layout.astro';
+---
+
+<Layout>
+  <!-- 
+    transition:animate="fade" - Fade in/out
+    transition:animate="slide" - Slide from right (default)
+    transition:animate="none" - No animation
+  -->
+  <h1 transition:animate="fade">Welcome</h1>
+  
+  <!-- Morphing elements dengan transition:name -->
+  <img 
+    src="/hero.jpg" 
+    alt="Hero"
+    transition:name="hero-image"
+  />
+  
+  <article transition:name="main-content">
+    <p>Content here...</p>
+  </article>
+</Layout>
+```
+
+```astro
+---
+// src/pages/about.astro
+import Layout from '../layouts/Layout.astro';
+---
+
+<Layout>
+  <!-- 
+    Elemen dengan transition:name yang sama akan "morph"
+    dari halaman sebelumnya ke halaman ini
+  -->
+  <img 
+    src="/hero.jpg" 
+    alt="Hero"
+    transition:name="hero-image"
+  />
+  
+  <article transition:name="main-content">
+    <p>About content...</p>
+  </article>
+</Layout>
+```
+
+---
+
+## 23.3 Custom Transitions
+
+Membuat transisi kustom dengan CSS dan JavaScript.
+
+### CSS-based Custom Transitions:
+
+```astro
+---
+// src/layouts/Layout.astro
+import { ViewTransitions } from 'astro:transitions';
+---
+
+<!DOCTYPE html>
+<html lang="id">
+  <head>
+    <ViewTransitions />
+    
+    <style is:global>
+      /* Custom transition animations */
+      
+      /* Fade transition */
+      ::view-transition-old(root),
+      ::view-transition-new(root) {
+        animation-duration: 0.5s;
+        animation-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+      }
+      
+      /* Slide up transition untuk cards */
+      ::view-transition-old(card),
+      ::view-transition-new(card) {
+        animation: slide-up 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+      }
+      
+      @keyframes slide-up {
+        from {
+          opacity: 0;
+          transform: translateY(30px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+      
+      /* Scale transition untuk images */
+      ::view-transition-old(hero-image),
+      ::view-transition-new(hero-image) {
+        animation: scale-in 0.5s ease;
+      }
+      
+      @keyframes scale-in {
+        from {
+          transform: scale(0.9);
+          opacity: 0;
+        }
+        to {
+          transform: scale(1);
+          opacity: 1;
+        }
+      }
+      
+      /* Stagger animation untuk lists */
+      ::view-transition-old(list-item),
+      ::view-transition-new(list-item) {
+        animation: fade-slide 0.4s ease;
+        animation-delay: calc(var(--index) * 0.1s);
+      }
+      
+      @keyframes fade-slide {
+        from {
+          opacity: 0;
+          transform: translateX(-20px);
+        }
+        to {
+          opacity: 1;
+          transform: translateX(0);
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <slot />
+  </body>
+</html>
+```
+
+### Named Transitions:
+
+```astro
+---
+// src/components/ProductCard.astro
+interface Props {
+  product: {
+    id: string;
+    name: string;
+    image: string;
+    price: number;
+  };
+  index: number;
+}
+
+const { product, index } = Astro.props;
+---
+
+<article 
+  class="product-card"
+  transition:name={`product-${product.id}`}
+  style={`--index: ${index}`}
+>
+  <img 
+    src={product.image} 
+    alt={product.name}
+    transition:name={`product-image-${product.id}`}
+  />
+  <h3 transition:name={`product-title-${product.id}`}>
+    {product.name}
+  </h3>
+  <p 
+    class="price"
+    transition:name={`product-price-${product.id}`}
+  >
+    Rp {product.price.toLocaleString('id-ID')}
+  </p>
+</article>
+
+<style>
+  .product-card {
+    border: 1px solid #e5e7eb;
+    border-radius: 12px;
+    overflow: hidden;
+    transition: transform 0.2s, box-shadow 0.2s;
+  }
+  
+  .product-card:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 12px 24px -8px rgba(0, 0, 0, 0.15);
+  }
+  
+  /* View transition specific styles */
+  ::view-transition-old(product-card),
+  ::view-transition-new(product-card) {
+    height: 100%;
+  }
+</style>
+```
+
+```astro
+---
+// src/pages/products/[id].astro
+import Layout from '../../layouts/Layout.astro';
+
+const { product } = Astro.props;
+---
+
+<Layout>
+  <div class="product-detail">
+    <!-- 
+      transition:name yang sama dengan list view
+      akan memicu morphing animation
+    -->
+    <img 
+      src={product.image} 
+      alt={product.name}
+      transition:name={`product-image-${product.id}`}
+      class="hero-image"
+    />
+    
+    <div class="info">
+      <h1 transition:name={`product-title-${product.id}`}>
+        {product.name}
+      </h1>
+      <p 
+        class="price"
+        transition:name={`product-price-${product.id}`}
+      >
+        Rp {product.price.toLocaleString('id-ID')}
+      </p>
+      
+      <!-- New elements fade in -->
+      <p class="description" transition:animate="fade">
+        {product.description}
+      </p>
+      
+      <button class="cta" transition:animate="fade">
+        Add to Cart
+      </button>
+    </div>
+  </div>
+</Layout>
+
+<style>
+  .product-detail {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 3rem;
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 2rem;
+  }
+  
+  .hero-image {
+    width: 100%;
+    height: auto;
+    border-radius: 16px;
+    aspect-ratio: 1;
+    object-fit: cover;
+  }
+  
+  .info {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+  }
+  
+  h1 {
+    font-size: 2.5rem;
+    margin: 0;
+  }
+  
+  .price {
+    font-size: 1.5rem;
+    color: #3b82f6;
+    font-weight: 700;
+  }
+  
+  .description {
+    line-height: 1.7;
+    color: #4b5563;
+  }
+  
+  .cta {
+    background: #3b82f6;
+    color: white;
+    border: none;
+    padding: 1rem 2rem;
+    border-radius: 8px;
+    font-size: 1.125rem;
+    cursor: pointer;
+    transition: background 0.2s;
+  }
+  
+  .cta:hover {
+    background: #2563eb;
+  }
+</style>
+```
+
+### JavaScript Control:
+
+```astro
+---
+// src/layouts/Layout.astro
+---
+
+<!DOCTYPE html>
+<html lang="id">
+  <head>
+    <ViewTransitions />
+  </head>
+  <body>
+    <slot />
+    
+    <script>
+      // Listen untuk view transition events
+      document.addEventListener('astro:before-preparation', (event) => {
+        console.log('Starting transition to:', event.to);
+        
+        // Bisa modify navigation behavior
+        // event.preventDefault() untuk cancel
+      });
+      
+      document.addEventListener('astro:after-preparation', () => {
+        console.log('New page ready, starting animation');
+      });
+      
+      document.addEventListener('astro:before-swap', (event) => {
+        // Akses DOM sebelum swap
+        const oldBody = event.from;
+        const newBody = event.to;
+        
+        // Bisa transfer state di sini
+        const scrollPos = window.scrollY;
+        newBody.dataset.scrollY = scrollPos;
+      });
+      
+      document.addEventListener('astro:after-swap', () => {
+        console.log('DOM swapped, animation running');
+      });
+      
+      document.addEventListener('astro:page-load', () => {
+        console.log('Transition complete, new page loaded');
+        
+        // Restore scroll position jika perlu
+        const savedScroll = document.body.dataset.scrollY;
+        if (savedScroll) {
+          window.scrollTo(0, parseInt(savedScroll));
+        }
+        
+        // Re-initialize components
+        initComponents();
+      });
+    </script>
+  </body>
+</html>
+```
+
+---
+
+## 23.4 Performance Considerations
+
+Optimasi View Transitions untuk performa terbaik.
+
+### Best Practices:
+
+```astro
+---
+// src/layouts/OptimizedLayout.astro
+---
+
+<!DOCTYPE html>
+<html lang="id">
+  <head>
+    <!-- 
+      Fallback "swap" untuk browser lama 
+      Lebih cepat daripada "animate" fallback
+    -->
+    <ViewTransitions fallback="swap" />
+  </head>
+  <body>
+    <slot />
+  </body>
+</html>
+
+<style is:global>
+  /* Reduce motion untuk users yang prefer */
+  @media (prefers-reduced-motion: reduce) {
+    ::view-transition-group(*),
+    ::view-transition-old(*),
+    ::view-transition-new(*) {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+    }
+  }
+  
+  /* Optimize untuk low-power devices */
+  @media (prefers-reduced-data: reduce) {
+    ::view-transition-group(*),
+    ::view-transition-old(*),
+    ::view-transition-new(*) {
+      animation-duration: 0.2s !important;
+    }
+  }
+</style>
+```
+
+### Selective Transitions:
+
+```astro
+---
+// src/components/HeavyComponent.astro
+// Component yang tidak perlu transition
+---
+
+<div class="heavy-component" transition:persist>
+  <!-- 
+    transition:persist = element ini tidak di-replace
+    tapi di-pertahankan across navigation
+  -->
+  <slot />
+</div>
+```
+
+```astro
+---
+// src/pages/dashboard.astro
+---
+
+<Layout>
+  <!-- 
+    Persist sidebar state across navigation
+    Tidak di-re-render, tidak ada transition
+  -->
+  <Sidebar transition:persist>
+    <Navigation />
+    <UserProfile />
+  </Sidebar>
+  
+  <!-- Main content dengan transition -->
+  <main transition:animate="slide">
+    <h1>Dashboard</h1>
+    <!-- Content -->
+  </main>
+</Layout>
+```
+
+### Prefetching untuk Smooth Transitions:
+
+```javascript
+// astro.config.mjs
+export default defineConfig({
+  prefetch: {
+    prefetchAll: true,
+    defaultStrategy: 'viewport',
+  },
+});
+```
+
+```astro
+---
+// Prefetch links untuk instant transitions
+---
+
+<a href="/about" data-astro-prefetch="viewport">About</a>
+<a href="/contact" data-astro-prefetch="load">Contact</a>
+```
+
+---
+
+## 23.5 Browser Support
+
+View Transitions API support dan progressive enhancement.
+
+### Feature Detection:
+
+```astro
+---
+// src/layouts/Layout.astro
+---
+
+<!DOCTYPE html>
+<html lang="id">
+  <head>
+    <ViewTransitions fallback="swap" />
+    
+    <script>
+      // Detect support untuk analytics/debugging
+      if (document.startViewTransition) {
+        console.log('View Transitions API supported');
+        document.documentElement.classList.add('view-transitions-supported');
+      } else {
+        console.log('View Transitions API not supported, using fallback');
+        document.documentElement.classList.add('view-transitions-fallback');
+      }
+    </script>
+  </head>
+  <body>
+    <slot />
+  </body>
+</html>
+```
+
+### Fallback Strategies:
+
+| Browser | Support | Fallback |
+|---------|---------|----------|
+| Chrome 115+ | ✅ Native | Full animations |
+| Edge 115+ | ✅ Native | Full animations |
+| Safari 17+ | ✅ Native | Full animations |
+| Firefox | ❌ (in development) | "swap" fallback |
+| Older browsers | ❌ | "swap" fallback |
+
+### Conditional Enhancements:
+
+```css
+/* Styles hanya untuk browsers dengan View Transitions support */
+.view-transitions-supported .enhanced-element {
+  view-transition-name: enhanced;
+}
+
+/* Fallback styles */
+.view-transitions-fallback .enhanced-element {
+  /* Simpler animations atau instant */
+  transition: opacity 0.2s;
+}
+```
+
+---
+
+## Ringkasan Sesi 23
+
+| Aspek | Implementasi | Tips |
+|-------|-------------|------|
+| **Enable** | `<ViewTransitions />` component | Place in layout `<head>` |
+| **Morphing** | `transition:name` | Unique names untuk setiap element |
+| **Animations** | `transition:animate` | fade, slide, atau custom CSS |
+| **Persistence** | `transition:persist` | Untuk stateful components |
+| **Events** | `astro:*` events | Lifecycle hooks untuk control |
+| **Fallback** | `fallback="swap"` | Untuk browser lama |
+| **Performance** | `prefers-reduced-motion` | Respect user preferences |
+
+### View Transitions Checklist:
+
+- [ ] Add `<ViewTransitions />` ke layout
+- [ ] Set `transition:name` untuk elements yang perlu morph
+- [ ] Configure fallback untuk unsupported browsers
+- [ ] Test dengan reduced motion preference
+- [ ] Optimize dengan selective transitions
+- [ ] Prefetch links untuk instant navigation
+- [ ] Handle lifecycle events jika perlu
+
+---
+
+**Selanjutnya:** Di Sesi 24, kita akan membahas **Testing & Debugging** - unit testing, integration testing, E2E testing, dan debugging tools.

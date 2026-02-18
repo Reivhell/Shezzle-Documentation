@@ -1,0 +1,973 @@
+---
+title: "Sesi 12: Performance Optimization"
+description: "Prefetching memungkinkan browser memuat resource sebelum dibutuhkan, mengurangi waktu tunggu saat user navigasi."
+category: "astrojs"
+tags: ["astrojs", "performance"]
+order: 12
+---
+
+# Sesi 12: Performance Optimization
+
+## 12.1 Prefetching
+
+Prefetching memungkinkan browser memuat resource sebelum dibutuhkan, mengurangi waktu tunggu saat user navigasi.
+
+### Analogi Sederhana:
+
+> Bayangkan prefetching seperti **pelayan restoran yang membawa menu makanan penutup sebelum kamu minta**. Saat kamu memutuskan untuk pesan, makanan sudah siap di dapur. Begitu juga dengan prefetching - halaman/link yang mungkin diklik user sudah dimuat di background.
+
+### Konfigurasi Prefetch di Astro:
+
+```javascript
+// astro.config.mjs
+import { defineConfig } from 'astro/config';
+
+export default defineConfig({
+  prefetch: {
+    // Strategy: 'tap' | 'hover' | 'viewport' | 'load'
+    prefetchAll: true,  // Prefetch semua link
+    defaultStrategy: 'hover',  // Default: prefetch saat hover
+  },
+});
+```
+
+### Strategi Prefetch:
+
+| Strategi | Kapan Terjadi | Use Case | Konsumsi Data |
+|----------|---------------|----------|---------------|
+| `tap` | Saat klik/tap dimulai | Mobile-first, hemat data | Minimal |
+| `hover` | Saat mouse hover (100ms delay) | Desktop | Sedang |
+| `viewport` | Saat link masuk viewport | Predictive loading | Tinggi |
+| `load` | Saat page load selesai | Critical paths | Maksimal |
+
+### Penggunaan di Template:
+
+```astro
+---
+// src/pages/index.astro
+---
+
+<nav>
+  <!-- Prefetch dengan strategi default (hover) -->
+  <a href="/about">About</a>
+  
+  <!-- Override strategi per-link -->
+  <a href="/pricing" data-astro-prefetch="viewport">Pricing</a>
+  
+  <!-- Disable prefetch -->
+  <a href="/external" data-astro-prefetch="false">External Link</a>
+  
+  <!-- Eager prefetch (load immediately) -->
+  <a href="/checkout" data-astro-prefetch="load">Checkout</a>
+</nav>
+
+<div class="article-grid">
+  {articles.map(article => (
+    <!-- Prefetch saat artikel terlihat -->
+    <a 
+      href={`/blog/${article.slug}`}
+      data-astro-prefetch="viewport"
+      class="article-card"
+    >
+      <h3>{article.title}</h3>
+      <p>{article.excerpt}</p>
+    </a>
+  ))}
+</div>
+```
+
+### Programmatic Prefetch:
+
+```astro
+---
+// src/components/SmartPrefetch.astro
+---
+
+<script>
+  // Prefetch berdasarkan user behavior
+  let prefetchQueue = new Set();
+  
+  // Prefetch saat user scroll mendekati link
+  const observer = new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+      if (entry.isIntersecting && entry.intersectionRatio > 0.5) {
+        const link = entry.target;
+        if (!prefetchQueue.has(link.href)) {
+          prefetchQueue.add(link.href);
+          
+          // Delay 200ms untuk avoid spam
+          setTimeout(() => {
+            const prefetchLink = document.createElement('link');
+            prefetchLink.rel = 'prefetch';
+            prefetchLink.href = link.href;
+            document.head.appendChild(prefetchLink);
+          }, 200);
+        }
+      }
+    });
+  }, { threshold: 0.5 });
+  
+  document.querySelectorAll('a[href^="/"]').forEach(link => {
+    observer.observe(link);
+  });
+</script>
+```
+
+---
+
+## 12.2 Lazy Loading
+
+Lazy loading menunda pemuatkan resource non-kritis sampai diperlukan.
+
+### Native Lazy Loading:
+
+```astro
+---
+// src/pages/gallery.astro
+import { Image } from 'astro:assets';
+import { getCollection } from 'astro:content';
+
+const photos = await getCollection('gallery');
+---
+
+<div class="gallery-grid">
+  {photos.map((photo, index) => (
+    <figure class="photo-item">
+      <Image 
+        src={photo.data.image}
+        alt={photo.data.caption}
+        width={600}
+        height={400}
+        loading={index < 4 ? 'eager' : 'lazy'}  <!-- First 4 eager, rest lazy -->
+        decoding={index < 4 ? 'sync' : 'async'}
+      />
+      <figcaption>{photo.data.caption}</figcaption>
+    </figure>
+  ))}
+</div>
+```
+
+### Lazy Load Components (Islands):
+
+```astro
+---
+// src/pages/dashboard.astro
+import Layout from '../layouts/Layout.astro';
+import StatsWidget from '../components/react/StatsWidget.jsx';
+import ActivityChart from '../components/react/ActivityChart.jsx';
+import UserTable from '../components/react/UserTable.jsx';
+---
+
+<Layout>
+  <!-- Stats: Load immediately (critical) -->
+  <StatsWidget client:load />
+  
+  <!-- Chart: Load saat idle -->
+  <ActivityChart client:idle />
+  
+  <!-- Table: Load saat terlihat (below fold) -->
+  <UserTable client:visible />
+</Layout>
+```
+
+### Lazy Load Iframes:
+
+```astro
+---
+// src/components/VideoEmbed.astro
+interface Props {
+  videoId: string;
+}
+
+const { videoId, title } = Astro.props;
+const thumbnailUrl = `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`;
+---
+
+<div class="video-embed" data-video-id={videoId}>
+  <!-- Thumbnail sebagai placeholder -->
+  <button class="play-button" aria-label={`Play ${title}`}>
+    <img 
+      src={thumbnailUrl} 
+      alt={title}
+      loading="lazy"
+      width="1280"
+      height="720"
+    />
+    <span class="play-icon">▶</span>
+  </button>
+</div>
+
+<script>
+  document.querySelectorAll('.video-embed').forEach(container => {
+    const button = container.querySelector('.play-button');
+    const videoId = container.dataset.videoId;
+    
+    button?.addEventListener('click', () => {
+      // Replace dengan iframe saat diklik
+      const iframe = document.createElement('iframe');
+      iframe.src = `https://www.youtube.com/embed/${videoId}?autoplay=1`;
+      iframe.title = container.querySelector('img')?.alt || 'Video';
+      iframe.width = '1280';
+      iframe.height = '720';
+      iframe.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture';
+      iframe.allowFullscreen = true;
+      
+      container.innerHTML = '';
+      container.appendChild(iframe);
+    });
+  });
+</script>
+
+<style>
+  .video-embed {
+    position: relative;
+    aspect-ratio: 16/9;
+    background: #000;
+  }
+  
+  .play-button {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    border: none;
+    background: none;
+    cursor: pointer;
+    padding: 0;
+  }
+  
+  .play-button img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+  
+  .play-icon {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 80px;
+    height: 80px;
+    background: rgba(255, 0, 0, 0.9);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    font-size: 2rem;
+    transition: transform 0.2s;
+  }
+  
+  .play-button:hover .play-icon {
+    transform: translate(-50%, -50%) scale(1.1);
+  }
+</style>
+```
+
+---
+
+## 12.3 Code Splitting
+
+Memecah bundle JavaScript menjadi chunks yang lebih kecil.
+
+### Automatic Code Splitting:
+
+Astro secara otomatis melakukan code splitting untuk:
+- Dynamic imports (`import()`)
+- Framework components dengan client directives
+- Route-based splitting (setiap page terpisah)
+
+### Manual Code Splitting:
+
+```astro
+---
+// src/components/FeatureRich.astro
+interface Props {
+  feature: 'chart' | 'map' | 'editor';
+}
+
+const { feature } = Astro.props;
+---
+
+<div class="feature-container" data-feature={feature}></div>
+
+<script define:vars={{ feature }}>
+  async function loadFeature() {
+    const container = document.querySelector(`[data-feature="${feature}"]`);
+    if (!container) return;
+    
+    // Split by feature type
+    const loaders = {
+      chart: () => import('../features/chart.js'),
+      map: () => import('../features/map.js'),
+      editor: () => import('../features/editor.js'),
+    };
+    
+    const { initialize } = await loaders[feature]();
+    initialize(container);
+  }
+  
+  // Load saat idle
+  if ('requestIdleCallback' in window) {
+    requestIdleCallback(loadFeature);
+  } else {
+    setTimeout(loadFeature, 1);
+  }
+</script>
+```
+
+### Route-Based Splitting:
+
+```javascript
+// astro.config.mjs
+export default defineConfig({
+  build: {
+    // Split chunks per route
+    splitChunks: true,
+    
+    // Custom chunk size limit
+    chunkSizeWarningLimit: 1000, // 1000kb
+  },
+});
+```
+
+### Vendor Splitting:
+
+```javascript
+// astro.config.mjs
+import { defineConfig } from 'astro/config';
+
+export default defineConfig({
+  vite: {
+    build: {
+      rollupOptions: {
+        output: {
+          manualChunks: {
+            // Pisahkan vendor libraries
+            'react-vendor': ['react', 'react-dom'],
+            'ui-vendor': ['@radix-ui/react-dialog', '@radix-ui/react-dropdown-menu'],
+            'chart-vendor': ['chart.js', 'react-chartjs-2'],
+          },
+        },
+      },
+    },
+  },
+});
+```
+
+---
+
+## 12.4 Bundle Optimization
+
+Mengoptimasi ukuran bundle JavaScript.
+
+### Analisis Bundle:
+
+```bash
+# Build dengan analisis
+npm run build -- --analyze
+
+# Atau gunakan plugin
+npm install rollup-plugin-visualizer
+```
+
+```javascript
+// astro.config.mjs
+import { defineConfig } from 'astro/config';
+import { visualizer } from 'rollup-plugin-visualizer';
+
+export default defineConfig({
+  vite: {
+    plugins: [
+      visualizer({
+        emitFile: true,
+        filename: 'stats.html',
+        open: true,
+      }),
+    ],
+  },
+});
+```
+
+### Tree Shaking:
+
+```astro
+---
+// src/components/Icon.astro
+interface Props {
+  name: 'home' | 'user' | 'settings' | 'search';
+  size?: number;
+}
+
+const { name, size = 24 } = Astro.props;
+
+// Import only needed icons (tree-shaking)
+import { 
+  HomeIcon, 
+  UserIcon, 
+  SettingsIcon, 
+  SearchIcon 
+} from 'heroicons-react/24/outline';
+
+const icons = {
+  home: HomeIcon,
+  user: UserIcon,
+  settings: SettingsIcon,
+  search: SearchIcon,
+};
+
+const IconComponent = icons[name];
+---
+
+<IconComponent size={size} />
+```
+
+### Dead Code Elimination:
+
+```javascript
+// astro.config.mjs
+export default defineConfig({
+  vite: {
+    build: {
+      // Minification
+      minify: 'terser',
+      terserOptions: {
+        compress: {
+          drop_console: true,  // Hapus console.log
+          drop_debugger: true, // Hapus debugger
+        },
+      },
+    },
+  },
+});
+```
+
+---
+
+## 12.5 Image Optimization
+
+Optimasi gambar untuk performa maksimal.
+
+### Responsive Images:
+
+```astro
+---
+// src/components/HeroImage.astro
+import { Picture } from 'astro:assets';
+import heroImage from '../assets/hero.jpg';
+---
+
+<Picture 
+  src={heroImage}
+  alt="Hero"
+  widths={[640, 960, 1280, 1920, 2560]}  <!-- Multiple breakpoints -->
+  sizes="(max-width: 640px) 100vw, 
+         (max-width: 960px) 100vw,
+         (max-width: 1280px) 100vw,
+         1280px"  <!-- Max width 1280px untuk desktop -->
+  formats={['avif', 'webp', 'jpg']}
+  loading="eager"
+  fetchpriority="high"
+  quality={85}
+/>
+```
+
+### Art Direction:
+
+```astro
+---
+// src/components/ResponsiveHero.astro
+import { Picture } from 'astro:assets';
+import mobileHero from '../assets/hero-mobile.jpg';
+import desktopHero from '../assets/hero-desktop.jpg';
+---
+
+<Picture alt="Hero">
+  <!-- Mobile: Portrait crop -->
+  <source
+    media="(max-width: 768px)"
+    srcset={mobileHero.src}
+    width={mobileHero.width}
+    height={mobileHero.height}
+  />
+  
+  <!-- Desktop: Landscape full -->
+  <source
+    media="(min-width: 769px)"
+    srcset={desktopHero.src}
+    width={desktopHero.width}
+    height={desktopHero.height}
+  />
+  
+  <img 
+    src={desktopHero.src}
+    alt="Hero"
+    width={desktopHero.width}
+    height={desktopHero.height}
+  />
+</Picture>
+```
+
+### Image Placeholder (LQIP):
+
+```astro
+---
+// src/components/OptimizedImage.astro
+import { Image } from 'astro:assets';
+import { getImage } from 'astro:assets';
+
+interface Props {
+  src: ImageMetadata;
+  alt: string;
+  width: number;
+  height: number;
+}
+
+const { src, alt, width, height } = Astro.props;
+
+// Generate low-quality placeholder
+const placeholder = await getImage({
+  src,
+  width: 20,  // Tiny size
+  quality: 10, // Low quality
+  format: 'webp',
+});
+---
+
+<div class="image-wrapper">
+  <img 
+    src={placeholder.src}
+    aria-hidden="true"
+    class="placeholder"
+    alt=""
+  />
+  
+  <Image 
+    src={src}
+    {alt}
+    {width}
+    {height}
+    class="main-image"
+    onload="this.classList.add('loaded')"
+  />
+</div>
+
+<style>
+  .image-wrapper {
+    position: relative;
+    overflow: hidden;
+  }
+  
+  .placeholder {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    filter: blur(20px);
+    transition: opacity 0.3s;
+  }
+  
+  .main-image {
+    opacity: 0;
+    transition: opacity 0.3s;
+  }
+  
+  .main-image.loaded {
+    opacity: 1;
+  }
+  
+  .main-image.loaded + .placeholder,
+  .image-wrapper:has(.main-image.loaded) .placeholder {
+    opacity: 0;
+  }
+</style>
+```
+
+---
+
+## 12.6 Font Optimization
+
+Optimasi loading font untuk menghindari layout shift.
+
+### Font Display Strategy:
+
+```css
+/* src/styles/fonts.css */
+/* Self-hosted fonts dengan optimal loading */
+
+@font-face {
+  font-family: 'Inter';
+  src: url('/fonts/Inter-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap; /* Tampilkan fallback dulu, swap saat font loaded */
+}
+
+@font-face {
+  font-family: 'Inter';
+  src: url('/fonts/Inter-Bold.woff2') format('woff2');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* Preload critical fonts */
+@font-face {
+  font-family: 'Inter';
+  src: url('/fonts/Inter-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-display: block; /* Block render sampai font loaded (untuk critical text) */
+}
+```
+
+```astro
+---
+// src/layouts/BaseLayout.astro
+---
+
+<!DOCTYPE html>
+<html lang="id">
+  <head>
+    <!-- Preload critical font -->
+    <link 
+      rel="preload" 
+      href="/fonts/Inter-Regular.woff2" 
+      as="font" 
+      type="font/woff2" 
+      crossorigin
+    />
+    
+    <!-- Preconnect ke font CDN jika menggunakan Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    
+    <!-- Async load non-critical fonts -->
+    <link 
+      href="https://fonts.googleapis.com/css2?family=Fira+Code&display=swap" 
+      rel="stylesheet"
+      media="print"
+      onload="this.media='all'"
+    />
+    
+    <noscript>
+      <link 
+        href="https://fonts.googleapis.com/css2?family=Fira+Code&display=swap" 
+        rel="stylesheet"
+      />
+    </noscript>
+  </head>
+  <body>
+    <slot />
+  </body>
+</html>
+
+<style is:global>
+  /* Font stack dengan fallback yang mirip */
+  body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  }
+  
+  /* Size-adjust untuk mengurangi layout shift */
+  @font-face {
+    font-family: 'Inter Fallback';
+    src: local(-apple-system);
+    size-adjust: 107%;
+    ascent-override: 90%;
+    descent-override: 20%;
+  }
+</style>
+```
+
+### Font Subsetting:
+
+```bash
+# Gunakan tools untuk subset font (hanya karakter yang diperlukan)
+npx glyphhanger https://yoursite.com --subset=Inter-Regular.woff2
+```
+
+---
+
+## 12.7 Core Web Vitals Optimization
+
+Optimasi spesifik untuk metrik Core Web Vitals.
+
+### Largest Contentful Paint (LCP):
+
+```astro
+---
+// src/pages/index.astro
+import { Image } from 'astro:assets';
+import heroImage from '../assets/hero.jpg';
+---
+
+<!-- 
+  LCP Optimization:
+  1. Hero image harus load cepat
+  2. Jadikan LCP element
+  3. Hindari overlay yang besar
+-->
+
+<main>
+  <!-- LCP Element: Hero image dengan priority tinggi -->
+  <div class="hero">
+    <Image 
+      src={heroImage}
+      alt="Hero"
+      width={1200}
+      height={600}
+      loading="eager"
+      fetchpriority="high"
+      decoding="sync"
+    />
+    <h1>Selamat Datang</h1>
+  </div>
+  
+  <!-- Content lain -->
+</main>
+
+<style>
+  /* Hindari layout shift dengan aspect ratio */
+  .hero {
+    position: relative;
+    aspect-ratio: 2/1;
+    background: #e5e7eb; /* Placeholder color */
+  }
+  
+  .hero img {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+  
+  /* Text overlay tidak menutupi seluruh image */
+  .hero h1 {
+    position: absolute;
+    bottom: 2rem;
+    left: 2rem;
+    color: white;
+    text-shadow: 0 2px 4px rgba(0,0,0,0.3);
+  }
+</style>
+```
+
+### First Input Delay (FID) / Interaction to Next Paint (INP):
+
+```astro
+---
+// src/components/OptimizedButton.astro
+interface Props {
+  href: string;
+  label: string;
+}
+
+const { href, label } = Astro.props;
+---
+
+<!-- 
+  INP Optimization:
+  1. Gunakan native link (tidak perlu JS untuk navigasi)
+  2. Enhance dengan JS, jangan replace
+-->
+
+<a href={href} class="btn" data-enhanced>
+  {label}
+</a>
+
+<script>
+  // Progressive enhancement: Add behavior, don't replace
+  document.querySelectorAll('a[data-enhanced]').forEach(link => {
+    link.addEventListener('click', (e) => {
+      // Analytics tracking (non-blocking)
+      requestIdleCallback(() => {
+        trackClick(link.href);
+      });
+      
+      // Preload next page (jika internal link)
+      if (link.hostname === location.hostname) {
+        const prefetchLink = document.createElement('link');
+        prefetchLink.rel = 'prefetch';
+        prefetchLink.href = link.href;
+        document.head.appendChild(prefetchLink);
+      }
+    });
+  });
+</script>
+
+<style>
+  .btn {
+    display: inline-block;
+    padding: 0.75rem 1.5rem;
+    background: #3b82f6;
+    color: white;
+    text-decoration: none;
+    border-radius: 8px;
+    font-weight: 600;
+    transition: transform 0.1s; /* Fast transition untuk responsif */
+  }
+  
+  .btn:active {
+    transform: scale(0.98);
+  }
+</style>
+```
+
+### Cumulative Layout Shift (CLS):
+
+```astro
+---
+// src/components/StableLayout.astro
+import { Image } from 'astro:assets';
+import adPlaceholder from '../assets/ad-placeholder.jpg';
+---
+
+<!-- 
+  CLS Prevention:
+  1. Selalu sertakan width/height
+  2. Reserve space untuk dynamic content
+  3. Avoid inserting content above existing content
+-->
+
+<div class="article-layout">
+  <!-- Fixed height untuk ads -->
+  <aside class="ad-container" style="min-height: 250px;">
+    <Image 
+      src={adPlaceholder}
+      alt="Advertisement"
+      width={300}
+      height={250}
+      loading="lazy"
+    />
+  </aside>
+  
+  <!-- Content dengan reserved space -->
+  <article>
+    <h1>Judul Artikel</h1>
+    <p>Konten...</p>
+    
+    <!-- Image dengan explicit dimensions -->
+    <figure class="image-container">
+      <Image 
+        src={articleImage}
+        alt="Article image"
+        width={800}
+        height={450}
+      />
+    </figure>
+  </article>
+  
+  <!-- Sidebar dengan sticky positioning (tidak shift content) -->
+  <aside class="sidebar">
+    <div class="sticky-content">
+      <h3>Related</h3>
+      <!-- Content -->
+    </div>
+  </aside>
+</div>
+
+<style>
+  .article-layout {
+    display: grid;
+    grid-template-columns: 300px 1fr 300px;
+    gap: 2rem;
+    max-width: 1400px;
+    margin: 0 auto;
+  }
+  
+  .ad-container {
+    background: #f3f4f6;
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  
+  .image-container {
+    margin: 2rem 0;
+    /* Aspect ratio container */
+    aspect-ratio: 16/9;
+    background: #e5e7eb;
+  }
+  
+  .image-container img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+  
+  .sidebar .sticky-content {
+    position: sticky;
+    top: 2rem;
+  }
+  
+  @media (max-width: 1024px) {
+    .article-layout {
+      grid-template-columns: 1fr;
+    }
+    
+    .ad-container {
+    }
+  }
+</style>
+```
+
+### Performance Budget:
+
+```javascript
+// astro.config.mjs
+import { defineConfig } from 'astro/config';
+
+export default defineConfig({
+  build: {
+    // Bundle size limits
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          // Split large vendors
+          if (id.includes('node_modules')) {
+            if (id.includes('react')) return 'vendor-react';
+            if (id.includes('lodash')) return 'vendor-lodash';
+            if (id.includes('chart')) return 'vendor-charts';
+            return 'vendor-other';
+          }
+        },
+      },
+    },
+  },
+  
+  vite: {
+    build: {
+      // Warning jika chunk terlalu besar
+      chunkSizeWarningLimit: 500, // 500kb
+    },
+  },
+});
+```
+
+---
+
+## Ringkasan Sesi 12
+
+| Metrik | Optimasi | Implementasi |
+|--------|----------|--------------|
+| **LCP** | Hero image, preload, no overlay | `fetchpriority="high"`, `loading="eager"` |
+| **INP** | Native behavior, fast transitions | Progressive enhancement |
+| **CLS** | Reserved space, explicit dimensions | `width`/`height` attributes, aspect-ratio |
+| **TTFB** | Edge deployment, caching | CDN, SSR optimization |
+| **FCP** | Critical CSS, font display | `font-display: swap`, inline critical CSS |
+| **TBT** | Code splitting, lazy load | Dynamic imports, `client:idle`/`client:visible` |
+
+### Checklist Performance:
+
+- [ ] **Images**: Optimized, responsive, modern formats (AVIF/WebP)
+- [ ] **Fonts**: Preload critical, `font-display: swap`, subsetting
+- [ ] **JavaScript**: Code split, lazy load non-critical
+- [ ] **CSS**: Critical CSS inline, async load non-critical
+- [ ] **Prefetch**: Smart prefetching untuk navigasi cepat
+- [ ] **Caching**: Proper cache headers, service worker
+- [ ] **Monitoring**: Real User Monitoring (RUM) untuk Core Web Vitals
+
+---
+
+**Selanjutnya:** Di Sesi 13, kita akan membahas **SSR, SSG & Hybrid Rendering** - perbedaan mode rendering, kapan menggunakannya, dan strategi caching.

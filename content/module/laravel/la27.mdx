@@ -1,0 +1,669 @@
+---
+title: "Sesi 27: Advanced Migrations & Schema Design"
+description: "Pada sesi ini, kita akan mendalami teknik-teknik advanced dalam database migrations yang esensial untuk aplikasi production-scale. Anda akan memahami ..."
+category: "laravel"
+tags: ["laravel", "database"]
+order: 27
+---
+
+## Tujuan Pembelajaran
+
+Pada sesi ini, kita akan mendalami teknik-teknik advanced dalam database migrations yang esensial untuk aplikasi production-scale. Anda akan memahami cara mendesain skema database yang robust, performant, dan siap untuk high-availability deployment.
+
+## 1. Advanced Column Types
+
+Laravel Schema Builder mendukung berbagai tipe data modern yang powerful untuk kebutuhan aplikasi kontemporer.
+
+### 1.1 JSON & JSONB Columns
+
+```php
+<?php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+return new class extends Migration
+{
+    public function up(): void
+    {
+        Schema::create('products', function (Blueprint $table) {
+            $table->id();
+            $table->string('name');
+            
+            // JSON column untuk metadata fleksibel
+            $table->json('metadata')->nullable();
+            
+            // JSONB untuk PostgreSQL (lebih efisien untuk query)
+            // Laravel otomatis menggunakan JSONB di PostgreSQL
+            $table->json('attributes')->default(json_encode([]));
+            
+            $table->timestamps();
+        });
+    }
+};
+```
+
+> **tip**
+>
+**JSON vs JSONB (PostgreSQL):**
+- **JSON**: Menyimpan data persis seperti input (termasuk whitespace), parsing ulang setiap query
+- **JSONB**: Binary format, lebih compact, mendukung indexing, lebih cepat untuk query kompleks
+
+### 1.2 UUID & ULID
+
+```php
+<?php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Str;
+
+return new class extends Migration
+{
+    public function up(): void
+    {
+        // Tabel dengan UUID sebagai primary key
+        Schema::create('invoices', function (Blueprint $table) {
+            $table->uuid('id')->primary(); // atau $table->uuidPrimary()
+            $table->foreignUuid('user_id')->constrained();
+            $table->string('invoice_number');
+            $table->decimal('total', 12, 2);
+            $table->timestamps();
+        });
+
+        // ULID: Universally Unique Lexicographically Sortable Identifier
+        // Kombinasi keunggulan UUID dan sortability timestamp
+        Schema::create('orders', function (Blueprint $table) {
+            $table->ulid('id')->primary();
+            $table->foreignUlid('customer_id')->constrained();
+            $table->timestamp('ordered_at');
+            $table->timestamps();
+        });
+    }
+};
+```
+
+> **caution**
+>
+**Kapan menggunakan UUID vs ULID vs Big Integer:**
+- **Big Integer**: Performa terbaik, auto-increment, cocok untuk internal systems
+- **UUID**: Keamanan tinggi (tidak predictable), cocok untuk public-facing IDs
+- **ULID**: Sortable by time, 26 karakter (lebih pendek dari UUID), ideal untuk distributed systems
+
+### 1.3 Spatial Data (GIS)
+
+```php
+<?php
+
+Schema::create('locations', function (Blueprint $table) {
+    $table->id();
+    $table->string('name');
+    
+    // Point untuk koordinat latitude/longitude
+    $table->point('coordinates');
+    
+    // Geometry untuk shapes kompleks (polygon, linestring, etc.)
+    $table->geometry('area');
+    
+    // Polygon khusus untuk area tertutup
+    $table->polygon('delivery_zone');
+    
+    $table->spatialIndex('coordinates'); // Index untuk spatial queries
+    $table->timestamps();
+});
+```
+
+Query spatial dengan raw expressions:
+
+```php
+// Cari lokasi dalam radius 5km
+$nearby = Location::selectRaw('
+    *, 
+    ST_Distance_Sphere(coordinates, POINT(?, ?)) as distance
+', [longitude, latitude])
+->having('distance', '<', 5000)
+->orderBy('distance')
+->get();
+```
+
+### 1.4 Full-Text Search Columns
+
+```php
+<?php
+
+Schema::create('articles', function (Blueprint $table) {
+    $table->id();
+    $table->string('title');
+    $table->text('content');
+    $table->text('excerpt')->nullable();
+    
+    // Full-text index untuk MySQL 5.6+ / MariaDB / PostgreSQL
+    $table->fullText(['title', 'content']);
+    
+    // Full-text dengan specific language (PostgreSQL)
+    $table->fullText(['title', 'content'], 'articles_fts', ['language' => 'indonesian']);
+    
+    $table->timestamps();
+});
+```
+
+## 2. Advanced Indexing Strategies
+
+### 2.1 Composite & Multi-Column Indexes
+
+```php
+<?php
+
+Schema::create('analytics', function (Blueprint $table) {
+    $table->id();
+    $table->unsignedBigInteger('user_id');
+    $table->string('event_type');
+    $table->string('country_code', 2);
+    $table->timestamp('event_at');
+    $table->json('payload')->nullable();
+    
+    // Composite index: urutan sangat penting!
+    // Prinsip: Equality first, then range
+    $table->index(['country_code', 'event_type', 'event_at'], 'idx_analytics_query');
+    
+    // Partial index dengan where clause (PostgreSQL)
+    $table->index('user_id', 'idx_premium_users')
+          ->where('subscription_type', 'premium');
+    
+    $table->timestamps();
+});
+```
+
+> **tip**
+>
+**Cardinalitas & Urutan Index:**
+Urutan kolom dalam composite index harus mengikuti aturan:
+1. **Kolom dengan equality checks** (=) dulu
+2. **Kolom dengan range queries** (>, <, BETWEEN) kemudian
+3. **Kolom dengan ORDER BY** terakhir
+
+Contoh: Query `WHERE country = 'ID' AND event_at > '2024-01-01' ORDER BY user_id` 
+→ Index optimal: `(country, event_at, user_id)`
+
+### 2.2 Unique Indexes dengan Kondisi
+
+```php
+<?php
+
+Schema::create('subscriptions', function (Blueprint $table) {
+    $table->id();
+    $table->foreignId('user_id')->constrained();
+    $table->string('plan');
+    $table->timestamp('starts_at');
+    $table->timestamp('ends_at')->nullable();
+    $table->enum('status', ['active', 'cancelled', 'expired'])->default('active');
+    
+    // Unique: satu user hanya boleh satu subscription active
+    $table->unique(['user_id', 'status'], 'unique_active_subscription')
+          ->where('status', 'active'); // PostgreSQL/MySQL 8.0+
+    
+    // Partial unique index untuk soft delete
+    $table->unique(['email', 'deleted_at'], 'unique_email_not_deleted')
+          ->whereNull('deleted_at');
+});
+```
+
+### 2.3 Expression Indexes (PostgreSQL)
+
+```php
+<?php
+
+Schema::create('users', function (Blueprint $table) {
+    $table->id();
+    $table->string('email');
+    $table->string('username');
+    
+    // Index pada lowercase email untuk case-insensitive search
+    $table->rawIndex('LOWER(email)', 'users_email_lower_idx');
+    
+    // Index pada substring/extracted data
+    $table->rawIndex('(username::text COLLATE "C")', 'users_username_collate_idx');
+});
+```
+
+## 3. Foreign Key Constraints Mastery
+
+### 3.1 Referential Actions
+
+```php
+<?php
+
+Schema::create('comments', function (Blueprint $table) {
+    $table->id();
+    $table->text('content');
+    
+    // Foreign key dengan berbagai strategi onDelete
+    $table->foreignId('post_id')
+          ->constrained()
+          ->onDelete('cascade'); // Hapus comment jika post dihapus
+    
+    $table->foreignId('user_id')
+          ->constrained()
+          ->onDelete('restrict'); // Tolak hapus user jika masih punya comment
+    
+    $table->foreignId('parent_id')
+          ->nullable()
+          ->constrained('comments')
+          ->onDelete('set null'); // Jadikan null jika parent comment dihapus
+    
+    // onUpdate strategies
+    $table->foreignId('category_id')
+          ->constrained()
+          ->onUpdate('cascade') // Update category_id jika ID berubah
+          ->onDelete('cascade');
+    
+    $table->timestamps();
+});
+```
+
+> **danger**
+>
+**Performance Impact Foreign Keys:**
+- FK memerlukan index di kedua tabel (referencing dan referenced)
+- `ON DELETE CASCADE` pada tabel besar bisa menyebabkan lock lama
+- Pertimbangkan untuk menghapus FK di tabel dengan high-write volume, handle integritas di aplikasi layer
+
+### 3.2 Deferred Constraints (PostgreSQL)
+
+```php
+<?php
+
+Schema::create('categories', function (Blueprint $table) {
+    $table->id();
+    $table->string('name');
+    $table->foreignId('parent_id')
+          ->nullable()
+          ->constrained('categories')
+          ->deferrable() // Bisa ditunda hingga transaction commit
+          ->initiallyDeferred(); // Default: deferred
+});
+
+// Atau initially immediate (check segera, tapi bisa di-defer)
+Schema::table('tasks', function (Blueprint $table) {
+    $table->foreignId('depends_on_task_id')
+          ->nullable()
+          ->constrained('tasks')
+          ->deferrable()
+          ->initiallyImmediate(); // Check segera, tapi bisa di-defer jika perlu
+});
+```
+
+Penggunaan deferred constraints dalam transaction:
+
+```php
+DB::transaction(function () {
+    // Insert child dulu (biasanya akan gagal karena parent belum ada)
+    Category::create(['id' => 2, 'name' => 'Child', 'parent_id' => 1]);
+    
+    // Insert parent kemudian
+    Category::create(['id' => 1, 'name' => 'Parent', 'parent_id' => null]);
+    
+    // Constraint check terjadi di sini (commit), bukan saat insert
+});
+```
+
+## 4. Database Views & Stored Procedures
+
+### 4.1 Creating Views via Migrations
+
+```php
+<?php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Support\Facades\DB;
+
+return new class extends Migration
+{
+    public function up(): void
+    {
+        // Materialized view untuk reporting (PostgreSQL)
+        DB::statement('
+            CREATE MATERIALIZED VIEW monthly_sales_summary AS
+            SELECT 
+                DATE_TRUNC('month', created_at) as month,
+                COUNT(*) as total_orders,
+                SUM(total_amount) as revenue,
+                AVG(total_amount) as avg_order_value
+            FROM orders
+            WHERE status = 'completed'
+            GROUP BY DATE_TRUNC('month', created_at)
+            ORDER BY month DESC
+        ');
+
+        // Index pada materialized view
+        DB::statement('CREATE UNIQUE INDEX idx_monthly_sales_month ON monthly_sales_summary(month)');
+        
+        // Regular view untuk data dinamis
+        DB::statement('
+            CREATE VIEW active_users_with_stats AS
+            SELECT 
+                u.id,
+                u.name,
+                u.email,
+                COUNT(DISTINCT o.id) as total_orders,
+                COALESCE(SUM(o.total_amount), 0) as lifetime_value
+            FROM users u
+            LEFT JOIN orders o ON u.id = o.user_id AND o.status = 'completed'
+            WHERE u.email_verified_at IS NOT NULL
+            GROUP BY u.id, u.name, u.email
+        ');
+    }
+
+    public function down(): void
+    {
+        DB::statement('DROP MATERIALIZED VIEW IF EXISTS monthly_sales_summary');
+        DB::statement('DROP VIEW IF EXISTS active_users_with_stats');
+    }
+};
+```
+
+Refresh materialized view:
+
+```php
+// Manual refresh
+DB::statement('REFRESH MATERIALIZED VIEW CONCURRENTLY monthly_sales_summary');
+
+// Atau bukan command artisan
+// php artisan make:command RefreshSalesSummary
+```
+
+### 4.2 Stored Procedures & Functions
+
+```php
+<?php
+
+return new class extends Migration
+{
+    public function up(): void
+    {
+        // Function untuk update counter (race-condition safe)
+        DB::statement('
+            CREATE OR REPLACE FUNCTION increment_post_views(post_id bigint)
+            RETURNS void AS $$
+            BEGIN
+                UPDATE posts 
+                SET views_count = views_count + 1,
+                    updated_at = NOW()
+                WHERE id = post_id;
+            END;
+            $$ LANGUAGE plpgsql;
+        ');
+
+        // Procedure untuk bulk operations
+        DB::statement('
+            CREATE OR REPLACE PROCEDURE archive_old_orders(cutoff_date date)
+            LANGUAGE plpgsql
+            AS $$
+            BEGIN
+                INSERT INTO orders_archive 
+                SELECT * FROM orders 
+                WHERE created_at < cutoff_date AND status IN ('completed', 'cancelled');
+                
+                DELETE FROM orders 
+                WHERE created_at < cutoff_date AND status IN ('completed', 'cancelled');
+                
+                COMMIT;
+            END;
+            $$;
+        ');
+    }
+
+    public function down(): void
+    {
+        DB::statement('DROP FUNCTION IF EXISTS increment_post_views');
+        DB::statement('DROP PROCEDURE IF EXISTS archive_old_orders');
+    }
+};
+```
+
+Pemanggilan dari Laravel:
+
+```php
+// Raw query untuk function
+DB::select('SELECT increment_post_views(?)', [$postId]);
+
+// Atau dengan DB::statement untuk procedure
+DB::statement('CALL archive_old_orders(?)', [now()->subYear()]);
+```
+
+## 5. Zero-Downtime Migration Strategies
+
+### 5.1 The Expand-Contract Pattern
+
+Pattern ini memungkinkan perubahan skema tanpa downtime dengan fase:
+1. **Expand**: Tambah kolom/tabel baru (dual-write)
+2. **Migrate**: Copy data lama ke struktur baru (background)
+3. **Contract**: Hapus struktur lama
+
+```php
+<?php
+
+// Step 1: Expand - Tambah kolom baru tanpa menghapus yang lama
+// 2024_01_15_000001_add_normalized_phone_to_users.php
+return new class extends Migration
+{
+    public function up(): void
+    {
+        Schema::table('users', function (Blueprint $table) {
+            $table->string('phone_normalized')->nullable()->after('phone');
+            $table->index('phone_normalized');
+        });
+    }
+};
+```
+
+```php
+<?php
+
+// Step 2: Backfill data (dispatch job atau command)
+// app/Console/Commands/BackfillNormalizedPhone.php
+class BackfillNormalizedPhone extends Command
+{
+    protected $signature = 'backfill:phone';
+    
+    public function handle()
+    {
+        User::whereNull('phone_normalized')
+            ->whereNotNull('phone')
+            ->chunkById(1000, function ($users) {
+                foreach ($users as $user) {
+                    $user->updateQuietly([
+                        'phone_normalized' => $this->normalize($user->phone)
+                    ]);
+                }
+            });
+    }
+    
+    private function normalize($phone)
+    {
+        return preg_replace('/[^0-9]/', '', $phone);
+    }
+}
+```
+
+```php
+<?php
+
+// Step 3: Update aplikasi untuk write ke kedua kolom
+// Model User
+class User extends Model
+{
+    protected static function boot()
+    {
+        parent::boot();
+        
+        static::saving(function ($user) {
+            if ($user->isDirty('phone')) {
+                $user->phone_normalized = preg_replace('/[^0-9]/', '', $user->phone);
+            }
+        });
+    }
+}
+```
+
+```php
+<?php
+
+// Step 4: Contract - Hapus kolom lama (setelah yakin semua data ter-backfill)
+// 2024_01_20_000001_remove_old_phone_column.php
+return new class extends Migration
+{
+    public function up(): void
+    {
+        Schema::table('users', function (Blueprint $table) {
+            $table->dropColumn('phone');
+            $table->renameColumn('phone_normalized', 'phone');
+        });
+    }
+};
+```
+
+### 5.2 Online Schema Changes dengan Percona/pt-online-schema-change
+
+Untuk MySQL dengan tabel besar (>1 juta rows), gunakan tools external:
+
+```bash
+# Install percona-toolkit
+brew install percona-toolkit
+
+# Online schema change (tidak lock tabel)
+pt-online-schema-change \
+    --alter "ADD COLUMN phone_normalized VARCHAR(20)" \
+    --execute \
+    D=production_db,t=users
+```
+
+### 5.3 Migration Safety Checklist
+
+<div class="tabs-container">
+
+### Pre-Migration
+
+```markdown
+☐ Backup database (mysqldump/pg_dump)
+☐ Test migration di staging dengan data production-like
+☐ Periksa ukuran tabel (untuk tabel >1GB, pertimbangkan online tools)
+☐ Cek long-running queries yang mungkin conflict
+☐ Siapkan rollback plan
+☐ Schedule di maintenance window (jika unavoidable)
+```
+
+### During Migration
+
+```markdown
+☐ Gunakan `--force` hanya jika sudah tested
+☐ Monitor dengan `SHOW PROCESSLIST` / `pg_stat_activity`
+☐ Siapkan `kill` command jika terjadi deadlock
+☐ Log execution time untuk audit
+```
+
+### Post-Migration
+
+```markdown
+☐ Verify schema: `SHOW CREATE TABLE` / `\d table_name`
+☐ Run smoke tests pada fitur kritis
+☐ Monitor error logs 30 menit post-deployment
+☐ Verify index usage dengan `EXPLAIN`
+☐ Update documentation & ER diagrams
+```
+
+</div>
+
+## 6. Best Practices & Anti-Patterns
+
+### ✅ Do's
+
+```php
+<?php
+
+// 1. Gunakan transactions untuk data integrity
+DB::transaction(function () {
+    Schema::create('orders', function (Blueprint $table) {
+        $table->id();
+        $table->foreignId('user_id')->constrained();
+        $table->timestamps();
+    });
+    
+    Schema::create('order_items', function (Blueprint $table) {
+        $table->id();
+        $table->foreignId('order_id')->constrained();
+        $table->timestamps();
+    });
+});
+
+// 2. Index naming convention yang jelas
+$table->index(['user_id', 'created_at'], 'idx_orders_user_created');
+
+// 3. Gunakan unsignedBigInteger untuk foreign keys
+$table->unsignedBigInteger('user_id'); // Konsisten dengan $table->id()
+
+// 4. Pertimbangkan charset dan collation
+$table->string('name')->charset('utf8mb4')->collation('utf8mb4_unicode_ci');
+```
+
+### ❌ Don'ts
+
+```php
+<?php
+
+// JANGAN: Menambah kolom nullable tanpa default ke tabel besar
+// (causes full table rewrite di MySQL)
+$table->string('new_column')->nullable(); // ❌ Problematic
+
+// LAKUKAN: Tambah sebagai nullable, kemudian backfill, kemudian set NOT NULL
+// Atau gunakan default untuk kolom baru
+$table->string('new_column')->default(''); // ✅ Better
+
+// JANGAN: Foreign key tanpa index pada kolom referencing
+$table->unsignedBigInteger('user_id'); // Tanpa index! ❌
+$table->foreign('user_id')->references('id')->on('users');
+
+// LAKUKAN: Index otomatis dengan constrained()
+$table->foreignId('user_id')->constrained(); // ✅ Index + FK
+
+// JANGAN: Multiple ALTER TABLE dalam satu migration untuk tabel besar
+// Tiap alter = table copy di MySQL
+
+// LAKUKAN: Gabungkan perubahan dalam satu Schema::table()
+Schema::table('large_table', function (Blueprint $table) {
+    $table->string('col1')->nullable();
+    $table->integer('col2')->default(0);
+    $table->index('col1');
+}); // ✅ Satu operasi
+```
+
+## Latihan Mandiri
+
+1. **Desain tabel `products` dengan:**
+   - UUID primary key
+   - JSON column untuk `attributes` (spesifikasi produk variabel)
+   - Full-text search pada nama dan deskripsi
+   - Spatial index untuk lokasi warehouse
+   - Foreign key ke `categories` dengan `onDelete('restrict')`
+
+2. **Implementasikan Expand-Contract pattern untuk:**
+   - Memisahkan kolom `name` menjadi `first_name` dan `last_name`
+   - Zero-downtime migration dengan backfill data existing
+
+3. **Buat Materialized View untuk:**
+   - Daily revenue report dengan auto-refresh mechanism
+
+## Kesimpulan
+
+Advanced migrations memerlukan pemahaman mendalam tentang:
+- **Database-specific features** (JSONB, ULID, Spatial di PostgreSQL)
+- **Indexing strategies** untuk query performance
+- **Referential integrity** vs **performance trade-offs**
+- **Zero-downtime patterns** untuk production reliability
+
+Selanjutnya di [Sesi 28: Eloquent Model Fundamentals](/sesi-28), kita akan mempelajari cara memaksimalkan Eloquent ORM dengan konvensi yang tepat dan fitur-fitur powerful seperti attribute casting dan accessors.
+```
+
+---

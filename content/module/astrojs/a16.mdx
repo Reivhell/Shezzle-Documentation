@@ -1,0 +1,805 @@
+---
+title: "Sesi 16: Server Islands"
+description: "Server Islands adalah fitur revolusioner di Astro yang memungkinkan kamu memiliki **static shell** (kerangka statis) dengan **dynamic content** (konte..."
+category: "astrojs"
+tags: ["astrojs"]
+order: 16
+---
+
+# Sesi 16: Server Islands
+
+## 16.1 Server Islands Overview
+
+Server Islands adalah fitur revolusioner di Astro yang memungkinkan kamu memiliki **static shell** (kerangka statis) dengan **dynamic content** (konten dinamis) yang di-render di server dan di-stream ke client.
+
+### Analogi Sederhana:
+
+> Bayangkan Server Islands seperti **restoran cepat saji dengan dapur terbuka**. Menu dan dekorasi (static shell) sudah siap sebelumnya, tapi makanan (dynamic content) dimasak fresh saat dipesan dan diantar langsung ke meja. Pelanggan melihat struktur restoran segera, tapi menikmati makanan segar!
+
+### Perbandingan Rendering Strategies:
+
+| Strategi | Karakteristik | Use Case |
+|----------|--------------|----------|
+| **SSG** | Semua statis, build time | Blog, docs |
+| **SSR** | Semua dinamis, per request | Dashboard real-time |
+| **Islands (Client)** | Static + hydrated components | Interactive widgets |
+| **Server Islands** | Static shell + server-rendered dynamic | E-commerce, content sites dengan data real-time |
+
+### Arsitektur Server Islands:
+
+```
+User Request
+    ↓
+Static Shell (Instant from CDN)
+    ↓
+Server Islands (Streamed from origin)
+    ├── Product Price (real-time)
+    ├── Stock Status (real-time)
+    ├── User Recommendations (personalized)
+    └── Live Chat Status (real-time)
+```
+
+---
+
+## 16.2 Creating Server Islands
+
+Membuat komponen server island dengan directive `server:defer`.
+
+### Basic Server Island:
+
+```astro
+---
+// src/components/LivePrice.astro
+// Server Island: Rendered di server, streamed ke client
+
+interface Props {
+  productId: string;
+}
+
+const { productId } = Astro.props;
+
+// Fetch real-time data dari database/API
+const priceData = await db
+  .select({
+    basePrice: products.price,
+    discount: products.discountPercent,
+    stock: products.stockQuantity,
+  })
+  .from(products)
+  .where(eq(products.id, productId))
+  .get();
+
+const finalPrice = priceData.basePrice * (1 - (priceData.discount || 0) / 100);
+const inStock = priceData.stock > 0;
+---
+
+<div class="live-price" data-server-island="live-price">
+  {priceData.discount > 0 && (
+    <span class="original-price">
+      Rp {priceData.basePrice.toLocaleString('id-ID')}
+    </span>
+  )}
+  
+  <span class="current-price">
+    Rp {finalPrice.toLocaleString('id-ID')}
+  </span>
+  
+  {priceData.discount > 0 && (
+    <span class="discount-badge">-{priceData.discount}%</span>
+  )}
+  
+  <span class:list={['stock-status', { 'in-stock': inStock, 'out-of-stock': !inStock }]}>
+    {inStock ? `✓ ${priceData.stock} in stock` : '✗ Out of stock'}
+  </span>
+</div>
+
+<style>
+  .live-price {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+  
+  .original-price {
+    text-decoration: line-through;
+    color: #9ca3af;
+    font-size: 0.875rem;
+  }
+  
+  .current-price {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: #111827;
+  }
+  
+  .discount-badge {
+    display: inline-block;
+    background: #ef4444;
+    color: white;
+    padding: 0.25rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    width: fit-content;
+  }
+  
+  .stock-status {
+    font-size: 0.875rem;
+    font-weight: 500;
+  }
+  
+  .in-stock { color: #16a34a; }
+  .out-of-stock { color: #dc2626; }
+</style>
+```
+
+### Menggunakan Server Island:
+
+```astro
+---
+// src/pages/products/[id].astro
+// Static shell dengan server islands
+
+import Layout from '../../layouts/Layout.astro';
+import ProductGallery from '../../components/ProductGallery.astro'; // Static
+import LivePrice from '../../components/LivePrice.astro'; // Server Island
+import UserReviews from '../../components/UserReviews.astro'; // Static
+import PersonalizedRecs from '../../components/PersonalizedRecs.astro'; // Server Island
+
+export const prerender = true; // Static shell
+
+const { id } = Astro.params;
+
+// Static data: fetched at build time
+const product = await getProduct(id); // Dari CMS/cache
+---
+
+<Layout title={product.name}>
+  <article class="product-page">
+    <!-- Static: Gallery images -->
+    <ProductGallery images={product.images} />
+    
+    <!-- Static: Product info -->
+    <div class="product-info">
+      <h1>{product.name}</h1>
+      <p class="description">{product.description}</p>
+      
+      <!-- Server Island: Real-time price & stock -->
+      <LivePrice server:defer productId={id}>
+        <div slot="fallback" class="price-skeleton">
+          <div class="skeleton-line" style="width: 60%"></div>
+          <div class="skeleton-line" style="width: 40%"></div>
+        </div>
+      </LivePrice>
+      
+      <!-- Static: Add to cart form -->
+      <form action="/api/cart" method="POST">
+        <input type="hidden" name="productId" value={id} />
+        <button type="submit">Add to Cart</button>
+      </form>
+    </div>
+    
+    <!-- Static: Reviews (dari cache) -->
+    <UserReviews productId={id} reviews={product.reviews} />
+    
+    <!-- Server Island: Personalized recommendations -->
+    <PersonalizedRecs server:defer productId={id} userId={Astro.locals.user?.id}>
+      <div slot="fallback" class="recs-skeleton">
+        <p>Loading recommendations...</p>
+      </div>
+    </PersonalizedRecs>
+  </article>
+</Layout>
+
+<style>
+  .product-page {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 3rem;
+    max-width: 1200px;
+    margin: 0 auto;
+  }
+  
+  .price-skeleton {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    padding: 1rem 0;
+  }
+  
+  .skeleton-line {
+    height: 1.5rem;
+    background: #e5e7eb;
+    border-radius: 4px;
+    animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  }
+  
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: .5; }
+  }
+  
+  @media (max-width: 768px) {
+    .product-page {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>
+```
+
+---
+
+## 16.3 Dynamic Content with Server Islands
+
+Berbagai use case untuk konten dinamis di server islands.
+
+### Real-time Data:
+
+```astro
+---
+// src/components/LiveStats.astro
+// Server Island untuk data real-time
+
+interface Props {
+  metric: 'users' | 'revenue' | 'orders';
+  timeframe: '1h' | '24h' | '7d';
+}
+
+const { metric, timeframe } = Astro.props;
+
+// Query real-time analytics
+const stats = await analytics.query({
+  metric,
+  timeframe,
+  realtime: true,
+});
+
+const formattedValue = formatMetric(stats.value, metric);
+const trend = stats.change > 0 ? 'up' : stats.change < 0 ? 'down' : 'neutral';
+---
+
+<div class="live-stat" data-metric={metric}>
+  <span class="stat-value">{formattedValue}</span>
+  <span class:list={['stat-trend', trend]}>
+    {trend === 'up' && '↑'}
+    {trend === 'down' && '↓'}
+    {Math.abs(stats.change)}%
+  </span>
+  <span class="stat-label">vs last {timeframe}</span>
+</div>
+
+<style>
+  .live-stat {
+    display: flex;
+    flex-direction: column;
+    padding: 1.5rem;
+    background: white;
+    border-radius: 12px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+  }
+  
+  .stat-value {
+    font-size: 2rem;
+    font-weight: 700;
+    color: #111827;
+  }
+  
+  .stat-trend {
+    font-size: 0.875rem;
+    font-weight: 600;
+  }
+  
+  .stat-trend.up { color: #16a34a; }
+  .stat-trend.down { color: #dc2626; }
+  .stat-trend.neutral { color: #6b7280; }
+  
+  .stat-label {
+    font-size: 0.75rem;
+    color: #9ca3af;
+    margin-top: 0.25rem;
+  }
+</style>
+```
+
+### User-specific Content:
+
+```astro
+---
+// src/components/PersonalizedRecs.astro
+// Server Island dengan user personalization
+
+interface Props {
+  productId: string;
+  userId?: string;
+}
+
+const { productId, userId } = Astro.props;
+
+// Default: popular items
+let recommendations = await getPopularProducts(productId, 4);
+
+// Jika logged in: personalized recommendations
+if (userId) {
+  const userProfile = await getUserProfile(userId);
+  recommendations = await getPersonalizedRecs({
+    userId,
+    currentProduct: productId,
+    preferences: userProfile.preferences,
+    purchaseHistory: userProfile.orders,
+  });
+}
+---
+
+<section class="personalized-recs">
+  <h2>You Might Also Like</h2>
+  
+  <div class="rec-grid">
+    {recommendations.map(rec => (
+      <a href={`/products/${rec.id}`} class="rec-card">
+        <img src={rec.image} alt={rec.name} loading="lazy" />
+        <h3>{rec.name}</h3>
+        <p>Rp {rec.price.toLocaleString('id-ID')}</p>
+        
+        {userId && rec.reason && (
+          <span class="rec-reason">{rec.reason}</span>
+        )}
+      </a>
+    ))}
+  </div>
+</section>
+
+<style>
+  .personalized-recs {
+    margin-top: 3rem;
+    padding-top: 2rem;
+    border-top: 1px solid #e5e7eb;
+  }
+  
+  .rec-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1.5rem;
+    margin-top: 1rem;
+  }
+  
+  .rec-card {
+    text-decoration: none;
+    color: inherit;
+  }
+  
+  .rec-card img {
+    width: 100%;
+    aspect-ratio: 1;
+    object-fit: cover;
+    border-radius: 8px;
+  }
+  
+  .rec-reason {
+    display: inline-block;
+    font-size: 0.75rem;
+    color: #3b82f6;
+    background: #eff6ff;
+    padding: 0.25rem 0.5rem;
+    border-radius: 4px;
+    margin-top: 0.5rem;
+  }
+  
+  @media (max-width: 768px) {
+    .rec-grid {
+      grid-template-columns: repeat(2, 1fr);
+    }
+  }
+</style>
+```
+
+### A/B Testing:
+
+```astro
+---
+// src/components/Experiment.astro
+// Server Island untuk A/B testing
+
+interface Props {
+  experimentId: string;
+  userId?: string;
+}
+
+const { experimentId, userId } = Astro.props;
+
+// Determine variant server-side (no flicker!)
+let variant = 'control';
+
+if (userId) {
+  // Consistent variant per user
+  const userHash = hashUserId(userId + experimentId);
+  variant = userHash % 2 === 0 ? 'control' : 'treatment';
+  
+  // Track impression
+  await trackExperimentImpression({
+    experimentId,
+    variant,
+    userId,
+  });
+}
+---
+
+<div class="experiment" data-experiment={experimentId} data-variant={variant}>
+  {variant === 'control' ? (
+    <div class="variant-control">
+      <h2>Original Headline</h2>
+      <p>Original description text...</p>
+      <button>Original CTA</button>
+    </div>
+  ) : (
+    <div class="variant-treatment">
+      <h2>New Headline!</h2>
+      <p>New compelling description...</p>
+      <button class="highlighted">New CTA</button>
+    </div>
+  )}
+</div>
+
+<script>
+  // Track interactions
+  document.querySelectorAll('[data-experiment]').forEach(el => {
+    const { experiment, variant } = el.dataset;
+    
+    el.querySelectorAll('button, a').forEach(btn => {
+      btn.addEventListener('click', () => {
+        fetch('/api/experiment/track', {
+          method: 'POST',
+          body: JSON.stringify({
+            experimentId: experiment,
+            variant,
+            event: 'click',
+          }),
+        });
+      });
+    });
+  });
+</script>
+```
+
+---
+
+## 16.4 Personalization with Server Islands
+
+Personalization yang efektif tanpa sacrificing performance.
+
+### Geo-based Personalization:
+
+```astro
+---
+// src/components/GeoContent.astro
+// Server Island dengan geo-location
+
+interface Props {
+  contentType: 'pricing' | 'shipping' | 'promotions';
+}
+
+const { contentType } = Astro.props;
+
+// Get geo dari request headers (CDN-provided)
+const country = Astro.request.headers.get('cf-ipcountry') || 
+                Astro.request.headers.get('x-vercel-ip-country') || 
+                'ID';
+
+const region = getRegionByCountry(country);
+
+let content;
+
+switch (contentType) {
+  case 'pricing':
+    content = {
+      currency: region.currency,
+      price: await getLocalizedPrice(productId, region),
+      vat: region.vatRate,
+    };
+    break;
+    
+  case 'shipping':
+    content = {
+      methods: await getShippingMethods(region),
+      estimatedDays: region.shippingDays,
+      freeShippingThreshold: region.freeShippingThreshold,
+    };
+    break;
+    
+  case 'promotions':
+    content = await getActivePromotions(region);
+    break;
+}
+---
+
+<div class="geo-content" data-region={region.code}>
+  {contentType === 'pricing' && (
+    <div class="localized-pricing">
+      <span class="price">{content.currency} {content.price}</span>
+      <span class="vat">incl. {content.vat}% VAT</span>
+    </div>
+  )}
+  
+  {contentType === 'shipping' && (
+    <div class="shipping-info">
+      <p>🚚 {content.estimatedDays} days to {region.name}</p>
+      {content.freeShippingThreshold && (
+        <p>Free shipping over {content.currency} {content.freeShippingThreshold}</p>
+      )}
+    </div>
+  )}
+  
+  {contentType === 'promotions' && content.map(promo => (
+    <div class="promo-badge" style={`background: ${promo.color}`}>
+      {promo.text}
+    </div>
+  ))}
+</div>
+```
+
+### Time-sensitive Content:
+
+```astro
+---
+// src/components/CountdownDeal.astro
+// Server Island untuk deals time-sensitive
+
+interface Props {
+  dealId: string;
+}
+
+const { dealId } = Astro.props;
+
+// Server time (accurate)
+const now = new Date();
+
+const deal = await db
+  .select()
+  .from(deals)
+  .where(eq(deals.id, dealId))
+  .get();
+
+const isActive = now >= deal.startTime && now <= deal.endTime;
+const timeRemaining = deal.endTime.getTime() - now.getTime();
+const hoursLeft = Math.floor(timeRemaining / (1000 * 60 * 60));
+const minutesLeft = Math.floor((timeRemaining % (1000 * 60 * 60)) / (1000 * 60));
+---
+
+{isActive ? (
+  <div class="countdown-deal" data-end-time={deal.endTime.toISOString()}>
+    <div class="deal-header">
+      <span class="badge">⚡ Flash Sale</span>
+      <span class="timer" data-hours={hoursLeft} data-minutes={minutesLeft}>
+        Ends in {hoursLeft}h {minutesLeft}m
+      </span>
+    </div>
+    
+    <div class="deal-price">
+      <span class="original">Rp {deal.originalPrice.toLocaleString()}</span>
+      <span class="sale">Rp {deal.salePrice.toLocaleString()}</span>
+      <span class="savings">Save {Math.round((1 - deal.salePrice/deal.originalPrice) * 100)}%</span>
+    </div>
+    
+    <div class="stock-meter">
+      <div class="stock-bar" style={`width: ${(deal.sold / deal.total) * 100}%`}></div>
+      <span>{deal.total - deal.sold} left</span>
+    </div>
+  </div>
+) : (
+  <div class="deal-expired">
+    <p>This deal has ended</p>
+    <a href="/deals">View current deals</a>
+  </div>
+)}
+
+<script>
+  // Client-side countdown untuk smooth update
+  const timers = document.querySelectorAll('.timer');
+  
+  timers.forEach(timer => {
+    let { hours, minutes } = timer.dataset;
+    let totalMinutes = parseInt(hours) * 60 + parseInt(minutes);
+    
+    const interval = setInterval(() => {
+      totalMinutes--;
+      
+      if (totalMinutes <= 0) {
+        clearInterval(interval);
+        location.reload(); // Refresh saat deal end
+        return;
+      }
+      
+      const h = Math.floor(totalMinutes / 60);
+      const m = totalMinutes % 60;
+      timer.textContent = `Ends in ${h}h ${m}m`;
+    }, 60000);
+  });
+</script>
+
+<style>
+  .countdown-deal {
+    background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
+    padding: 1.5rem;
+    border-radius: 12px;
+    border: 2px solid #f59e0b;
+  }
+  
+  .deal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1rem;
+  }
+  
+  .badge {
+    background: #ef4444;
+    color: white;
+    padding: 0.25rem 0.75rem;
+    border-radius: 9999px;
+    font-size: 0.875rem;
+    font-weight: 600;
+  }
+  
+  .timer {
+    font-weight: 600;
+    color: #92400e;
+  }
+  
+  .deal-price {
+    display: flex;
+    align-items: baseline;
+    gap: 1rem;
+    margin-bottom: 1rem;
+  }
+  
+  .original {
+    text-decoration: line-through;
+    color: #9ca3af;
+  }
+  
+  .sale {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: #dc2626;
+  }
+  
+  .savings {
+    background: #dc2626;
+    color: white;
+    padding: 0.25rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.75rem;
+  }
+  
+  .stock-meter {
+    background: #fed7aa;
+    height: 8px;
+    border-radius: 4px;
+    overflow: hidden;
+    position: relative;
+  }
+  
+  .stock-bar {
+    background: #f97316;
+    height: 100%;
+    transition: width 0.3s;
+  }
+</style>
+```
+
+---
+
+## 16.5 Caching Server Islands
+
+Strategi caching untuk optimasi Server Islands.
+
+### Cache Configuration:
+
+```astro
+---
+// src/components/LivePrice.astro
+
+// Cache control untuk server island
+Astro.response.headers.set('Cache-Control', 'private, max-age=60, stale-while-revalidate=300');
+// 60 detik browser cache, 5 menit stale-while-revalidate
+
+const { productId } = Astro.props;
+
+// Try cache first
+const cacheKey = `price:${productId}`;
+let priceData = await cache.get(cacheKey);
+
+if (!priceData) {
+  // Fetch dari database
+  priceData = await db.select().from(products).where(eq(products.id, productId)).get();
+  
+  // Simpan ke cache (60 detik)
+  await cache.set(cacheKey, priceData, { ttl: 60 });
+}
+---
+
+<!-- Render dengan cached atau fresh data -->
+```
+
+### Conditional Rendering:
+
+```astro
+---
+// src/components/SmartIsland.astro
+interface Props {
+  productId: string;
+  freshness?: 'realtime' | 'balanced' | 'cached';
+}
+
+const { productId, freshness = 'balanced' } = Astro.props;
+
+let data;
+let cacheStatus;
+
+switch (freshness) {
+  case 'realtime':
+    // Selalu fetch fresh
+    data = await fetchRealtimeData(productId);
+    cacheStatus = 'BYPASS';
+    break;
+    
+  case 'balanced':
+    // Stale-while-revalidate
+    const cached = await cache.get(`product:${productId}`);
+    if (cached && cached.age < 60) {
+      data = cached.data;
+      cacheStatus = 'HIT';
+    } else {
+      data = await fetchData(productId);
+      await cache.set(`product:${productId}`, data, { ttl: 300 });
+      cacheStatus = cached ? 'STALE' : 'MISS';
+    }
+    break;
+    
+  case 'cached':
+    // Cache first, background update
+    const strongCached = await cache.get(`product:${productId}`);
+    if (strongCached) {
+      data = strongCached.data;
+      cacheStatus = 'HIT';
+      // Background refresh
+      fetchData(productId).then(fresh => 
+        cache.set(`product:${productId}`, fresh, { ttl: 3600 })
+      );
+    } else {
+      data = await fetchData(productId);
+      await cache.set(`product:${productId}`, data, { ttl: 3600 });
+      cacheStatus = 'MISS';
+    }
+    break;
+}
+---
+
+<div class="smart-island" data-cache-status={cacheStatus}>
+  <!-- Render content -->
+</div>
+```
+
+---
+
+## Ringkasan Sesi 16
+
+| Konsep | Deskripsi | Use Case |
+|--------|-----------|----------|
+| **Server Islands** | Static shell + server-rendered dynamic | E-commerce, content sites |
+| **`server:defer`** | Directive untuk server island | `<Component server:defer />` |
+| **Fallback slot** | Placeholder saat loading | UX yang smooth |
+| **Real-time data** | Fresh data per request | Prices, stock, analytics |
+| **Personalization** | User/geo specific content | Recommendations, pricing |
+| **Caching** | Optimasi performance | SWR, cache-control headers |
+
+### Best Practices:
+
+1. **Static First**: Default ke static, gunakan islands untuk dynamic parts
+2. **Minimal Islands**: Jangan over-use, fokus pada data yang benar-benar perlu real-time
+3. **Good Fallbacks**: Selalu sediakan slot fallback yang meaningful
+4. **Smart Caching**: Gunakan stale-while-revalidate untuk balance freshness dan speed
+5. **Progressive Enhancement**: Islands tetap works tanpa JavaScript
+
+---
+
+**Selanjutnya:** Di Sesi 17, kita akan membahas **Environment Variables & Configuration** - manajemen secrets, public/private vars, dan konfigurasi multi-environment.

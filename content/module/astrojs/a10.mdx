@@ -1,0 +1,900 @@
+---
+title: "Sesi 10: Styling & CSS"
+description: "Styles langsung pada elemen menggunakan atribut `style`. Berguna untuk styling dinamis berdasarkan data."
+category: "astrojs"
+tags: ["astrojs"]
+order: 10
+---
+
+# Sesi 10: Styling & CSS
+
+## 10.1 Inline Styles
+
+Styles langsung pada elemen menggunakan atribut `style`. Berguna untuk styling dinamis berdasarkan data.
+
+### Penggunaan Dasar:
+
+```astro
+---
+// src/components/Alert.astro
+interface Props {
+  type: 'info' | 'success' | 'warning' | 'error';
+  message: string;
+}
+
+const { type, message } = Astro.props;
+
+// Style objects berdasarkan type
+const styles = {
+  info: { background: '#eff6ff', borderColor: '#3b82f6', color: '#1e40af' },
+  success: { background: '#f0fdf4', borderColor: '#22c55e', color: '#166534' },
+  warning: { background: '#fffbeb', borderColor: '#f59e0b', color: '#92400e' },
+  error: { background: '#fef2f2', borderColor: '#ef4444', color: '#991b1b' },
+};
+
+const currentStyle = styles[type];
+---
+
+<div 
+  class="alert"
+  style={`
+    background-color: ${currentStyle.background};
+    border-color: ${currentStyle.borderColor};
+    color: ${currentStyle.color};
+  `}
+>
+  <span class="icon">{type === 'info' ? 'ℹ️' : type === 'success' ? '✅' : type === 'warning' ? '⚠️' : '❌'}</span>
+  <p>{message}</p>
+</div>
+
+<style>
+  .alert {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 1rem;
+    border-radius: 8px;
+    border: 1px solid;
+    margin: 1rem 0;
+  }
+  
+  .icon {
+    font-size: 1.25rem;
+  }
+  
+  p {
+    margin: 0;
+  }
+</style>
+```
+
+### Style Object (Cara Lebih Bersih):
+
+```astro
+---
+// src/components/ProgressBar.astro
+interface Props {
+  progress: number; // 0-100
+  color?: string;
+}
+
+const { progress, color = '#3b82f6' } = Astro.props;
+
+// Style object
+const barStyle = {
+  width: `${Math.min(Math.max(progress, 0), 100)}%`,
+  backgroundColor: color,
+  transition: 'width 0.3s ease',
+};
+---
+
+<div class="progress-container">
+  <div class="progress-bar" style={barStyle}></div>
+  <span class="progress-text">{progress}%</span>
+</div>
+
+<style>
+  .progress-container {
+    width: 100%;
+    height: 24px;
+    background: #e5e7eb;
+    border-radius: 12px;
+    overflow: hidden;
+    position: relative;
+  }
+  
+  .progress-bar {
+    height: 100%;
+    border-radius: 12px;
+  }
+  
+  .progress-text {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: #374151;
+  }
+</style>
+```
+
+---
+
+## 10.2 Style Tags
+
+Tag `<style>` di Astro bersifat **scoped by default** - styles hanya berlaku untuk elemen di komponen tersebut.
+
+### Scoped Styles (Default):
+
+```astro
+---
+// src/components/Button.astro
+interface Props {
+  variant?: 'primary' | 'secondary' | 'ghost';
+}
+
+const { variant = 'primary' } = Astro.props;
+---
+
+<button class:list={['btn', variant]}>
+  <slot />
+</button>
+
+<style>
+  /* Scoped: hanya berlaku untuk button di komponen ini */
+  .btn {
+    padding: 0.75rem 1.5rem;
+    border-radius: 8px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+    border: none;
+  }
+  
+  .primary {
+    background: #3b82f6;
+    color: white;
+  }
+  
+  .primary:hover {
+    background: #2563eb;
+  }
+  
+  .secondary {
+    background: #e5e7eb;
+    color: #374151;
+  }
+  
+  .ghost {
+    background: transparent;
+    color: #3b82f6;
+    border: 2px solid #3b82f6;
+  }
+</style>
+```
+
+### Global Styles dengan `<style is:global>`:
+
+```astro
+---
+// src/layouts/BaseLayout.astro
+---
+
+<!DOCTYPE html>
+<html lang="id">
+  <head>
+    <meta charset="utf-8" />
+    <title>My Site</title>
+  </head>
+  <body>
+    <slot />
+  </body>
+</html>
+
+<!-- Global styles: berlaku untuk seluruh website -->
+<style is:global>
+  /* CSS Reset */
+  *, *::before, *::after {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+  }
+  
+  /* Base typography */
+  body {
+    font-family: system-ui, -apple-system, sans-serif;
+    line-height: 1.6;
+    color: #1f2937;
+  }
+  
+  /* Global utility classes */
+  .container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 0 1rem;
+  }
+  
+  .visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    border: 0;
+  }
+</style>
+```
+
+### Raw Styles dengan `<style is:raw>`:
+
+```astro
+---
+// src/components/ExternalCss.astro
+// Untuk CSS yang tidak perlu diproses Astro
+---
+
+<style is:raw>
+  /* CSS dari library eksternal yang tidak perlu scoped */
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
+  
+  /* Animations */
+  @keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+</style>
+```
+
+---
+
+## 10.3 CSS Modules
+
+Astro mendukung CSS Modules untuk styling dengan class names yang di-scope secara otomatis.
+
+### Penggunaan CSS Modules:
+
+```astro
+---
+// src/components/Card.astro
+import styles from './Card.module.css';
+
+interface Props {
+}
+
+const { title, description } = Astro.props;
+---
+
+<article class={styles.card}>
+  <h3 class={styles.title}>{title}</h3>
+  <p class={styles.description}>{description}</p>
+  <button class={styles.button}>Read More</button>
+</article>
+```
+
+```css
+/* src/components/Card.module.css */
+.card {
+  background: white;
+  border-radius: 12px;
+  padding: 1.5rem;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+}
+
+.title {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: #111827;
+  margin: 0 0 0.5rem;
+}
+
+.description {
+  color: #6b7280;
+  line-height: 1.6;
+  margin: 0 0 1rem;
+}
+
+.button {
+  background: #3b82f6;
+  color: white;
+  border: none;
+  padding: 0.5rem 1rem;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.button:hover {
+  background: #2563eb;
+}
+```
+
+### Typed CSS Modules (dengan TypeScript):
+
+```typescript
+// src/types/css-modules.d.ts
+declare module '*.module.css' {
+  const classes: { [key: string]: string };
+  export default classes;
+}
+
+declare module '*.module.scss' {
+  const classes: { [key: string]: string };
+  export default classes;
+}
+```
+
+---
+
+## 10.4 Tailwind CSS Integration
+
+Tailwind adalah utility-first CSS framework yang sangat populer dan terintegrasi baik dengan Astro.
+
+### Instalasi:
+
+```bash
+npx astro add tailwind
+# atau
+npm install @astrojs/tailwind tailwindcss postcss autoprefixer
+npx tailwindcss init -p
+```
+
+### Konfigurasi:
+
+```javascript
+// tailwind.config.mjs
+/** @type {import('tailwindcss').Config} */
+export default {
+  content: ['./src/**/*.{astro,html,js,jsx,md,mdx,svelte,ts,tsx,vue}'],
+  theme: {
+    extend: {
+      colors: {
+        primary: {
+          50: '#eff6ff',
+          100: '#dbeafe',
+          500: '#3b82f6',
+          600: '#2563eb',
+          700: '#1d4ed8',
+        },
+      },
+      fontFamily: {
+        sans: ['Inter', 'system-ui', 'sans-serif'],
+      },
+    },
+  },
+  plugins: [
+    require('@tailwindcss/typography'),
+    require('@tailwindcss/forms'),
+  ],
+};
+```
+
+```css
+/* src/styles/global.css */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer components {
+  .btn-primary {
+    @apply px-4 py-2 bg-primary-600 text-white rounded-lg font-semibold 
+           hover:bg-primary-700 transition-colors focus:outline-none 
+           focus:ring-2 focus:ring-primary-500 focus:ring-offset-2;
+  }
+  
+  .card {
+    @apply bg-white rounded-xl shadow-md p-6 hover:shadow-lg transition-shadow;
+  }
+}
+```
+
+### Penggunaan di Astro:
+
+```astro
+---
+// src/components/ProductCard.astro
+interface Props {
+  name: string;
+  price: number;
+  image: string;
+  badge?: string;
+}
+
+const { name, price, image, badge } = Astro.props;
+---
+
+<article class="group relative bg-white rounded-2xl shadow-sm hover:shadow-xl transition-all duration-300 overflow-hidden">
+  {badge && (
+    <span class="absolute top-3 left-3 z-10 px-3 py-1 bg-red-500 text-white text-xs font-bold rounded-full">
+      {badge}
+    </span>
+  )}
+  
+  <div class="aspect-w-16 aspect-h-9 overflow-hidden bg-gray-100">
+    <img 
+      src={image} 
+      alt={name}
+      class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+    />
+  </div>
+  
+  <div class="p-5">
+    <h3 class="text-lg font-semibold text-gray-900 group-hover:text-primary-600 transition-colors">
+      {name}
+    </h3>
+    
+    <div class="mt-2 flex items-baseline gap-2">
+      <span class="text-2xl font-bold text-gray-900">
+        Rp {price.toLocaleString('id-ID')}
+      </span>
+    </div>
+    
+    <button class="mt-4 w-full btn-primary">
+      Add to Cart
+    </button>
+  </div>
+</article>
+```
+
+### Tailwind dengan Dark Mode:
+
+```javascript
+// tailwind.config.mjs
+export default {
+  darkMode: 'class', // atau 'media'
+  // ...
+};
+```
+
+```astro
+---
+// src/components/ThemeToggle.astro
+---
+
+<button 
+  id="theme-toggle"
+  class="p-2 rounded-lg bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200"
+  aria-label="Toggle theme"
+>
+  <span class="dark:hidden">🌙</span>
+  <span class="hidden dark:inline">☀️</span>
+</button>
+
+<script>
+  const toggle = document.getElementById('theme-toggle');
+  const html = document.documentElement;
+  
+  // Check localStorage atau system preference
+  const theme = localStorage.getItem('theme') || 
+    (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+  
+  html.classList.toggle('dark', theme === 'dark');
+  
+  toggle?.addEventListener('click', () => {
+    html.classList.toggle('dark');
+    localStorage.setItem('theme', html.classList.contains('dark') ? 'dark' : 'light');
+  });
+</script>
+```
+
+---
+
+## 10.5 CSS-in-JS Libraries
+
+Astro mendukung beberapa CSS-in-JS libraries, meskipun scoped styles native lebih direkomendasikan untuk performa.
+
+### Styled Components (dengan React):
+
+```bash
+npm install styled-components
+```
+
+```jsx
+// src/components/react/StyledButton.jsx
+import styled from 'styled-components';
+
+const Button = styled.button`
+  padding: 0.75rem 1.5rem;
+  border-radius: 8px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  background: ${props => props.variant === 'primary' ? '#3b82f6' : '#e5e7eb'};
+  color: ${props => props.variant === 'primary' ? 'white' : '#374151'};
+  border: none;
+
+  &:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  }
+`;
+
+export default function StyledButton({ children, variant = 'primary', ...props }) {
+  return (
+    <Button variant={variant} {...props}>
+      {children}
+    </Button>
+  );
+}
+```
+
+```astro
+---
+// src/pages/index.astro
+import StyledButton from '../components/react/StyledButton.jsx';
+---
+
+<StyledButton client:load variant="primary">
+  Click Me
+</StyledButton>
+```
+
+### Panda CSS (CSS-in-JS yang kompatibel dengan Astro):
+
+```bash
+npm install @pandacss/dev
+npx panda init
+```
+
+```typescript
+// panda.config.ts
+import { defineConfig } from '@pandacss/dev';
+
+export default defineConfig({
+  preflight: true,
+  include: ['./src/**/*.{js,jsx,ts,tsx,astro}'],
+  exclude: [],
+  theme: {
+    extend: {},
+  },
+  outdir: 'styled-system',
+});
+```
+
+```astro
+---
+// src/components/PandaButton.astro
+import { css } from '../../styled-system/css';
+
+const buttonClass = css({
+  padding: '0.75rem 1.5rem',
+  borderRadius: '8px',
+  fontWeight: '600',
+  cursor: 'pointer',
+  transition: 'all 0.2s',
+  background: 'primary.500',
+  color: 'white',
+  _hover: {
+    background: 'primary.600',
+    transform: 'translateY(-2px)',
+  },
+});
+---
+
+<button class={buttonClass}>
+  <slot />
+</button>
+```
+
+---
+
+## 10.6 Scoped Styles
+
+Scoped styles adalah fitur default Astro yang paling powerful untuk mencegah CSS leaking.
+
+### Cara Kerja Scoped Styles:
+
+```astro
+---
+// src/components/Card.astro
+---
+
+<div class="card">
+  <h2 class="title">Card Title</h2>
+  <p class="content">Card content here.</p>
+</div>
+
+<style>
+  /* Astro akan menambahkan hash unik ke setiap selector */
+  .card { /* menjadi .card[data-astro-cid-XXXX] */ }
+  .title { /* menjadi .title[data-astro-cid-XXXX] */ }
+</style>
+```
+
+Output HTML:
+
+```html
+<div class="card" data-astro-cid-j7pv25f6>
+  <h2 class="title" data-astro-cid-j7pv25f6>Card Title</h2>
+  <p class="content" data-astro-cid-j7pv25f6>Card content here.</p>
+</div>
+
+<style>
+  .card[data-astro-cid-j7pv25f6] { /* styles */ }
+  .title[data-astro-cid-j7pv25f6] { /* styles */ }
+</style>
+```
+
+### Kombinasi Scoped dan Global:
+
+```astro
+---
+// src/components/MixedStyles.astro
+---
+
+<div class="component">
+  <h2>Title</h2>
+  <p>Content with <a href="#">link</a>.</p>
+</div>
+
+<!-- Scoped styles untuk komponen ini -->
+<style>
+  .component {
+    padding: 1rem;
+    border: 1px solid #e5e7eb;
+  }
+  
+  h2 {
+    color: #3b82f6; /* Hanya h2 di komponen ini */
+  }
+</style>
+
+<!-- Global styles untuk children (jika perlu) -->
+<style is:global>
+  .component a {
+    color: inherit;
+    text-decoration: underline;
+  }
+</style>
+```
+
+### `:global()` Selector:
+
+```astro
+---
+// src/components/Modal.astro
+---
+
+<div class="modal">
+  <div class="backdrop"></div>
+  <div class="content">
+    <slot />
+  </div>
+</div>
+
+<style>
+  .modal {
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+  }
+  
+  /* Backdrop tidak scoped, affect global DOM */
+  .modal :global(.backdrop) {
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+  }
+  
+  /* Content tetap scoped */
+  .content {
+    position: relative;
+    background: white;
+    padding: 2rem;
+    border-radius: 12px;
+  }
+</style>
+```
+
+---
+
+## 10.7 Global Styles
+
+Strategi untuk mengelola styles global dalam project Astro.
+
+### 1. Global CSS File:
+
+```css
+/* src/styles/global.css */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Design Tokens */
+:root {
+  --color-primary: #3b82f6;
+  --color-primary-dark: #2563eb;
+  --color-text: #1f2937;
+  --color-text-muted: #6b7280;
+  --color-bg: #ffffff;
+  --color-bg-alt: #f9fafb;
+  
+  --font-sans: system-ui, -apple-system, sans-serif;
+  --font-mono: 'Fira Code', monospace;
+  
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+}
+
+/* Dark mode */
+:root.dark {
+  --color-text: #f9fafb;
+  --color-text-muted: #9ca3af;
+  --color-bg: #111827;
+  --color-bg-alt: #1f2937;
+}
+
+/* Base styles */
+body {
+  font-family: var(--font-sans);
+  color: var(--color-text);
+  background: var(--color-bg);
+  line-height: 1.6;
+}
+
+/* Typography */
+h1, h2, h3, h4, h5, h6 {
+  font-weight: 700;
+  line-height: 1.2;
+  margin-bottom: 1rem;
+}
+
+h1 { font-size: 2.5rem; }
+h2 { font-size: 2rem; }
+h3 { font-size: 1.5rem; }
+
+/* Links */
+a {
+  color: var(--color-primary);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+/* Utilities */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+```
+
+```astro
+---
+// src/layouts/BaseLayout.astro
+---
+
+<!DOCTYPE html>
+<html lang="id">
+  <head>
+    <meta charset="utf-8" />
+    <title>My Site</title>
+    <!-- Import global CSS -->
+    <link rel="stylesheet" href="/src/styles/global.css" />
+  </head>
+  <body>
+    <slot />
+  </body>
+</html>
+```
+
+### 2. CSS Imports di Layout:
+
+```astro
+---
+// src/layouts/BaseLayout.astro
+// Import CSS Modules atau plain CSS
+import '../styles/reset.css';
+import '../styles/typography.css';
+import '../styles/components.css';
+---
+
+<!DOCTYPE html>
+<html lang="id">
+  <head>
+    <meta charset="utf-8" />
+    <title>My Site</title>
+  </head>
+  <body>
+    <slot />
+  </body>
+</html>
+
+<!-- Scoped layout styles -->
+<style>
+  /* Layout-specific styles */
+</style>
+```
+
+### 3. Import dalam Komponen:
+
+```astro
+---
+// src/components/SpecialComponent.astro
+// Import CSS khusus untuk komponen ini
+import 'prismjs/themes/prism-tomorrow.css';
+import '../styles/animations.css';
+---
+
+<div class="special">
+  <slot />
+</div>
+```
+
+### 4. Dynamic Theme Injection:
+
+```astro
+---
+// src/layouts/ThemeLayout.astro
+interface Props {
+  theme?: 'light' | 'dark' | 'auto';
+}
+
+const { theme = 'auto' } = Astro.props;
+
+const themeStyles = {
+  light: ':root { --bg: #fff; --text: #000; }',
+  dark: ':root { --bg: #000; --text: #fff; }',
+  auto: '@media (prefers-color-scheme: dark) { :root { --bg: #000; --text: #fff; } }',
+};
+---
+
+<!DOCTYPE html>
+<html lang="id">
+  <head>
+    <meta charset="utf-8" />
+    <title>Themed Site</title>
+    <style set:html={themeStyles[theme]} />
+  </head>
+  <body>
+    <slot />
+  </body>
+</html>
+```
+
+---
+
+## Ringkasan Sesi 10
+
+| Metode | Use Case | Kelebihan | Kekurangan |
+|--------|----------|-----------|------------|
+| **Inline Styles** | Styling dinamis | Fleksibel | Tidak scalable |
+| **Scoped `<style>`** | Komponen Astro | Auto-isolation, zero config | Tidak shareable |
+| **CSS Modules** | Komponen kompleks | Typed, scoped | File terpisah |
+| **Tailwind** | Utility-first, rapid dev | Konsisten, responsive | HTML bisa verbose |
+| **CSS-in-JS** | React components | Dynamic styling | Runtime overhead |
+| **Global CSS** | Base styles, reset | Universal | Risk of conflicts |
+
+### Best Practices:
+
+1. **Prioritaskan Scoped Styles**: Default Astro paling optimal
+2. **Gunakan Tailwind**: Untuk rapid prototyping dan konsistensi
+3. **CSS Variables**: Untuk theming dan design tokens
+4. **Hindari Specificity Wars**: Gunakan class-based selectors
+5. **Minimize Global CSS**: Hanya untuk reset dan base styles
+
+---
+
+**Selanjutnya:** Di Sesi 11, kita akan membahas **JavaScript & Interaktivitas** - state management, event handling, dan integrasi JavaScript di Astro.

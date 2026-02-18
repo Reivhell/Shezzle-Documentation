@@ -1,0 +1,817 @@
+---
+title: "Sesi 22: Internationalization (i18n)"
+description: "Astro memiliki built-in i18n routing yang powerful untuk multi-language websites."
+category: "astrojs"
+tags: ["astrojs"]
+order: 22
+---
+
+# Sesi 22: Internationalization (i18n)
+
+## 22.1 i18n Routing
+
+Astro memiliki built-in i18n routing yang powerful untuk multi-language websites.
+
+### Analogi Sederhana:
+
+> Bayangkan i18n routing seperti **penerjemah pribadi di hotel internasional**. Setiap tamu (user) diberikan pengalaman dalam bahasa mereka sendiri, tapi struktur hotel (routing) tetap sama. Kamar 101 selalu kamar 101, meskipun disebut "Room 101" atau "Kamar 101".
+
+### Konfigurasi i18n:
+
+```javascript
+// astro.config.mjs
+import { defineConfig } from 'astro/config';
+
+export default defineConfig({
+  i18n: {
+    // Bahasa default
+    defaultLocale: 'id',
+    
+    // Semua locale yang didukung
+    locales: ['id', 'en', 'es', 'fr', 'ar', 'ja'],
+    
+    // Routing strategy
+    routing: {
+      // prefixDefaultLocale: false = /about (default), /en/about (others)
+      // prefixDefaultLocale: true = /id/about, /en/about, /es/about
+      prefixDefaultLocale: false,
+      
+      // Redirect root ke default locale
+      redirectToDefaultLocale: true,
+    },
+    
+    // Fallback untuk konten yang tidak tersedia
+    fallback: {
+      es: 'en',  // Jika tidak ada versi ES, pakai EN
+      fr: 'en',
+    },
+  },
+});
+```
+
+### Struktur Folder i18n:
+
+```
+src/
+├── pages/
+│   ├── index.astro              # / (redirect ke /id atau /en)
+│   ├── about.astro              # /about (default locale)
+│   │
+│   └── [lang]/                  # Locale-specific pages
+│       ├── index.astro          # /id/, /en/, /es/, dll
+│       ├── about.astro          # /id/about, /en/about, dll
+│       └── blog/
+│           ├── index.astro      # /id/blog, /en/blog
+│           └── [slug].astro     # /id/blog/:slug, /en/blog/:slug
+│
+└── content/
+    └── blog/
+        ├── id/                  # Konten Bahasa Indonesia
+        │   ├── hello.md
+        │   └── guide.md
+        ├── en/                  # Konten English
+        │   ├── hello.md
+        │   └── guide.md
+        └── es/                  # Konten Spanish
+            ├── hello.md
+            └── guide.md
+```
+
+---
+
+## 22.2 Locale Detection
+
+Astro mendeteksi locale user secara otomatis dari berbagai sumber.
+
+### Deteksi Otomatis:
+
+```astro
+---
+// src/pages/[lang]/index.astro
+// Astro secara otomatis detect locale dari URL
+
+export function getStaticPaths() {
+  return [
+    { params: { lang: 'id' } },
+    { params: { lang: 'en' } },
+    { params: { lang: 'es' } },
+  ];
+}
+
+const { lang } = Astro.params;           // 'id', 'en', atau 'es'
+const currentLocale = Astro.currentLocale; // Locale aktif
+const preferredLocale = Astro.preferredLocale; // Dari browser
+const preferredLocales = Astro.preferredLocaleList; // Array preferensi
+
+// Redirect jika locale tidak valid
+if (!['id', 'en', 'es'].includes(lang)) {
+  return Astro.redirect('/id/');
+}
+---
+
+<p>Current: {currentLocale}</p>
+<p>Browser prefers: {preferredLocale}</p>
+<p>All preferences: {preferredLocales.join(', ')}</p>
+```
+
+### Middleware untuk Locale Detection:
+
+```javascript
+// src/middleware/i18n.js
+import { defineMiddleware } from 'astro:middleware';
+import { locales, defaultLocale } from '../i18n/config';
+
+export const i18nMiddleware = defineMiddleware(async (context, next) => {
+  const { pathname } = context.url;
+  
+  // Skip untuk static assets dan API
+  if (pathname.match(/\.(jpg|png|css|js|svg|ico)$/)) {
+    return next();
+  }
+  
+  // Extract locale dari URL
+  const urlLocale = pathname.split('/')[1];
+  
+  // Jika locale valid, set dan lanjut
+  if (locales.includes(urlLocale)) {
+    context.locals.locale = urlLocale;
+    return next();
+  }
+  
+  // Jika tidak ada locale di URL, detect dan redirect
+  const detectedLocale = detectLocale(context);
+  
+  // Simpan preference
+  context.cookies.set('preferred-locale', detectedLocale, {
+    maxAge: 60 * 60 * 24 * 365, // 1 tahun
+    path: '/',
+  });
+  
+  // Redirect ke URL dengan locale
+  const newPath = `/${detectedLocale}${pathname}`;
+  return context.redirect(newPath);
+});
+
+function detectLocale(context) {
+  // 1. Check cookie
+  const cookieLocale = context.cookies.get('preferred-locale')?.value;
+  if (cookieLocale && locales.includes(cookieLocale)) {
+    return cookieLocale;
+  }
+  
+  // 2. Check Accept-Language header
+  const acceptLang = context.request.headers.get('accept-language');
+  if (acceptLang) {
+    const preferred = acceptLang
+      .split(',')
+      .map(lang => lang.split(';')[0].trim().toLowerCase())
+      .find(lang => locales.includes(lang) || locales.includes(lang.split('-')[0]));
+    
+    if (preferred) return preferred;
+  }
+  
+  // 3. Default
+  return defaultLocale;
+}
+```
+
+### Language Switcher Component:
+
+```astro
+---
+// src/components/LanguageSwitcher.astro
+const currentPath = Astro.url.pathname;
+const currentLocale = Astro.currentLocale;
+
+const languages = {
+  id: { name: 'Bahasa Indonesia', flag: '🇮🇩' },
+  en: { name: 'English', flag: '🇬🇧' },
+  es: { name: 'Español', flag: '🇪🇸' },
+  fr: { name: 'Français', flag: '🇫🇷' },
+  ar: { name: 'العربية', flag: '🇸🇦', dir: 'rtl' },
+  ja: { name: '日本語', flag: '🇯🇵' },
+};
+
+// Generate path untuk setiap locale
+function getLocalePath(locale) {
+  if (locale === 'id' && !Astro.locals.prefixDefaultLocale) {
+    // Remove locale prefix untuk default
+    return currentPath.replace(/^\/(en|es|fr|ar|ja)/, '') || '/';
+  }
+  
+  // Add atau replace locale prefix
+  const pathWithoutLocale = currentPath.replace(/^\/(id|en|es|fr|ar|ja)/, '');
+  return `/${locale}${pathWithoutLocale}`;
+}
+---
+
+<nav class="language-switcher" aria-label="Language">
+  <ul role="list">
+    {Object.entries(languages).map(([code, lang]) => (
+      <li>
+        <a
+          href={getLocalePath(code)}
+          hreflang={code}
+          rel="alternate"
+          aria-current={code === currentLocale ? 'page' : undefined}
+          class:list={['lang-link', { active: code === currentLocale }]}
+          dir={lang.dir}
+        >
+          <span class="flag" aria-hidden="true">{lang.flag}</span>
+          <span class="name">{lang.name}</span>
+        </a>
+      </li>
+    ))}
+  </ul>
+</nav>
+
+<style>
+  .language-switcher {
+    position: relative;
+  }
+  
+  ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    gap: 0.5rem;
+  }
+  
+  .lang-link {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 1rem;
+    text-decoration: none;
+    color: #4b5563;
+    border-radius: 6px;
+    transition: background 0.2s;
+  }
+  
+  .lang-link:hover,
+  .lang-link.active {
+    background: #f3f4f6;
+    color: #111827;
+  }
+  
+  .lang-link.active {
+    font-weight: 600;
+  }
+  
+  .flag {
+    font-size: 1.25rem;
+  }
+  
+  .name {
+    font-size: 0.875rem;
+  }
+  
+  /* RTL support */
+  [dir="rtl"] .lang-link {
+    flex-direction: row-reverse;
+  }
+</style>
+```
+
+---
+
+## 22.3 Translation Management
+
+Mengelola translations dengan efisien.
+
+### File-based Translations:
+
+```
+src/
+├── i18n/
+│   ├── config.ts          # Konfigurasi i18n
+│   ├── utils.ts           # Helper functions
+│   │
+│   └── translations/
+│       ├── id.json        # Bahasa Indonesia
+│       ├── en.json        # English
+│       ├── es.json        # Spanish
+│       └── ar.json        # Arabic
+```
+
+```typescript
+// src/i18n/config.ts
+export const defaultLocale = 'id';
+export const locales = ['id', 'en', 'es', 'fr', 'ar', 'ja'] as const;
+
+export type Locale = typeof locales[number];
+
+export const localeLabels: Record<Locale, { name: string; dir: 'ltr' | 'rtl' }> = {
+  id: { name: 'Bahasa Indonesia', dir: 'ltr' },
+  en: { name: 'English', dir: 'ltr' },
+  es: { name: 'Español', dir: 'ltr' },
+  fr: { name: 'Français', dir: 'ltr' },
+  ar: { name: 'العربية', dir: 'rtl' },
+  ja: { name: '日本語', dir: 'ltr' },
+};
+```
+
+```json
+// src/i18n/translations/id.json
+{
+  "nav": {
+    "home": "Beranda",
+    "about": "Tentang",
+    "blog": "Blog",
+    "contact": "Kontak"
+  },
+  "hero": {
+    "title": "Selamat Datang",
+    "subtitle": "Solusi terbaik untuk kebutuhan Anda",
+    "cta": "Mulai Sekarang"
+  },
+  "meta": {
+    "siteName": "Website Saya",
+    "siteDescription": "Deskripsi website dalam Bahasa Indonesia"
+  }
+}
+```
+
+```json
+// src/i18n/translations/en.json
+{
+  "nav": {
+    "home": "Home",
+    "about": "About",
+    "blog": "Blog",
+    "contact": "Contact"
+  },
+  "hero": {
+    "title": "Welcome",
+    "subtitle": "The best solution for your needs",
+    "cta": "Get Started"
+  },
+  "meta": {
+    "siteName": "My Website",
+    "siteDescription": "Website description in English"
+  }
+}
+```
+
+### Translation Helper:
+
+```typescript
+// src/i18n/utils.ts
+import type { Locale } from './config';
+
+const translations: Record<Locale, any> = {
+  id: () => import('./translations/id.json'),
+  en: () => import('./translations/en.json'),
+  es: () => import('./translations/es.json'),
+  ar: () => import('./translations/ar.json'),
+  fr: () => import('./translations/fr.json'),
+  ja: () => import('./translations/ja.json'),
+};
+
+export async function getTranslations(locale: Locale) {
+  const loader = translations[locale];
+  return loader();
+}
+
+// Nested key access: t('nav.home')
+export function t(obj: any, key: string): string {
+  return key.split('.').reduce((o, i) => o?.[i], obj) || key;
+}
+
+// Pluralization
+export function plural(
+  count: number,
+  translations: { one: string; other: string },
+  locale: Locale
+): string {
+  const rules = new Intl.PluralRules(locale);
+  const rule = rules.select(count);
+  return translations[rule].replace('{count}', String(count));
+}
+```
+
+### Penggunaan di Component:
+
+```astro
+---
+// src/pages/[lang]/index.astro
+import { getTranslations, t, plural } from '../../i18n/utils';
+import { locales } from '../../i18n/config';
+
+export function getStaticPaths() {
+  return locales.map(lang => ({ params: { lang } }));
+}
+
+const { lang } = Astro.params;
+const translations = await getTranslations(lang);
+
+// Plural example
+const itemCount = 5;
+---
+
+<Layout title={t(translations, 'meta.siteName')}>
+  <nav>
+    <a href={`/${lang}/`}>{t(translations, 'nav.home')}</a>
+    <a href={`/${lang}/about`}>{t(translations, 'nav.about')}</a>
+    <a href={`/${lang}/blog`}>{t(translations, 'nav.blog')}</a>
+  </nav>
+  
+  <h1>{t(translations, 'hero.title')}</h1>
+  <p>{t(translations, 'hero.subtitle')}</p>
+  <button>{t(translations, 'hero.cta')}</button>
+  
+  <!-- Pluralization -->
+  <p>
+    {plural(itemCount, {
+      one: '{count} item',
+      other: '{count} items'
+    }, lang)}
+  </p>
+</Layout>
+```
+
+---
+
+## 22.4 RTL Support
+
+Right-to-Left (RTL) support untuk bahasa Arab, Hebrew, dll.
+
+### RTL Configuration:
+
+```astro
+---
+// src/layouts/RTLLayout.astro
+import { localeLabels } from '../i18n/config';
+
+const { lang } = Astro.params;
+const { dir } = localeLabels[lang];
+---
+
+<!DOCTYPE html>
+<html lang={lang} dir={dir}>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width" />
+    <title>Website</title>
+  </head>
+  <body>
+    <slot />
+  </body>
+</html>
+
+<style is:global>
+  /* RTL-aware CSS */
+  :root {
+    --space-inline-start: 1rem;
+    --space-inline-end: 1rem;
+  }
+  
+  [dir="rtl"] {
+    --space-inline-start: 1rem;
+    --space-inline-end: 1rem;
+  }
+  
+  /* Logical properties untuk RTL otomatis */
+  .container {
+    margin-inline-start: auto;
+    margin-inline-end: auto;
+    padding-inline-start: var(--space-inline-start);
+    padding-inline-end: var(--space-inline-end);
+  }
+  
+  /* Flexbox dengan logical properties */
+  .flex-row {
+    display: flex;
+    gap: 1rem;
+  }
+  
+  [dir="rtl"] .flex-row {
+    /* Flex direction tetap row, tapi content flow berubah */
+  }
+  
+  /* Icons yang perlu flip di RTL */
+  .icon-arrow {
+    display: inline-block;
+  }
+  
+  [dir="rtl"] .icon-arrow {
+    transform: scaleX(-1);
+  }
+  
+  /* Text alignment */
+  .text-start {
+    text-align: start; /* logical: left di LTR, right di RTL */
+  }
+  
+  .text-end {
+    text-align: end; /* logical: right di LTR, left di RTL */
+  }
+</style>
+```
+
+### Bidirectional Text:
+
+```astro
+---
+// src/components/MixedLanguage.astro
+// Untuk konten dengan mixed LTR dan RTL text
+---
+
+<p dir="auto">
+  This is English text mixed dengan teks Bahasa Indonesia 
+  ويمكن أن يكون هناك نص عربي أيضًا
+</p>
+
+<!-- Atau dengan specific direction -->
+<p>
+  <span dir="ltr">Product ID:</span>
+  <span dir="rtl">منتج-١٢٣</span>
+</p>
+
+<style>
+  [dir="auto"] {
+    /* Browser akan detect direction berdasarkan content */
+    unicode-bidi: plaintext;
+  }
+</style>
+```
+
+---
+
+## 22.5 Fallback Content
+
+Strategi fallback untuk konten yang tidak tersedia dalam semua bahasa.
+
+### Content Fallback:
+
+```astro
+---
+// src/pages/[lang]/blog/[slug].astro
+import { getCollection } from 'astro:content';
+import { defaultLocale, locales } from '../../../i18n/config';
+
+export async function getStaticPaths() {
+  const paths = [];
+  
+  for (const locale of locales) {
+    const posts = await getCollection('blog', {
+      filter: post => post.data.locale === locale,
+    });
+    
+    for (const post of posts) {
+      paths.push({
+        params: { lang: locale, slug: post.slug },
+        props: { post, locale },
+      });
+    }
+  }
+  
+  return paths;
+}
+
+const { lang, slug } = Astro.params;
+const { post, locale } = Astro.props;
+
+// Cek apakah ada versi bahasa lain
+const otherLocales = locales.filter(l => l !== locale);
+const alternatives = [];
+
+for (const otherLang of otherLocales) {
+  try {
+    const altPost = await getEntry('blog', `${otherLang}/${slug}`);
+    if (altPost) {
+      alternatives.push({
+        locale: otherLang,
+        url: `/${otherLang}/blog/${slug}`,
+      });
+    }
+  } catch {
+    // Tidak ada versi bahasa ini
+  }
+}
+---
+
+<article>
+  <h1>{post.data.title}</h1>
+  
+  <!-- Warning jika bukan bahasa yang diinginkan -->
+  {alternatives.length > 0 && (
+    <div class="language-notice" role="alert">
+      <p>
+        This page is not available in {localeLabels[lang].name}.
+        Showing {localeLabels[locale].name} version.
+      </p>
+      <p>Available in:</p>
+      <ul>
+        {alternatives.map(alt => (
+          <li>
+            <a href={alt.url} hreflang={alt.locale}>
+              {localeLabels[alt.locale].name}
+            </a>
+          </li>
+        ))}
+      </ul>
+    </div>
+  )}
+  
+  <Content />
+</article>
+```
+
+### Automatic Translation Fallback:
+
+```typescript
+// src/i18n/utils.ts
+export function t(obj: any, key: string, fallbackLocale?: string): string {
+  const value = key.split('.').reduce((o, i) => o?.[i], obj);
+  
+  if (value) return value;
+  
+  // Fallback ke default locale
+  if (fallbackLocale) {
+    const fallbackTranslations = await getTranslations(fallbackLocale);
+    return key.split('.').reduce((o, i) => o?.[i], fallbackTranslations) || key;
+  }
+  
+  return key;
+}
+```
+
+---
+
+## 22.6 i18n Best Practices
+
+Best practices untuk internationalization yang efektif.
+
+### SEO untuk Multi-language:
+
+```astro
+---
+// src/layouts/i18nSEO.astro
+interface Props {
+  alternates: Array<{
+    lang: string;
+    url: string;
+  }>;
+}
+
+const { title, description, alternates } = Astro.props;
+const currentUrl = Astro.url.toString();
+---
+
+<!-- Hreflang tags -->
+<link rel="alternate" hreflang="x-default" href={alternates.find(a => a.lang === 'en')?.url || currentUrl} />
+{alternates.map(alt => (
+  <link rel="alternate" hreflang={alt.lang} href={alt.url} />
+))}
+
+<!-- Canonical URL -->
+<link rel="canonical" href={currentUrl} />
+
+<!-- Open Graph locale -->
+<meta property="og:locale" content={Astro.currentLocale.replace('-', '_')} />
+{alternates.filter(a => a.lang !== Astro.currentLocale).map(alt => (
+  <meta property="og:locale:alternate" content={alt.lang.replace('-', '_')} />
+))
+```
+
+### Date/Number Formatting:
+
+```astro
+---
+// src/components/FormattedDate.astro
+interface Props {
+  date: Date;
+  format?: 'short' | 'long' | 'relative';
+}
+
+const { date, format = 'long' } = Astro.props;
+const locale = Astro.currentLocale;
+
+const formatters = {
+  short: new Intl.DateTimeFormat(locale, { 
+    year: 'numeric', 
+    month: 'short', 
+    day: 'numeric' 
+  }),
+  long: new Intl.DateTimeFormat(locale, { 
+    year: 'numeric', 
+    month: 'long', 
+    day: 'numeric',
+    weekday: 'long'
+  }),
+  relative: new Intl.RelativeTimeFormat(locale, { numeric: 'auto' }),
+};
+
+let formatted;
+
+if (format === 'relative') {
+  const daysDiff = Math.floor((Date.now() - date.getTime()) / (1000 * 60 * 60 * 24));
+  formatted = formatters.relative.format(-daysDiff, 'day');
+} else {
+  formatted = formatters[format].format(date);
+}
+---
+
+<time datetime={date.toISOString()}>{formatted}</time>
+```
+
+```astro
+---
+// src/components/FormattedNumber.astro
+interface Props {
+  value: number;
+  style?: 'decimal' | 'currency' | 'percent';
+  currency?: string;
+}
+
+const { value, style = 'decimal', currency = 'IDR' } = Astro.props;
+const locale = Astro.currentLocale;
+
+const formatted = new Intl.NumberFormat(locale, {
+  style,
+  currency,
+  currencyDisplay: 'symbol',
+}).format(value);
+---
+
+<span>{formatted}</span>
+```
+
+### RTL-Aware Components:
+
+```astro
+---
+// src/components/RTLAware.astro
+import { localeLabels } from '../i18n/config';
+
+const { lang } = Astro.params;
+const { dir } = localeLabels[lang];
+---
+
+<div class="rtl-aware" dir={dir}>
+  <slot />
+</div>
+
+<style>
+  .rtl-aware {
+    /* Container yang aware direction */
+  }
+  
+  /* Margin logical properties */
+  .rtl-aware :global(.me-4) {
+    margin-inline-end: 1rem;
+  }
+  
+  .rtl-aware :global(.ms-4) {
+    margin-inline-start: 1rem;
+  }
+  
+  /* Padding logical properties */
+  .rtl-aware :global(.pe-4) {
+    padding-inline-end: 1rem;
+  }
+  
+  .rtl-aware :global(.ps-4) {
+    padding-inline-start: 1rem;
+  }
+  
+  /* Border logical properties */
+  .rtl-aware :global(.border-s) {
+    border-inline-start: 1px solid #e5e7eb;
+  }
+  
+  .rtl-aware :global(.border-e) {
+    border-inline-end: 1px solid #e5e7eb;
+  }
+</style>
+```
+
+---
+
+## Ringkasan Sesi 22
+
+| Aspek | Implementasi | Best Practice |
+|-------|-------------|---------------|
+| **Routing** | `astro.config.mjs` i18n config | `prefixDefaultLocale: false` untuk SEO |
+| **Detection** | Middleware + cookies + Accept-Language | Respect user preference |
+| **Translations** | JSON files dengan nested keys | Type-safe dengan TypeScript |
+| **RTL** | `dir` attribute + logical CSS properties | Test dengan real RTL content |
+| **Fallback** | Default locale + alternates | Jangan tampilkan broken content |
+| **SEO** | Hreflang tags + canonical URLs | x-default untuk unmatched locales |
+
+### i18n Checklist:
+
+- [ ] Konfigurasi routing di `astro.config.mjs`
+- [ ] Setup translations structure
+- [ ] Buat language switcher component
+- [ ] Implement RTL support jika diperlukan
+- [ ] Add hreflang tags untuk SEO
+- [ ] Format dates/numbers dengan `Intl`
+- [ ] Test semua locales
+- [ ] Setup fallback content strategy
+
+---
+
+**Selanjutnya:** Di Sesi 23, kita akan membahas **View Transitions** - API modern untuk smooth page transitions.

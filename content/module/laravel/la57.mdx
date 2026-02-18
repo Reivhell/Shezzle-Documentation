@@ -1,0 +1,341 @@
+---
+title: "Sesi 57: Laravel Pail (Log Monitoring)"
+description: "Menguasai Laravel Pail untuk monitoring logs real-time dengan filtering yang powerful dan integrasi dengan development environment."
+category: "laravel"
+tags: ["laravel"]
+order: 57
+---
+
+## Tujuan Pembelajaran
+
+Menguasai Laravel Pail untuk monitoring logs real-time dengan filtering yang powerful dan integrasi dengan development environment.
+
+## 1. Instalasi & Dasar
+
+### 1.1 Instalasi Pail
+
+```bash
+# Pail tersedia di Laravel 10.23+ / 11+
+# Install via Composer
+composer require laravel/pail --dev
+
+# Atau global install
+composer global require laravel/pail
+```
+
+### 1.2 Basic Usage
+
+```bash
+# Monitor logs real-time
+php artisan pail
+
+# Dengan verbose output
+php artisan pail --verbose
+
+# Hanya error
+php artisan pail --filter=error
+
+# Hanya specific level
+php artisan pail --level=error
+php artisan pail --level=warning
+php artisan pail --level=info
+```
+
+## 2. Filtering Logs
+
+### 2.1 Filter Options
+
+```bash
+# Filter berdasarkan message content
+php artisan pail --filter="User created"
+php artisan pail --filter="payment failed"
+
+# Filter berdasarkan level
+php artisan pail --level=error
+# Levels: debug, info, notice, warning, error, critical, alert, emergency
+
+# Filter berdasarkan file
+php artisan pail --file=app/Jobs/ProcessPayment.php
+
+# Filter berdasarkan exception type
+php artisan pail --exception="QueryException"
+php artisan pail --exception="ValidationException"
+
+# Multiple filters (AND logic)
+php artisan pail --level=error --filter="database"
+
+# Filter dengan regex
+php artisan pail --filter="/user.*created/i"
+```
+
+### 2.2 Time-based Filtering
+
+```bash
+# Logs dari 5 menit terakhir
+php artisan pail --since="5 minutes ago"
+
+# Logs dari specific time
+php artisan pail --since="2024-01-15 10:00:00"
+
+# Logs dalam range
+php artisan pail --since="1 hour ago" --until="30 minutes ago"
+```
+
+## 3. Format Output
+
+### 3.1 Output Styles
+
+```bash
+# Default: Pretty formatted
+php artisan pail
+
+# JSON output (untuk parsing)
+php artisan pail --format=json
+
+# Raw output
+php artisan pail --format=raw
+
+# Compact mode
+php artisan pail --compact
+```
+
+### 3.2 Contoh Output
+
+```bash
+# Pretty format (default)
+┌ 2024-01-15 10:23:45 ──────────────────────────────────────────────┐
+│  [INFO] User created                                              │
+│  ID: 123, Email: john@example.com                                 │
+│  File: app/Http/Controllers/UserController.php:45                 │
+└───────────────────────────────────────────────────────────────────┘
+
+# JSON format
+{"time":"2024-01-15 10:23:45","level":"info","message":"User created","context":{"id":123}}
+
+# Compact
+[10:23:45] INFO: User created (UserController.php:45)
+```
+
+## 4. Docker Integration
+
+### 4.1 Docker Compose Setup
+
+```yaml
+# docker-compose.yml
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - .:/var/www/html
+      - ./storage/logs:/var/www/html/storage/logs
+    command: php artisan pail
+
+  logs:
+    image: laravel-pail
+    volumes:
+      - ./storage/logs:/logs
+    command: tail -f /logs/laravel.log
+```
+
+### 4.2 Sail Integration
+
+```bash
+# Dengan Laravel Sail
+sail artisan pail
+
+# Dengan filter
+sail artisan pail --level=error
+
+# Hanya queue logs
+sail artisan pail --filter="queue"
+```
+
+### 4.3 Docker Logs
+
+```bash
+# Stream logs dari container
+docker-compose logs -f app | pail
+
+# Atau
+docker logs -f laravel_app php artisan pail
+```
+
+## 5. Advanced Usage
+
+### 5.1 Custom Log Channels
+
+```php
+<?php
+
+// config/logging.php
+'channels' => [
+    'pail' => [
+        'driver' => 'single',
+        'path' => storage_path('logs/pail.log'),
+        'level' => env('LOG_LEVEL', 'debug'),
+    ],
+    
+    'payments' => [
+        'driver' => 'daily',
+        'path' => storage_path('logs/payments.log'),
+        'level' => 'info',
+    ],
+],
+```
+
+```bash
+# Monitor specific channel
+php artisan pail --file=storage/logs/payments.log
+
+# Multiple files
+php artisan pail --file=storage/logs/laravel.log --file=storage/logs/queue.log
+```
+
+### 5.2 Integration dengan Queue Workers
+
+```bash
+# Terminal 1: Run queue worker
+php artisan queue:work --verbose
+
+# Terminal 2: Monitor logs
+php artisan pail --filter="queue"
+
+# Atau kombinasi
+php artisan queue:work 2>&1 | php artisan pail
+```
+
+### 5.3 Log Rotation Awareness
+
+```bash
+# Pail otomatis handle log rotation
+php artisan pail --file=storage/logs/laravel.log
+
+# Saat file di-rotate (laravel-2024-01-15.log), 
+# Pail akan continue ke file baru
+```
+
+## 6. Programmatic Usage
+
+### 6.1 Dalam Commands
+
+```php
+<?php
+
+// app/Console/Commands/MonitorPayments.php
+namespace App\Console\Commands;
+
+use Illuminate\Console\Command;
+use Laravel\Pail\Pail;
+use Symfony\Component\Process\Process;
+
+class MonitorPayments extends Command
+{
+    protected $signature = 'monitor:payments 
+                            {--duration=60 : Duration in seconds}
+                            {--threshold=10 : Error threshold}';
+
+    public function handle(): int
+    {
+        $this->info('Monitoring payment logs...');
+
+        $process = new Process([
+            'php', 'artisan', 'pail',
+            '--file=storage/logs/payments.log',
+            '--level=error',
+            '--format=json',
+        ]);
+
+        $process->start();
+        $errorCount = 0;
+        $startTime = now();
+
+        while ($process->isRunning()) {
+            if (now()->diffInSeconds($startTime) > $this->option('duration')) {
+                $process->stop();
+                break;
+            }
+
+            $output = $process->getIncrementalOutput();
+            if ($output) {
+                $errorCount++;
+                $log = json_decode($output, true);
+                $this->error("Payment error: {$log['message']}");
+            }
+
+            if ($errorCount >= $this->option('threshold')) {
+                $this->alert('Error threshold exceeded!');
+                $process->stop();
+                
+                // Send alert
+                Notification::route('slack', config('services.slack.webhook'))
+                    ->notify(new PaymentErrorsAlert($errorCount));
+                
+                return self::FAILURE;
+            }
+
+            usleep(100000); // 100ms
+        }
+
+        $this->info("Monitoring complete. Errors found: {$errorCount}");
+        return self::SUCCESS;
+    }
+}
+```
+
+## 7. Testing dengan Pail
+
+```php
+<?php
+
+// tests/Feature/PaymentFlowTest.php
+use Illuminate\Support\Facades\Process;
+
+class PaymentFlowTest extends TestCase
+{
+    public function test_payment_logs_are_generated()
+    {
+        Process::fake([
+            'php artisan pail --filter="Payment processed" --format=json' => Process::result(
+                output: json_encode([
+                    'time' => now()->toDateTimeString(),
+                    'level' => 'info',
+                    'message' => 'Payment processed',
+                    'context' => ['amount' => 100],
+                ])
+            ),
+        ]);
+
+        $result = Process::run('php artisan pail --filter="Payment processed" --format=json');
+        
+        $this->assertStringContainsString('Payment processed', $result->output());
+    }
+}
+```
+
+## 8. Alias & Shortcuts
+
+```bash
+# Tambah ke ~/.bashrc atau ~/.zshrc
+alias tail-error='php artisan pail --level=error'
+alias tail-info='php artisan pail --level=info'
+alias tail-queue='php artisan pail --filter="queue"'
+alias tail-db='php artisan pail --filter="database"'
+
+# Usage
+tail-error
+tail-queue
+```
+
+## Kesimpulan
+
+Laravel Pail menyederhanakan log monitoring:
+- **Real-time streaming** dari log files
+- **Powerful filtering** berdasarkan level, message, file, exception
+- **Docker integration** untuk containerized environments
+- **Multiple formats** (pretty, JSON, raw, compact)
+- **Log rotation awareness** untuk continuous monitoring
+
+Selanjutnya di **Sesi 58**, kita akan mempelajari Laravel Folio (Page-based Routing).
+```

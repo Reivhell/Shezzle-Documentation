@@ -1,0 +1,418 @@
+---
+title: "Sesi 58: Laravel Folio (Page-based Routing)"
+description: "Menguasai Laravel Folio untuk routing yang intuitif berbasis file, menggantikan atau melengkapi traditional routing dengan page-based approach."
+category: "laravel"
+tags: ["laravel", "routing"]
+order: 58
+---
+
+## Tujuan Pembelajaran
+
+Menguasai Laravel Folio untuk routing yang intuitif berbasis file, menggantikan atau melengkapi traditional routing dengan page-based approach.
+
+## 1. Instalasi & Setup
+
+### 1.1 Instalasi Folio
+
+```bash
+# Install Folio
+composer require laravel/folio
+
+# Install Folio
+php artisan folio:install
+
+# Struktur yang dibuat:
+# resources/views/pages/
+#   ├── index.blade.php      → GET /
+#   ├── about.blade.php      → GET /about
+#   └── users/
+#       ├── index.blade.php  → GET /users
+#       └── [id].blade.php   → GET /users/{id}
+```
+
+### 1.2 Konfigurasi
+
+```php
+<?php
+
+// app/Providers/FolioServiceProvider.php
+namespace App\Providers;
+
+use Illuminate\Support\ServiceProvider;
+use Laravel\Folio\Folio;
+
+class FolioServiceProvider extends ServiceProvider
+{
+    public function register(): void
+    {
+        //
+    }
+
+    public function boot(): void
+    {
+        Folio::path(resource_path('views/pages'))->middleware([
+            '*' => ['web'],
+            'admin/*' => ['auth', 'can:access-admin'],
+            'api/*' => ['throttle:api'],
+        ]);
+
+        // Multiple paths
+        Folio::path(resource_path('views/landing'))->uri('/');
+        Folio::path(resource_path('views/dashboard'))->uri('/app');
+    }
+}
+```
+
+## 2. Basic Pages
+
+### 2.1 Static Pages
+
+```blade
+{{-- resources/views/pages/index.blade.php --}}
+<?php
+// Optional: PHP block untuk logic
+use function Laravel\Folio\middleware;
+
+middleware(['cache.headers:public;max_age=3600']);
+?>
+
+<x-layout>
+    <h1>Welcome to Laravel Folio</h1>
+    <p>Page-based routing made simple.</p>
+</x-layout>
+```
+
+```blade
+{{-- resources/views/pages/about.blade.php --}}
+<x-layout title="About Us">
+    <h1>About Our Company</h1>
+    <p>We build amazing things with Laravel.</p>
+</x-layout>
+```
+
+### 2.2 Dynamic Pages
+
+```blade
+{{-- resources/views/pages/users/[id].blade.php --}}
+<?php
+use App\Models\User;
+use Illuminate\View\View;
+
+// Dependency injection dan route model binding
+function render(User $user): View
+{
+    return view('pages.users.show', [
+        'user' => $user,
+        'posts' => $user->posts()->latest()->take(5)->get(),
+    ]);
+}
+?>
+
+<x-layout :title="$user->name">
+    <div class="user-profile">
+        <img src="{{ $user->avatar }}" alt="{{ $user->name }}">
+        <h1>{{ $user->name }}</h1>
+        <p>{{ $user->bio }}</p>
+        
+        <h2>Recent Posts</h2>
+        @foreach($posts as $post)
+            <article>
+                <h3>{{ $post->title }}</h3>
+                <p>{{ $post->excerpt }}</p>
+            </article>
+        @endforeach
+    </div>
+</x-layout>
+```
+
+## 3. Route Parameters
+
+### 3.1 Required Parameters
+
+```blade
+{{-- resources/views/pages/posts/[slug].blade.php --}}
+<?php
+use App\Models\Post;
+
+function render(string $slug): mixed
+{
+    $post = Post::where('slug', $slug)->firstOrFail();
+    
+    return view('pages.posts.show', compact('post'));
+}
+?>
+
+<x-layout :title="$post->title">
+    <article>
+        <h1>{{ $post->title }}</h1>
+        <div class="content">{!! $post->content !!}</div>
+    </article>
+</x-layout>
+```
+
+### 3.2 Optional Parameters
+
+```blade
+{{-- resources/views/pages/blog/[[page]].blade.php --}}
+<?php
+use App\Models\Post;
+
+// Double bracket = optional
+function render(?int $page = 1): mixed
+{
+    $posts = Post::paginate(10, ['*'], 'page', $page);
+    
+    return view('pages.blog.index', compact('posts'));
+}
+?>
+
+<x-layout title="Blog">
+    @foreach($posts as $post)
+        <article>
+            <h2><a href="/blog/{{ $post->slug }}">{{ $post->title }}</a></h2>
+        </article>
+    @endforeach
+    
+    {{ $posts->links() }}
+</x-layout>
+```
+
+### 3.3 Multiple Parameters
+
+```blade
+{{-- resources/views/pages/[category]/[slug].blade.php --}}
+<?php
+use App\Models\Category;
+use App\Models\Post;
+
+function render(Category $category, string $slug): mixed
+{
+    $post = Post::where('category_id', $category->id)
+        ->where('slug', $slug)
+        ->firstOrFail();
+    
+    return view('pages.posts.show', compact('category', 'post'));
+}
+?>
+
+<x-layout :title="$post->title">
+    <nav>
+        <a href="/">Home</a> /
+        <a href="/{{ $category->slug }}">{{ $category->name }}</a> /
+        <span>{{ $post->title }}</span>
+    </nav>
+    
+    <article>
+        <h1>{{ $post->title }}</h1>
+        <p>Category: {{ $category->name }}</p>
+        {!! $post->content !!}
+    </article>
+</x-layout>
+```
+
+## 4. Middleware
+
+### 4.1 Inline Middleware
+
+```blade
+{{-- resources/views/pages/admin/dashboard.blade.php --}}
+<?php
+use function Laravel\Folio\middleware;
+
+middleware(['auth', 'can:access-admin']);
+
+// Atau dengan closure
+middleware(fn () => auth()->user()?->isAdmin() ?? abort(403));
+?>
+
+<x-admin-layout>
+    <h1>Admin Dashboard</h1>
+    {{-- admin content --}}
+</x-admin-layout>
+```
+
+### 4.2 Named Routes
+
+```blade
+{{-- resources/views/pages/checkout/success.blade.php --}}
+<?php
+use function Laravel\Folio\name;
+
+name('checkout.success');
+?>
+
+<x-layout title="Order Confirmed">
+    <h1>Thank you for your order!</h1>
+    <p>Your order #{{ $order->id }} has been confirmed.</p>
+    
+    <a href="{{ route('home') }}">Continue Shopping</a>
+</x-layout>
+```
+
+```php
+<?php
+
+// Redirect ke named route
+return redirect()->route('checkout.success', ['order' => $order]);
+```
+
+## 5. View Data
+
+### 5.1 Sharing Data
+
+```blade
+{{-- resources/views/pages/_layout.blade.php --}}
+<?php
+// Layout dengan shared data
+use App\Models\Category;
+
+function shared(): array
+{
+    return [
+        'categories' => Category::all(),
+        'appName' => config('app.name'),
+    ];
+}
+?>
+
+<!DOCTYPE html>
+<html>
+<head>
+    <title>{{ $title ?? $appName }}</title>
+</head>
+<body>
+    <nav>
+        @foreach($categories as $category)
+            <a href="/{{ $category->slug }}">{{ $category->name }}</a>
+        @endforeach
+    </nav>
+    
+    {{ $slot }}
+</body>
+</html>
+```
+
+### 5.2 Props
+
+```blade
+{{-- resources/views/pages/components/alert.blade.php --}}
+<?php
+use function Laravel\Folio\props;
+
+props([
+    'type' => 'info', // default value
+    'message',
+    'dismissible' => false,
+]);
+?>
+
+<div class="alert alert-{{ $type }}">
+    {{ $message }}
+    
+    @if($dismissible)
+        <button onclick="this.parentElement.remove()">×</button>
+    @endif
+</div>
+```
+
+## 6. Folio vs Traditional Routing
+
+| Aspek | Folio | Traditional Routing |
+|-------|-------|---------------------|
+| **Use Case** | Content pages, marketing sites | Complex APIs, resource controllers |
+| **Setup** | File-based, zero config | Route file + Controller |
+| **Flexibility** | Simple, opinionated | Full control |
+| **Performance** | Sama (cached) | Sama (cached) |
+| **Testing** | Feature tests | Unit + Feature tests |
+| **Best For** | Blogs, landing pages, portfolios | Dashboards, APIs, complex apps |
+
+### 6.1 Hybrid Approach
+
+```php
+<?php
+
+// routes/web.php
+// API routes (traditional)
+Route::prefix('api')->group(function () {
+    Route::apiResource('users', Api\UserController::class);
+});
+
+// Auth routes (traditional)
+Route::get('/login', [AuthController::class, 'showLoginForm']);
+Route::post('/login', [AuthController::class, 'login']);
+
+// Folio handles the rest (pages/*)
+```
+
+```php
+<?php
+
+// FolioServiceProvider
+public function boot(): void
+{
+    // Marketing site dengan Folio
+    Folio::path(resource_path('views/pages/marketing'))->uri('/');
+    
+    // Dashboard dengan Folio
+    Folio::path(resource_path('views/pages/app'))
+        ->uri('/app')
+        ->middleware(['auth']);
+}
+```
+
+## 7. Testing Folio Pages
+
+```php
+<?php
+
+// tests/Feature/FolioTest.php
+class FolioTest extends TestCase
+{
+    public function test_home_page_loads()
+    {
+        $response = $this->get('/');
+        
+        $response->assertOk()
+            ->assertSee('Welcome to Laravel Folio');
+    }
+
+    public function test_user_page_shows_user()
+    {
+        $user = User::factory()->create();
+        
+        $response = $this->get("/users/{$user->id}");
+        
+        $response->assertOk()
+            ->assertSee($user->name);
+    }
+
+    public function test_post_page_uses_slug()
+    {
+        $post = Post::factory()->create(['slug' => 'hello-world']);
+        
+        $response = $this->get("/posts/{$post->slug}");
+        
+        $response->assertOk()
+            ->assertSee($post->title);
+    }
+
+    public function test_admin_page_requires_auth()
+    {
+        $response = $this->get('/admin/dashboard');
+        
+        $response->assertRedirect('/login');
+    }
+}
+```
+
+## Kesimpulan
+
+Laravel Folio menyederhanakan routing untuk content-driven sites:
+- **File-based routing** tanpa route definitions
+- **Route model binding** otomatis
+- **Middleware support** inline atau global
+- **Named routes** untuk URL generation
+- **Hybrid approach** dengan traditional routing
+
+Selanjutnya di **Sesi 59**, kita akan mempelajari Laravel Pint (Code Style).
+```

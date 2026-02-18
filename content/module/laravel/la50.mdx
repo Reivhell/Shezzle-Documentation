@@ -1,0 +1,637 @@
+---
+title: "Sesi 50: Laravel Cashier (Payments)"
+description: "Menguasai Laravel Cashier untuk mengelola subscriptions, one-time payments, dan billing dengan Stripe atau Paddle."
+category: "laravel"
+tags: ["laravel"]
+order: 50
+---
+
+## Tujuan Pembelajaran
+
+Menguasai Laravel Cashier untuk mengelola subscriptions, one-time payments, dan billing dengan Stripe atau Paddle.
+
+## 1. Instalasi & Konfigurasi
+
+### 1.1 Cashier (Stripe)
+
+```bash
+# Install Cashier untuk Stripe
+composer require laravel/cashier
+
+# Publish migrations
+php artisan vendor:publish --tag="cashier-migrations"
+
+# Jalankan migrasi
+php artisan migrate
+```
+
+### 1.2 Konfigurasi Stripe
+
+```php
+<?php
+
+// config/services.php
+'stripe' => [
+    'model' => App\Models\User::class,
+    'key' => env('STRIPE_KEY'),
+    'secret' => env('STRIPE_SECRET'),
+    'webhook' => [
+        'secret' => env('STRIPE_WEBHOOK_SECRET'),
+        'tolerance' => env('STRIPE_WEBHOOK_TOLERANCE', 300),
+        'events' => [
+            'customer.subscription.created',
+            'customer.subscription.updated',
+            'customer.subscription.deleted',
+            'invoice.payment_succeeded',
+            'invoice.payment_failed',
+        ],
+    ],
+],
+```
+
+```env
+# .env
+STRIPE_KEY=pk_test_...
+STRIPE_SECRET=sk_test_...
+STRIPE_WEBHOOK_SECRET=whsec_...
+CASHIER_CURRENCY=usd
+CASHIER_LOGGER=stack
+```
+
+### 1.3 Model Setup
+
+```php
+<?php
+
+// app/Models/User.php
+namespace App\Models;
+
+use Illuminate\Foundation\Auth\User as Authenticatable;
+use Laravel\Cashier\Billable;
+
+class User extends Authenticatable
+{
+    use Billable;
+
+    /**
+     * The attributes that are not mass assignable.
+     *
+     * @var array<string>
+     */
+    protected $guarded = [];
+
+    /**
+     * Get the default Stripe API options for the current Billable model.
+     *
+     * @param  array  $options
+     * @return array
+     */
+    public function stripeOptions(array $options = [])
+    {
+        return array_merge(Cashier::stripeOptions($options), [
+            // Custom API version jika diperlukan
+        ]);
+    }
+}
+```
+
+## 2. Subscriptions
+
+### 2.1 Creating Subscriptions
+
+```php
+<?php
+
+use Illuminate\Http\Request;
+
+class SubscriptionController extends Controller
+{
+    public function subscribe(Request $request)
+    {
+        $user = $request->user();
+        
+        // Create Stripe customer jika belum ada
+        if (!$user->stripe_id) {
+            $user->createAsStripeCustomer();
+        }
+
+        // Subscribe ke plan
+        $subscription = $user->newSubscription('default', 'price_premium')
+            ->trialDays(14)
+            ->allowPromotionCodes()
+            ->create($request->paymentMethodId);
+
+        return response()->json([
+            'subscription' => $subscription,
+            'status' => 'active',
+        ]);
+    }
+
+    /**
+     * Subscribe dengan multiple plans
+     */
+    public function subscribeMultiple(Request $request)
+    {
+        $subscription = $request->user()->newSubscription('main', [
+            'price_premium',
+            'price_support' => ['quantity' => 5],
+        ])->create($request->paymentMethodId);
+
+        return redirect()->route('billing');
+    }
+}
+```
+
+### 2.2 Managing Subscriptions
+
+```php
+<?php
+
+// Swap subscription plan
+$user->subscription('default')->swap('price_pro');
+
+// Swap dengan proration
+$user->subscription('default')->swapAndInvoice('price_pro');
+
+// Update quantity
+$user->subscription('default')->updateQuantity(5);
+
+// Increment/Decrement
+$user->subscription('default')->incrementQuantity();
+$user->subscription('default')->decrementQuantity(2);
+
+// Pause subscription
+$user->subscription('default')->pause();
+
+// Resume subscription
+$user->subscription('default')->unpause();
+
+// Cancel subscription
+$user->subscription('default')->cancel();
+
+// Cancel immediately
+$user->subscription('default')->cancelNow();
+
+// Resume cancelled subscription (jika masih dalam grace period)
+$user->subscription('default')->resume();
+```
+
+### 2.3 Checking Subscription Status
+
+```php
+<?php
+
+if ($user->subscribed('default')) {
+    // User has active subscription
+}
+
+if ($user->subscribedToProduct('prod_premium')) {
+    // Subscribed to specific product
+}
+
+if ($user->subscription('default')->onTrial()) {
+    // Still on trial
+}
+
+if ($user->subscription('default')->onGracePeriod()) {
+    // Cancelled but still active until period end
+}
+
+if ($user->subscription('default')->pastDue()) {
+    // Payment failed
+}
+
+if ($user->subscription('default')->recurring()) {
+    // Active recurring subscription
+}
+```
+
+## 3. Payment Methods
+
+### 3.1 Adding Payment Methods
+
+```php
+<?php
+
+class PaymentMethodController extends Controller
+{
+    public function store(Request $request)
+    {
+        $user = $request->user();
+        
+        // Setup intent untuk SCA
+        $setupIntent = $user->createSetupIntent();
+
+        return response()->json([
+            'client_secret' => $setupIntent->client_secret,
+        ]);
+    }
+
+    public function addPaymentMethod(Request $request)
+    {
+        $user = $request->user();
+        
+        // Add payment method
+        $paymentMethod = $user->addPaymentMethod($request->paymentMethodId);
+
+        // Set as default
+        $user->updateDefaultPaymentMethod($paymentMethod->id);
+
+        return response()->json([
+            'payment_method' => $paymentMethod,
+        ]);
+    }
+
+    public function listPaymentMethods(Request $request)
+    {
+        $methods = $request->user()->paymentMethods();
+
+        return response()->json($methods);
+    }
+
+    public function deletePaymentMethod(Request $request, $paymentMethodId)
+    {
+        $request->user()->deletePaymentMethod($paymentMethodId);
+
+        return response()->noContent();
+    }
+}
+```
+
+### 3.2 Frontend Integration (Stripe Elements)
+
+```javascript
+// Setup Stripe Elements
+const stripe = Stripe('pk_test_...');
+const elements = stripe.elements();
+
+// Card Element
+const cardElement = elements.create('card');
+cardElement.mount('#card-element');
+
+// Handle form submission
+const form = document.getElementById('payment-form');
+form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+
+    const {setupIntent, error} = await stripe.confirmCardSetup(
+        clientSecret,
+        {
+            payment_method: {
+                card: cardElement,
+                billing_details: {
+                    name: cardHolderName.value,
+                },
+            },
+        }
+    );
+
+    if (error) {
+        // Show error
+    } else {
+        // Send paymentMethodId ke server
+        fetch('/api/payment-methods', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRF-TOKEN': csrfToken,
+            },
+            body: JSON.stringify({
+                paymentMethodId: setupIntent.payment_method,
+            }),
+        });
+    }
+});
+```
+
+## 4. One-Time Charges
+
+### 4.1 Simple Charges
+
+```php
+<?php
+
+// Charge dengan default payment method
+$user->charge(1000, 'Premium Feature'); // $10.00
+
+// Charge dengan specific payment method
+$user->charge(1000, 'Premium Feature', [
+    'payment_method' => $paymentMethodId,
+]);
+
+// Charge dengan invoice
+$user->invoiceFor('One-time setup fee', 5000);
+
+// Invoice dengan additional data
+$user->invoiceFor('Consulting', 15000, [
+    'description' => '2 hours consultation',
+    'tax_percent' => 10,
+]);
+```
+
+### 4.2 Checkout Sessions
+
+```php
+<?php
+
+use Laravel\Cashier\Cashier;
+
+// Create checkout session
+$checkout = $request->user()->checkout('price_premium', [
+    'success_url' => route('checkout.success') . '?session_id={CHECKOUT_SESSION_ID}',
+    'cancel_url' => route('checkout.cancel'),
+]);
+
+return redirect($checkout->url);
+
+// Checkout untuk one-time payment
+$checkout = Cashier::checkout([
+    'line_items' => [[
+        'price_data' => [
+            'currency' => 'usd',
+            'product_data' => [
+                'name' => 'T-Shirt',
+            ],
+            'unit_amount' => 2000,
+        ],
+        'quantity' => 1,
+    ]],
+    'mode' => 'payment',
+    'success_url' => route('checkout.success'),
+    'cancel_url' => route('checkout.cancel'),
+]);
+
+return redirect($checkout->url);
+```
+
+## 5. Invoices & Receipts
+
+### 5.1 Generating Invoices
+
+```php
+<?php
+
+// List invoices
+$invoices = $user->invoices();
+
+// Download invoice
+return $user->downloadInvoice($invoiceId, [
+    'vendor' => 'Your Company',
+    'product' => 'Your Product',
+    'street' => '123 Main St',
+    'location' => 'City, State 12345',
+    'phone' => '555-555-5555',
+    'email' => 'billing@company.com',
+]);
+
+// Find specific invoice
+$invoice = $user->findInvoice($invoiceId);
+
+// Upcoming invoice
+$upcomingInvoice = $user->upcomingInvoice();
+```
+
+### 5.2 Invoice Notifications
+
+```php
+<?php
+
+// app/Listeners/SendInvoiceNotification.php
+class SendInvoiceNotification
+{
+    public function handle(InvoicePaymentSucceeded $event): void
+    {
+        $user = $event->billable;
+        $invoice = $event->invoice;
+
+        $user->notify(new InvoicePaidNotification($invoice));
+    }
+}
+```
+
+## 6. Webhook Handling
+
+### 6.1 Webhook Route
+
+```php
+<?php
+
+// routes/web.php
+use Laravel\Cashier\Http\Controllers\WebhookController;
+
+Route::post('stripe/webhook', [WebhookController::class, 'handleWebhook'])
+    ->name('cashier.webhook');
+```
+
+### 6.2 Custom Webhook Handler
+
+```php
+<?php
+
+// app/Http/Controllers/StripeWebhookController.php
+namespace App\Http\Controllers;
+
+use Illuminate\Http\Request;
+use Laravel\Cashier\Http\Controllers\WebhookController as CashierWebhookController;
+use Stripe\Exception\SignatureVerificationException;
+
+class StripeWebhookController extends CashierWebhookController
+{
+    /**
+     * Handle customer subscription updated.
+     */
+    protected function handleCustomerSubscriptionUpdated(array $payload): void
+    {
+        // Custom logic untuk subscription update
+        $subscription = $this->getSubscription($payload['data']['object']['id']);
+        
+        if ($subscription) {
+            // Update local data
+            $subscription->update([
+                'stripe_status' => $payload['data']['object']['status'],
+            ]);
+
+            // Send notification jika status berubah
+            if ($payload['data']['previous_attributes']['status'] ?? null) {
+                $subscription->user->notify(new SubscriptionUpdatedNotification($subscription));
+            }
+        }
+
+        parent::handleCustomerSubscriptionUpdated($payload);
+    }
+
+    /**
+     * Handle invoice payment failed.
+     */
+    protected function handleInvoicePaymentFailed(array $payload): void
+    {
+        $subscription = $this->getSubscription($payload['data']['object']['subscription']);
+
+        if ($subscription) {
+            $subscription->user->notify(new PaymentFailedNotification($subscription));
+        }
+
+        parent::handleInvoicePaymentFailed($payload);
+    }
+}
+```
+
+### 6.3 Webhook Security
+
+```php
+<?php
+
+// Verify webhook signature
+$payload = @file_get_contents('php://input');
+$sig_header = $_SERVER['HTTP_STRIPE_SIGNATURE'];
+$event = null;
+
+try {
+    $event = \Stripe\Webhook::constructEvent(
+        $payload, $sig_header, env('STRIPE_WEBHOOK_SECRET')
+    );
+} catch(\UnexpectedValueException $e) {
+    // Invalid payload
+    http_response_code(400);
+    exit();
+} catch(\Stripe\Exception\SignatureVerificationException $e) {
+    // Invalid signature
+    http_response_code(400);
+    exit();
+}
+
+// Handle event
+switch ($event->type) {
+    case 'payment_intent.succeeded':
+        $paymentIntent = $event->data->object;
+        // Handle successful payment
+        break;
+    // ... other events
+}
+```
+
+## 7. SCA Compliance
+
+### 7.1 Handling 3D Secure
+
+```php
+<?php
+
+// Confirm payment yang memerlukan SCA
+try {
+    $subscription = $user->newSubscription('default', 'price_premium')
+        ->create($paymentMethodId);
+} catch (IncompletePayment $exception) {
+    return redirect()->route(
+        'cashier.payment',
+        [$exception->payment->id, 'redirect' => route('home')]
+    );
+}
+
+// Atau dengan frontend
+try {
+    $subscription = await stripe.confirmCardPayment(clientSecret);
+    
+    if (subscription.error) {
+        // Show error to customer
+    } else {
+        // Payment successful
+    }
+} catch (error) {
+    // Handle error
+}
+```
+
+### 7.2 Off-Session Payments
+
+```php
+<?php
+
+// Setup off-session payments
+$user->createSetupIntent([
+    'usage' => 'off_session',
+]);
+
+// Charge off-session nanti
+try {
+    $user->charge(1000, 'Automatic renewal', [
+        'off_session' => true,
+    ]);
+} catch (IncompletePayment $exception) {
+    // Kirim email ke user untuk complete payment
+    $user->notify(new ConfirmPaymentNotification($exception->payment));
+}
+```
+
+## 8. Testing
+
+```php
+<?php
+
+// tests/Feature/BillingTest.php
+class BillingTest extends TestCase
+{
+    use RefreshDatabase;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+        
+        // Mock Stripe
+        Cashier::fake();
+    }
+
+    public function test_user_can_subscribe()
+    {
+        $user = User::factory()->create();
+
+        $response = $this->actingAs($user)
+            ->postJson('/api/subscribe', [
+                'paymentMethodId' => 'pm_test_123',
+                'plan' => 'price_premium',
+            ]);
+
+        $response->assertOk()
+            ->assertJsonPath('status', 'active');
+
+        $this->assertTrue($user->fresh()->subscribed('default'));
+    }
+
+    public function test_subscription_can_be_cancelled()
+    {
+        $user = User::factory()->create();
+        $user->newSubscription('default', 'price_premium')->create('pm_test');
+
+        $response = $this->actingAs($user)
+            ->deleteJson('/api/subscription');
+
+        $response->assertOk();
+
+        $this->assertTrue($user->fresh()->subscription('default')->onGracePeriod());
+    }
+
+    public function test_payment_method_can_be_added()
+    {
+        $user = User::factory()->create();
+
+        $response = $this->actingAs($user)
+            ->postJson('/api/payment-methods', [
+                'paymentMethodId' => 'pm_test_456',
+            ]);
+
+        $response->assertOk();
+
+        $this->assertCount(1, $user->fresh()->paymentMethods());
+    }
+}
+```
+
+## Kesimpulan
+
+Laravel Cashier menyederhanakan payment processing:
+- **Subscriptions** dengan trials, swapping, dan quantity management
+- **Payment methods** dengan SCA compliance
+- **One-time charges** dengan Checkout sessions
+- **Invoices** dengan downloadable PDFs
+- **Webhooks** untuk event handling
+- **Testing** dengan fake mode

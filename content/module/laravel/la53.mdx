@@ -1,0 +1,499 @@
+---
+title: "Sesi 53: Laravel Reverb (Real-time WebSockets)"
+description: "Menguasai Laravel Reverb sebagai solusi WebSockets self-hosted, mengkonfigurasi server, mengimplementasikan presence channels, dan scaling untuk produ..."
+category: "laravel"
+tags: ["laravel"]
+order: 53
+---
+
+## Tujuan Pembelajaran
+
+Menguasai Laravel Reverb sebagai solusi WebSockets self-hosted, mengkonfigurasi server, mengimplementasikan presence channels, dan scaling untuk production.
+
+## 1. Overview Laravel Reverb
+
+### 1.1 Reverb vs Lainnya
+
+| Fitur | Reverb | Pusher | Ably | Soketi |
+|-------|--------|--------|------|--------|
+| **Hosting** | Self-hosted | Managed | Managed | Self-hosted |
+| **Biaya** | Free (infrastructure) | Pay per usage | Pay per usage | Free |
+| **Laravel Integration** | First-party | First-party | First-party | Community |
+| **Protocol** | WebSocket | WebSocket | WebSocket | WebSocket |
+| **Scaling** | Horizontal dengan Redis | Auto | Auto | Redis |
+| **Presence** | ✅ | ✅ | ✅ | ✅ |
+
+> **tip**
+>
+**Kapan menggunakan Reverb:**
+- Budget terbatas (tanpa biaya vendor)
+- Data sensitif (self-hosted)
+- Sudah punya infrastruktur Laravel
+- Butuh control penuh atas WebSockets
+
+### 1.2 Instalasi
+
+```bash
+# Install Reverb (Laravel 11+ atau package terpisah untuk Laravel 10)
+composer require laravel/reverb
+
+# Publish konfigurasi
+php artisan reverb:install
+
+# Install Node dependencies untuk client
+npm install laravel-echo
+```
+
+## 2. Konfigurasi Server
+
+### 2.1 Environment Variables
+
+```env
+# .env
+BROADCAST_DRIVER=reverb
+
+REVERB_APP_ID=my-app-id
+REVERB_APP_KEY=my-app-key
+REVERB_APP_SECRET=my-app-secret
+
+REVERB_HOST=localhost
+REVERB_PORT=8080
+REVERB_SCHEME=http
+
+# Untuk production dengan SSL
+# REVERB_SCHEME=https
+# REVERB_PORT=443
+
+# Scaling dengan Redis
+REVERB_SCALING_ENABLED=true
+REDIS_HOST=localhost
+REDIS_PORT=6379
+```
+
+### 2.2 Konfigurasi File
+
+```php
+<?php
+
+// config/reverb.php
+return [
+    'default' => env('REVERB_SERVER', 'reverb'),
+
+    'servers' => [
+        'reverb' => [
+            'host' => env('REVERB_HOST', '0.0.0.0'),
+            'port' => env('REVERB_PORT', 8080),
+            'hostname' => env('REVERB_HOSTNAME', 'localhost'),
+            'options' => [
+                'tls' => [],
+            ],
+            'max_request_size' => 10_000,
+            'scaling' => [
+                'enabled' => env('REVERB_SCALING_ENABLED', false),
+                'channel' => env('REVERB_SCALING_CHANNEL', 'reverb'),
+                'server' => [
+                    'url' => env('REDIS_URL', 'redis://localhost:6379'),
+                    'host' => env('REDIS_HOST', 'localhost'),
+                    'port' => env('REDIS_PORT', '6379'),
+                    'username' => env('REDIS_USERNAME'),
+                    'password' => env('REDIS_PASSWORD'),
+                    'database' => env('REDIS_DB', '0'),
+                ],
+            ],
+            'pulse_ingest_interval' => 15,
+        ],
+    ],
+
+    'apps' => [
+        'provider' => 'config',
+
+        'apps' => [
+            [
+                'key' => env('REVERB_APP_KEY'),
+                'secret' => env('REVERB_APP_SECRET'),
+                'app_id' => env('REVERB_APP_ID'),
+                'options' => [
+                    'host' => env('REVERB_HOST'),
+                    'port' => env('REVERB_PORT', 443),
+                    'scheme' => env('REVERB_SCHEME', 'https'),
+                    'useTLS' => env('REVERB_SCHEME', 'https') === 'https',
+                ],
+                'allowed_origins' => ['*'],
+                'ping_interval' => env('REVERB_APP_PING_INTERVAL', 60),
+                'max_message_size' => env('REVERB_APP_MAX_MESSAGE_SIZE', 10_000),
+            ],
+        ],
+    ],
+];
+```
+
+## 3. Menjalankan Server
+
+### 3.1 Development
+
+```bash
+# Start Reverb server
+php artisan reverb:start
+
+# Dengan verbose output
+php artisan reverb:start --verbose
+
+# Custom host dan port
+php artisan reverb:start --host=0.0.0.0 --port=8080
+
+# Dengan debug mode
+php artisan reverb:start --debug
+```
+
+### 3.2 Production dengan Supervisor
+
+```ini
+; /etc/supervisor/conf.d/reverb.conf
+[program:reverb]
+process_name=%(program_name)s
+command=php /var/www/html/artisan reverb:start --host=0.0.0.0 --port=8080
+autostart=true
+autorestart=true
+user=www-data
+redirect_stderr=true
+stdout_logfile=/var/log/reverb.log
+stopwaitsecs=60
+```
+
+### 3.3 Systemd Service
+
+```ini
+; /etc/systemd/system/reverb.service
+[Unit]
+Description=Laravel Reverb WebSocket Server
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+WorkingDirectory=/var/www/html
+ExecStart=/usr/bin/php artisan reverb:start --host=0.0.0.0 --port=8080
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+## 4. Client Integration
+
+### 4.1 Laravel Echo Setup
+
+```javascript
+// resources/js/echo.js
+import Echo from 'laravel-echo';
+import Pusher from 'pusher-js';
+
+window.Pusher = Pusher;
+
+window.Echo = new Echo({
+    broadcaster: 'reverb',
+    key: import.meta.env.VITE_REVERB_APP_KEY,
+    wsHost: import.meta.env.VITE_REVERB_HOST,
+    wsPort: import.meta.env.VITE_REVERB_PORT ?? 80,
+    wssPort: import.meta.env.VITE_REVERB_PORT ?? 443,
+    forceTLS: (import.meta.env.VITE_REVERB_SCHEME ?? 'https') === 'https',
+    enabledTransports: ['ws', 'wss'],
+    auth: {
+        headers: {
+            Authorization: `Bearer ${localStorage.getItem('token')}`,
+        },
+    },
+});
+```
+
+### 4.2 React/Vue Integration
+
+```vue
+<!-- Vue 3 Composition API -->
+<script setup>
+import { onMounted, onUnmounted, ref } from 'vue';
+
+const messages = ref([]);
+const onlineUsers = ref([]);
+
+onMounted(() => {
+    // Join presence channel
+    const channel = Echo.join('chat.room.1')
+        .here((users) => {
+            onlineUsers.value = users;
+        })
+        .joining((user) => {
+            onlineUsers.value.push(user);
+        })
+        .leaving((user) => {
+            onlineUsers.value = onlineUsers.value.filter(u => u.id !== user.id);
+        })
+        .listen('MessageSent', (e) => {
+            messages.value.push(e.message);
+        })
+        .listenForWhisper('typing', (e) => {
+            showTypingIndicator(e.user);
+        });
+
+    // Cleanup
+    onUnmounted(() => {
+        Echo.leave('chat.room.1');
+    });
+});
+
+const sendMessage = (text) => {
+    axios.post('/api/messages', { text });
+};
+
+const indicateTyping = () => {
+    Echo.join('chat.room.1').whisper('typing', {
+        user: auth.user,
+    });
+};
+</script>
+```
+
+## 5. Presence Channels
+
+### 5.1 Authorization
+
+```php
+<?php
+
+// routes/channels.php
+use App\Models\Room;
+use App\Models\User;
+
+Broadcast::channel('chat.room.{roomId}', function (User $user, int $roomId) {
+    $room = Room::find($roomId);
+    
+    if ($user->canAccessRoom($room)) {
+        return [
+            'id' => $user->id,
+            'name' => $user->name,
+            'avatar' => $user->avatar_url,
+        ];
+    }
+    
+    return false;
+});
+```
+
+### 5.2 Broadcasting ke Presence Channel
+
+```php
+<?php
+
+// app/Events/MessageSent.php
+namespace App\Events;
+
+use Illuminate\Broadcasting\Channel;
+use Illuminate\Broadcasting\InteractsWithSockets;
+use Illuminate\Broadcasting\PresenceChannel;
+use Illuminate\Contracts\Broadcasting\ShouldBroadcast;
+use Illuminate\Foundation\Events\Dispatchable;
+use Illuminate\Queue\SerializesModels;
+
+class MessageSent implements ShouldBroadcast
+{
+    use Dispatchable, InteractsWithSockets, SerializesModels;
+
+    public function __construct(
+        public $roomId,
+        public $message,
+        public $user
+    ) {}
+
+    public function broadcastOn(): array
+    {
+        return [
+            new PresenceChannel('chat.room.' . $this->roomId),
+        ];
+    }
+
+    public function broadcastAs(): string
+    {
+        return 'message.sent';
+    }
+
+    public function broadcastWith(): array
+    {
+        return [
+            'id' => $this->message->id,
+            'text' => $this->message->text,
+            'user' => [
+                'id' => $this->user->id,
+                'name' => $this->user->name,
+            ],
+            'created_at' => $this->message->created_at->toIso8601String(),
+        ];
+    }
+}
+```
+
+## 6. Scaling Reverb
+
+### 6.1 Horizontal Scaling dengan Redis
+
+```env
+# .env
+REVERB_SCALING_ENABLED=true
+REDIS_HOST=redis.internal
+REDIS_PORT=6379
+```
+
+```php
+<?php
+
+// Multiple Reverb instances akan otomatis
+// synchronize via Redis pub/sub
+```
+
+### 6.2 Load Balancer Configuration
+
+```nginx
+# Nginx upstream untuk multiple Reverb servers
+upstream websocket {
+    least_conn;
+    server 127.0.0.1:8080;
+    server 127.0.0.1:8081;
+    server 127.0.0.1:8082;
+}
+
+server {
+    listen 443 ssl;
+    server_name ws.example.com;
+
+    ssl_certificate /path/to/cert.pem;
+    ssl_certificate_key /path/to/key.pem;
+
+    location / {
+        proxy_pass http://websocket;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        
+        # Timeout settings
+        proxy_read_timeout 86400;
+        proxy_send_timeout 86400;
+    }
+}
+```
+
+### 6.3 Docker Compose Setup
+
+```yaml
+# docker-compose.yml
+version: '3.8'
+
+services:
+  reverb:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: php artisan reverb:start --host=0.0.0.0 --port=8080
+    ports:
+      - "8080:8080"
+    environment:
+      - REVERB_SCALING_ENABLED=true
+      - REDIS_HOST=redis
+    depends_on:
+      - redis
+      - app
+    deploy:
+      replicas: 3
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf
+    depends_on:
+      - reverb
+```
+
+## 7. Monitoring & Debugging
+
+### 7.1 Reverb dengan Laravel Pulse
+
+```php
+<?php
+
+// config/pulse.php
+'recorders' => [
+    // ... other recorders
+    
+    \Laravel\Reverb\Pulse\Recorders\ReverbConnections::class => [
+        'enabled' => env('REVERB_PULSE_ENABLED', true),
+        'sample_rate' => 1,
+    ],
+    
+    \Laravel\Reverb\Pulse\Recorders\ReverbMessages::class => [
+        'enabled' => env('REVERB_PULSE_ENABLED', true),
+        'sample_rate' => 1,
+    ],
+],
+```
+
+### 7.2 Logging
+
+```php
+<?php
+
+// config/reverb.php
+'apps' => [
+    [
+        // ...
+        'options' => [
+            'debug' => env('REVERB_DEBUG', false),
+        ],
+    ],
+],
+
+// Log file: storage/logs/reverb.log
+```
+
+## 8. SSL/TLS Configuration
+
+```php
+<?php
+
+// config/reverb.php
+'servers' => [
+    'reverb' => [
+        'host' => '0.0.0.0',
+        'port' => 443,
+        'options' => [
+            'tls' => [
+                'local_cert' => '/path/to/cert.pem',
+                'local_pk' => '/path/to/key.pem',
+                'verify_peer' => false,
+            ],
+        ],
+    ],
+],
+```
+
+## Kesimpulan
+
+Laravel Reverb menyediakan solusi WebSockets self-hosted yang powerful:
+- **First-party integration** dengan Laravel Echo
+- **Presence channels** untuk real-time collaboration
+- **Horizontal scaling** dengan Redis
+- **Production ready** dengan SSL dan load balancing
+- **Laravel Pulse integration** untuk monitoring
+
+Selanjutnya di **Sesi 54**, kita akan mempelajari Laravel Pennant (Feature Flags).
+```

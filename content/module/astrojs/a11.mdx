@@ -1,0 +1,956 @@
+---
+title: "Sesi 11: JavaScript & Interaktivitas"
+description: "Astro memungkinkan kamu menulis JavaScript di tiga tempat berbeda, masing-masing dengan tujuan dan perilaku yang berbeda."
+category: "astrojs"
+tags: ["astrojs"]
+order: 11
+---
+
+# Sesi 11: JavaScript & Interaktivitas
+
+## 11.1 JavaScript in Astro Components
+
+Astro memungkinkan kamu menulis JavaScript di tiga tempat berbeda, masing-masing dengan tujuan dan perilaku yang berbeda.
+
+### Analogi Sederhana:
+
+> Bayangkan sebuah restoran:
+> - **Frontmatter (---)** = Dapur (server) - mempersiapkan bahan sebelum disajikan
+> - **Template expressions {}** = Piring saji - menyajikan hasil ke pelanggan
+> - **`<script>` tags** = Meja makan (client) - interaksi setelah hidangan tiba
+
+### Tiga Zona JavaScript:
+
+```astro
+---
+// ZONA 1: Frontmatter (Server-side, build-time)
+// Kode ini berjalan di server, tidak dikirim ke browser
+
+import { getCollection } from 'astro:content';
+import Counter from '../components/react/Counter.jsx';
+
+// Fetch data dari API/CMS
+const posts = await getCollection('blog');
+const apiData = await fetch('https://api.example.com/data').then(r => r.json());
+
+// Manipulasi data
+const featuredPosts = posts.filter(p => p.data.featured);
+const totalViews = posts.reduce((sum, p) => sum + (p.data.views || 0), 0);
+
+// Log hanya muncul di terminal build, bukan browser console
+console.log('Building page with', posts.length, 'posts');
+---
+
+<!-- ZONA 2: Template (HTML + Expressions) -->
+<!-- Render hasil dari frontmatter -->
+
+<h1>Blog dengan {posts.length} Artikel</h1>
+<p>Total views: {totalViews.toLocaleString()}</p>
+
+<ul>
+  {featuredPosts.map(post => (
+    <li>{post.data.title} ({post.data.views} views)</li>
+  ))}
+</ul>
+
+<!-- ZONA 3: Script tags (Client-side) -->
+<!-- Kode ini berjalan di browser -->
+
+<script>
+  // Akses DOM, localStorage, browser APIs
+  console.log('This runs in browser!');
+  
+  // Interaksi user
+  document.querySelectorAll('li').forEach(item => {
+    item.addEventListener('click', () => {
+      item.style.color = 'red';
+    });
+  });
+  
+  // Akses browser storage
+  const visited = localStorage.getItem('visited') || '0';
+  localStorage.setItem('visited', String(parseInt(visited) + 1));
+</script>
+```
+
+### Komunikasi Server-to-Client:
+
+```astro
+---
+// Data dari server
+const serverData = {
+  userId: '123',
+  preferences: { theme: 'dark', lang: 'id' },
+  apiEndpoint: 'https://api.example.com'
+};
+---
+
+<script define:vars={{ serverData }}>
+  // Data tersedia di client via define:vars
+  console.log(serverData.userId); // '123'
+  
+  // Gunakan untuk inisialisasi client-side
+  document.documentElement.classList.add(serverData.preferences.theme);
+  
+  // Fetch dengan endpoint dari server
+  fetch(`${serverData.apiEndpoint}/user/${serverData.userId}`)
+    .then(r => r.json())
+    .then(data => console.log(data));
+</script>
+```
+
+---
+
+## 11.2 Event Handlers
+
+Menangani interaksi user di Astro.
+
+### Native Event Listeners:
+
+```astro
+---
+// src/components/ClickableCard.astro
+interface Props {
+  href: string;
+}
+
+const { title, href } = Astro.props;
+---
+
+<a href={href} class="card" data-card-link>
+  <h3>{title}</h3>
+  <span class="arrow">→</span>
+</a>
+
+<script>
+  // Event delegation untuk performance
+  document.addEventListener('click', (e) => {
+    const card = e.target.closest('[data-card-link]');
+    if (!card) return;
+    
+    // Analytics tracking
+    const title = card.querySelector('h3')?.textContent;
+    console.log('Card clicked:', title);
+    
+    // Custom behavior
+    card.style.transform = 'scale(0.98)';
+    setTimeout(() => {
+      card.style.transform = '';
+    }, 150);
+  });
+  
+  // Hover effects
+  document.querySelectorAll('[data-card-link]').forEach(card => {
+    card.addEventListener('mouseenter', () => {
+      card.classList.add('hovered');
+    });
+    
+    card.addEventListener('mouseleave', () => {
+      card.classList.remove('hovered');
+    });
+  });
+</script>
+
+<style>
+  .card {
+    display: block;
+    padding: 1.5rem;
+    border: 1px solid #e5e7eb;
+    border-radius: 12px;
+    text-decoration: none;
+    color: inherit;
+    transition: all 0.2s;
+  }
+  
+  .card.hovered {
+    border-color: #3b82f6;
+    box-shadow: 0 4px 12px rgba(59, 130, 246, 0.15);
+  }
+  
+  .arrow {
+    display: inline-block;
+    transition: transform 0.2s;
+  }
+  
+  .card.hovered .arrow {
+    transform: translateX(4px);
+  }
+</style>
+```
+
+### Form Handling:
+
+```astro
+---
+// src/components/NewsletterForm.astro
+
+// Handle POST request (untuk SSR/Actions)
+if (Astro.request.method === 'POST') {
+  try {
+    const data = await Astro.request.formData();
+    const email = data.get('email');
+    
+    // Validasi
+    if (!email || !email.includes('@')) {
+      return new Response('Invalid email', { status: 400 });
+    }
+    
+    // Simpan ke database
+    await subscribeEmail(email);
+    
+    return Astro.redirect('/success');
+  } catch (error) {
+    console.error(error);
+  }
+}
+---
+
+<form method="POST" class="newsletter-form" data-form>
+  <div class="input-group">
+    <input 
+      type="email" 
+      name="email" 
+      placeholder="your@email.com"
+      required
+      class="email-input"
+    />
+    <button type="submit" class="submit-btn">
+      Subscribe
+    </button>
+  </div>
+  <p class="message" data-message></p>
+</form>
+
+<script>
+  const form = document.querySelector('[data-form]');
+  const message = document.querySelector('[data-message]');
+  const submitBtn = form?.querySelector('.submit-btn');
+  
+  form?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    
+    // Loading state
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Subscribing...';
+    
+    try {
+      const formData = new FormData(form);
+      const response = await fetch('/api/subscribe', {
+        method: 'POST',
+        body: formData,
+      });
+      
+      if (response.ok) {
+        message.textContent = '✅ Berhasil berlangganan!';
+        message.className = 'message success';
+        form.reset();
+      } else {
+        throw new Error('Subscription failed');
+      }
+    } catch (error) {
+      message.textContent = '❌ Gagal, coba lagi nanti.';
+      message.className = 'message error';
+    } finally {
+      submitBtn.disabled = false;
+      submitBtn.textContent = 'Subscribe';
+    }
+  });
+</script>
+
+<style>
+  .newsletter-form {
+    max-width: 400px;
+  }
+  
+  .input-group {
+    display: flex;
+    gap: 0.5rem;
+  }
+  
+  .email-input {
+    flex: 1;
+    padding: 0.75rem;
+    border: 1px solid #d1d5db;
+    border-radius: 8px;
+    font-size: 1rem;
+  }
+  
+  .submit-btn {
+    padding: 0.75rem 1.5rem;
+    background: #3b82f6;
+    color: white;
+    border: none;
+    border-radius: 8px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: opacity 0.2s;
+  }
+  
+  .submit-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+  
+  .message {
+    margin-top: 0.75rem;
+    font-size: 0.875rem;
+  }
+  
+  .message.success { color: #16a34a; }
+  .message.error { color: #dc2626; }
+</style>
+```
+
+---
+
+## 11.3 State Management
+
+Mengelola state dalam aplikasi Astro.
+
+### 1. Local State (Komponen Terpisah):
+
+```astro
+---
+// src/components/Counter.astro
+---
+
+<div class="counter" data-counter>
+  <button data-decrement>-</button>
+  <span data-value>0</span>
+  <button data-increment>+</button>
+</div>
+
+<script>
+  class Counter {
+    constructor(element) {
+      this.element = element;
+      this.value = 0;
+      this.display = element.querySelector('[data-value]');
+      
+      element.querySelector('[data-decrement]').addEventListener('click', () => this.update(-1));
+      element.querySelector('[data-increment]').addEventListener('click', () => this.update(1));
+    }
+    
+    update(delta) {
+      this.value += delta;
+      this.display.textContent = this.value;
+      
+      // Dispatch custom event
+      this.element.dispatchEvent(new CustomEvent('counterChange', {
+        detail: { value: this.value }
+      }));
+    }
+  }
+  
+  // Inisialisasi semua counter di page
+  document.querySelectorAll('[data-counter]').forEach(el => new Counter(el));
+</script>
+```
+
+### 2. Global State dengan Nanostores:
+
+```bash
+npm install nanostores @nanostores/persistent
+```
+
+```typescript
+// src/stores/cart.ts
+import { atom, computed } from 'nanostores';
+import { persistentAtom } from '@nanostores/persistent';
+
+// Cart state
+export interface CartItem {
+  id: string;
+  name: string;
+  price: number;
+  quantity: number;
+}
+
+export const cartItems = persistentAtom<CartItem[]>('cart', [], {
+  encode: JSON.stringify,
+  decode: JSON.parse,
+});
+
+// Computed values
+export const cartTotal = computed(cartItems, items => 
+  items.reduce((sum, item) => sum + item.price * item.quantity, 0)
+);
+
+export const cartCount = computed(cartItems, items =>
+  items.reduce((sum, item) => sum + item.quantity, 0)
+);
+
+// Actions
+export function addToCart(item: Omit<CartItem, 'quantity'>) {
+  const current = cartItems.get();
+  const existing = current.find(i => i.id === item.id);
+  
+  if (existing) {
+    cartItems.set(current.map(i => 
+      i.id === item.id 
+        ? { ...i, quantity: i.quantity + 1 }
+        : i
+    ));
+  } else {
+    cartItems.set([...current, { ...item, quantity: 1 }]);
+  }
+}
+
+export function removeFromCart(id: string) {
+  cartItems.set(cartItems.get().filter(i => i.id !== id));
+}
+
+export function updateQuantity(id: string, quantity: number) {
+  if (quantity <= 0) {
+    removeFromCart(id);
+  } else {
+    cartItems.set(cartItems.get().map(i => 
+      i.id === id ? { ...i, quantity } : i
+    ));
+  }
+}
+```
+
+```astro
+---
+// src/components/CartButton.astro
+import { cartCount } from '../stores/cart';
+---
+
+<button class="cart-btn" data-cart-btn>
+  🛒 Cart (<span data-cart-count>0</span>)
+</button>
+
+<script>
+  import { cartCount } from '../stores/cart';
+  
+  const countEl = document.querySelector('[data-cart-count]');
+  
+  // Subscribe ke store changes
+  cartCount.subscribe(count => {
+    if (countEl) countEl.textContent = String(count);
+  });
+</script>
+```
+
+```astro
+---
+// src/components/AddToCart.astro
+interface Props {
+  product: {
+    id: string;
+    name: string;
+    price: number;
+  };
+}
+
+const { product } = Astro.props;
+---
+
+<button 
+  class="add-to-cart" 
+  data-product={JSON.stringify(product)}
+>
+  Add to Cart - Rp {product.price.toLocaleString('id-ID')}
+</button>
+
+<script>
+  import { addToCart } from '../stores/cart';
+  
+  document.querySelectorAll('.add-to-cart').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const product = JSON.parse(btn.dataset.product);
+      addToCart(product);
+      
+      // Feedback visual
+      btn.textContent = '✅ Added!';
+      setTimeout(() => {
+        btn.textContent = `Add to Cart - Rp ${product.price.toLocaleString('id-ID')}`;
+      }, 1500);
+    });
+  });
+</script>
+```
+
+### 3. URL State:
+
+```astro
+---
+// src/components/FilterableList.astro
+interface Props {
+  items: Array<{ id: string; category: string; name: string }>;
+}
+
+const { items } = Astro.props;
+
+// Read state dari URL
+const url = new URL(Astro.request.url);
+const currentCategory = url.searchParams.get('category') || 'all';
+const searchQuery = url.searchParams.get('q') || '';
+
+// Filter items
+const filtered = items.filter(item => {
+  const matchCategory = currentCategory === 'all' || item.category === currentCategory;
+  const matchSearch = item.name.toLowerCase().includes(searchQuery.toLowerCase());
+  return matchCategory && matchSearch;
+});
+
+const categories = ['all', ...new Set(items.map(i => i.category))];
+---
+
+<div class="filters" data-filters>
+  <!-- Category filter -->
+  <div class="filter-group">
+    {categories.map(cat => (
+      <a 
+        href={`?category=${cat}${searchQuery ? `&q=${searchQuery}` : ''}`}
+        class:list={['filter-btn', { active: cat === currentCategory }]}
+        data-category={cat}
+      >
+        {cat.charAt(0).toUpperCase() + cat.slice(1)}
+      </a>
+    ))}
+  </div>
+  
+  <!-- Search -->
+  <form class="search-form" data-search-form>
+    <input 
+      type="search" 
+      name="q" 
+      value={searchQuery}
+      placeholder="Search..."
+      class="search-input"
+    />
+    <input type="hidden" name="category" value={currentCategory} />
+  </form>
+</div>
+
+<ul class="item-list">
+  {filtered.map(item => (
+    <li class="item" data-category={item.category}>
+      {item.name}
+    </li>
+  ))}
+</ul>
+
+<script>
+  // Client-side enhancement: update tanpa reload
+  const form = document.querySelector('[data-search-form]');
+  
+  form?.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const formData = new FormData(form);
+    const params = new URLSearchParams(formData);
+    window.location.search = params.toString();
+  });
+  
+  // Instant search dengan debounce
+  const searchInput = form?.querySelector('.search-input');
+  let timeout;
+  
+  searchInput?.addEventListener('input', (e) => {
+    clearTimeout(timeout);
+    timeout = setTimeout(() => {
+      form?.requestSubmit();
+    }, 300);
+  });
+</script>
+```
+
+---
+
+## 11.4 Effects & Lifecycle
+
+Mengelola side effects dan lifecycle di client-side Astro.
+
+### Pattern: Initialize on Load:
+
+```astro
+---
+// src/components/AnimateOnScroll.astro
+interface Props {
+  animation?: 'fade-up' | 'fade-in' | 'slide-left';
+}
+
+const { animation = 'fade-up' } = Astro.props;
+---
+
+<div class="animate-on-scroll" data-animation={animation}>
+  <slot />
+</div>
+
+<script>
+  // Intersection Observer untuk animasi scroll
+  const observer = new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+      if (entry.isIntersecting) {
+        entry.target.classList.add('is-visible');
+        observer.unobserve(entry.target); // Hanya animate sekali
+      }
+    });
+  }, {
+    threshold: 0.1,
+    rootMargin: '0px 0px -50px 0px'
+  });
+  
+  document.querySelectorAll('.animate-on-scroll').forEach(el => {
+    observer.observe(el);
+  });
+</script>
+
+<style>
+  .animate-on-scroll {
+    opacity: 0;
+    transform: translateY(30px);
+    transition: opacity 0.6s ease, transform 0.6s ease;
+  }
+  
+  .animate-on-scroll[data-animation="fade-in"] {
+    transform: none;
+  }
+  
+  .animate-on-scroll[data-animation="slide-left"] {
+    transform: translateX(-30px);
+  }
+  
+  .animate-on-scroll.is-visible {
+    opacity: 1;
+    transform: translate(0);
+  }
+</style>
+```
+
+### Pattern: Cleanup on Navigate (View Transitions):
+
+```astro
+---
+// src/components/RealTimeClock.astro
+---
+
+<span class="clock" data-clock>--:--:--</span>
+
+<script>
+  let intervalId;
+  
+  function startClock() {
+    const clock = document.querySelector('[data-clock]');
+    if (!clock) return;
+    
+    const update = () => {
+      clock.textContent = new Date().toLocaleTimeString('id-ID');
+    };
+    
+    update();
+    intervalId = setInterval(update, 1000);
+  }
+  
+  function stopClock() {
+    if (intervalId) clearInterval(intervalId);
+  }
+  
+  // Start saat load
+  startClock();
+  
+  // Cleanup saat navigate (View Transitions)
+  document.addEventListener('astro:before-swap', stopClock);
+  document.addEventListener('astro:after-swap', startClock);
+</script>
+```
+
+### Pattern: Media Query Listener:
+
+```astro
+---
+// src/components/ResponsiveNav.astro
+---
+
+<nav class="nav" data-nav>
+  <button class="menu-toggle" data-toggle aria-label="Toggle menu">
+    <span></span>
+    <span></span>
+    <span></span>
+  </button>
+  
+  <ul class="nav-list" data-nav-list>
+    <li><a href="/">Home</a></li>
+    <li><a href="/about">About</a></li>
+    <li><a href="/contact">Contact</a></li>
+  </ul>
+</nav>
+
+<script>
+  const nav = document.querySelector('[data-nav]');
+  const toggle = document.querySelector('[data-toggle]');
+  const navList = document.querySelector('[data-nav-list]');
+  
+  // Mobile menu toggle
+  toggle?.addEventListener('click', () => {
+    const isOpen = nav.classList.toggle('is-open');
+    toggle.setAttribute('aria-expanded', String(isOpen));
+  });
+  
+  // Close saat resize ke desktop
+  const mediaQuery = window.matchMedia('(min-width: 768px)');
+  
+  function handleResize(e) {
+    if (e.matches) {
+      // Desktop: pastikan menu terbuka, hapus mobile classes
+      nav.classList.remove('is-open');
+      toggle.setAttribute('aria-expanded', 'false');
+    }
+  }
+  
+  mediaQuery.addEventListener('change', handleResize);
+  
+  // Cleanup (penting untuk SPA behavior)
+  document.addEventListener('astro:before-swap', () => {
+    mediaQuery.removeEventListener('change', handleResize);
+  });
+</script>
+
+<style>
+  .menu-toggle {
+    display: none;
+    flex-direction: column;
+    gap: 4px;
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 0.5rem;
+  }
+  
+  .menu-toggle span {
+    display: block;
+    width: 24px;
+    height: 2px;
+    background: currentColor;
+    transition: transform 0.3s;
+  }
+  
+  @media (max-width: 767px) {
+    .menu-toggle {
+      display: flex;
+    }
+    
+    .nav-list {
+      display: none;
+      position: absolute;
+      top: 100%;
+      left: 0;
+      right: 0;
+      background: white;
+      padding: 1rem;
+      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+    }
+    
+    .nav.is-open .nav-list {
+      display: block;
+    }
+    
+    .nav.is-open .menu-toggle span:nth-child(1) {
+      transform: rotate(45deg) translate(5px, 5px);
+    }
+    
+    .nav.is-open .menu-toggle span:nth-child(2) {
+      opacity: 0;
+    }
+    
+    .nav.is-open .menu-toggle span:nth-child(3) {
+      transform: rotate(-45deg) translate(7px, -6px);
+    }
+  }
+</style>
+```
+
+---
+
+## 11.5 Dynamic Imports
+
+Memuat JavaScript secara dinamis untuk code splitting.
+
+### Pattern: Lazy Load Components:
+
+```astro
+---
+// src/components/HeavyFeature.astro
+---
+
+<div class="heavy-feature" data-heavy-feature>
+  <button data-load-btn>Load Advanced Features</button>
+  <div class="feature-content" data-content></div>
+</div>
+
+<script>
+  const container = document.querySelector('[data-heavy-feature]');
+  const loadBtn = container?.querySelector('[data-load-btn]');
+  const content = container?.querySelector('[data-content]');
+  
+  loadBtn?.addEventListener('click', async () => {
+    loadBtn.disabled = true;
+    loadBtn.textContent = 'Loading...';
+    
+    try {
+      // Dynamic import heavy library
+      const { createChart } = await import('../lib/chart-library.js');
+      const { processData } = await import('../lib/data-processor.js');
+      
+      // Fetch data
+      const response = await fetch('/api/complex-data');
+      const rawData = await response.json();
+      
+      // Process dan render
+      const processed = processData(rawData);
+      createChart(content, processed);
+      
+      loadBtn.style.display = 'none';
+    } catch (error) {
+      console.error('Failed to load:', error);
+      loadBtn.textContent = 'Error, retry?';
+      loadBtn.disabled = false;
+    }
+  });
+</script>
+```
+
+### Pattern: Conditional Polyfill Loading:
+
+```astro
+---
+// src/components/ImageGallery.astro
+---
+
+<div class="gallery" data-gallery>
+  <!-- Images -->
+</div>
+
+<script>
+  async function initGallery() {
+    // Cek browser support
+    if (!('IntersectionObserver' in window)) {
+      // Load polyfill jika diperlukan
+      await import('intersection-observer');
+    }
+    
+    // Load gallery library
+    const { default: PhotoSwipe } = await import('photoswipe');
+    
+    // Initialize
+    const gallery = new PhotoSwipe(/* ... */);
+    gallery.init();
+  }
+  
+  // Load saat idle atau interaction
+  if ('requestIdleCallback' in window) {
+    requestIdleCallback(initGallery);
+  } else {
+    setTimeout(initGallery, 200);
+  }
+</script>
+```
+
+---
+
+## 11.6 Code Splitting
+
+Strategi memecah kode untuk performa optimal.
+
+### Automatic Code Splitting:
+
+Astro secara otomatis melakukan code splitting untuk:
+- Dynamic imports (`import()`)
+- Framework components dengan client directives
+- CSS per-component
+
+### Manual Code Splitting:
+
+```astro
+---
+// src/pages/dashboard.astro
+import Layout from '../layouts/Layout.astro';
+
+// Widgets di-load secara dinamis berdasarkan user role
+const userRole = Astro.locals.user?.role || 'guest';
+---
+
+<Layout>
+  <div id="dashboard-widgets"></div>
+</Layout>
+
+<script define:vars={{ userRole }}>
+  async function loadWidgets() {
+    const container = document.getElementById('dashboard-widgets');
+    
+    // Load hanya widget yang diperlukan
+    const widgetModules = {
+      admin: () => import('../widgets/admin-widgets.js'),
+      editor: () => import('../widgets/editor-widgets.js'),
+      guest: () => import('../widgets/guest-widgets.js'),
+    };
+    
+    const loadWidgets = widgetModules[userRole] || widgetModules.guest;
+    const { renderWidgets } = await loadWidgets();
+    
+    renderWidgets(container);
+  }
+  
+  loadWidgets();
+</script>
+```
+
+### Preloading Critical Scripts:
+
+```astro
+---
+// src/layouts/BaseLayout.astro
+---
+
+<!DOCTYPE html>
+<html>
+  <head>
+    <!-- Preload critical scripts -->
+    <link rel="preload" href="/js/analytics.js" as="script">
+    <link rel="preload" href="/js/critical-utils.js" as="script">
+    
+    <!-- Prefetch untuk page berikutnya -->
+    <link rel="prefetch" href="/about">
+    <link rel="prefetch" href="/contact">
+  </head>
+  <body>
+    <slot />
+    
+    <!-- Critical scripts -->
+    <script src="/js/critical-utils.js" async></script>
+    
+    <!-- Non-critical dengan defer -->
+    <script src="/js/analytics.js" defer></script>
+  </body>
+</html>
+```
+
+---
+
+## Ringkasan Sesi 11
+
+| Konsep | Implementasi | Use Case |
+|--------|--------------|----------|
+| **Frontmatter** | `---` | Server-side data fetching |
+| **Template** | `{}` | Render data ke HTML |
+| **Script tags** | `<script>` | Client-side interaktivitas |
+| **Event Handling** | `addEventListener` | User interactions |
+| **Nanostores** | `atom()`, `computed()` | Global state management |
+| **URL State** | `URLSearchParams` | Shareable, bookmarkable state |
+| **Dynamic Imports** | `import()` | Code splitting, lazy loading |
+| **Lifecycle** | `astro:before-swap` | Cleanup, View Transitions |
+
+### Best Practices:
+
+1. **Minimal JS**: Gunakan Astro components (zero JS) untuk konten statis
+2. **Progressive Enhancement**: Core functionality tanpa JS, enhance dengan JS
+3. **Event Delegation**: Satu listener untuk banyak elements
+4. **Cleanup**: Hapus event listeners saat navigate (View Transitions)
+5. **Stores**: Nanostores untuk state yang perlu persist/share
+6. **Dynamic Imports**: Load heavy code hanya saat diperlukan
+
+---
+
+**Selanjutnya:** Di Sesi 12, kita akan membahas **Performance Optimization** - prefetching, lazy loading, Core Web Vitals, dan strategi optimasi lanjutan.

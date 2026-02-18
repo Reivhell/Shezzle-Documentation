@@ -1,0 +1,525 @@
+---
+title: "Sesi 49: Laravel Scout (Search)"
+description: "Menguasai Laravel Scout untuk implementasi full-text search yang powerful dengan berbagai search engine backends."
+category: "laravel"
+tags: ["laravel"]
+order: 49
+---
+
+## Tujuan Pembelajaran
+
+Menguasai Laravel Scout untuk implementasi full-text search yang powerful dengan berbagai search engine backends.
+
+## 1. Instalasi & Konfigurasi
+
+### 1.1 Instalasi Scout
+
+```bash
+# Install Scout
+composer require laravel/scout
+
+# Publish config
+php artisan vendor:publish --provider="Laravel\Scout\ScoutServiceProvider"
+```
+
+### 1.2 Konfigurasi
+
+```php
+<?php
+
+// config/scout.php
+return [
+    'driver' => env('SCOUT_DRIVER', 'algolia'),
+    
+    'prefix' => env('SCOUT_PREFIX', ''),
+    
+    'queue' => [
+        'connection' => env('SCOUT_QUEUE_CONNECTION', null),
+        'queue' => env('SCOUT_QUEUE', null),
+    ],
+    
+    'database' => [
+        'soft_delete' => false,
+    ],
+    
+    'identifies' => false,
+    
+    'algolia' => [
+        'id' => env('ALGOLIA_APP_ID', ''),
+        'secret' => env('ALGOLIA_SECRET', ''),
+    ],
+    
+    'meilisearch' => [
+        'host' => env('MEILISEARCH_HOST', 'http://localhost:7700'),
+        'key' => env('MEILISEARCH_KEY', null),
+        'index-settings' => [
+            // 'users' => [
+            //     'filterableAttributes'=> ['id', 'name', 'email'],
+            // ],
+        ],
+    ],
+    
+    'typesense' => [
+        'client-settings' => [
+            'api_key' => env('TYPESENSE_API_KEY', 'xyz'),
+            'nodes' => [
+                [
+                    'host' => env('TYPESENSE_HOST', 'localhost'),
+                    'port' => env('TYPESENSE_PORT', '8108'),
+                    'path' => env('TYPESENSE_PATH', ''),
+                    'protocol' => env('TYPESENSE_PROTOCOL', 'http'),
+                ],
+            ],
+            'nearest_node' => [
+                'host' => env('TYPESENSE_HOST', 'localhost'),
+                'port' => env('TYPESENSE_PORT', '8108'),
+                'path' => env('TYPESENSE_PATH', ''),
+                'protocol' => env('TYPESENSE_PROTOCOL', 'http'),
+            ],
+            'connection_timeout_seconds' => 2,
+            'healthcheck_interval_seconds' => 30,
+            'num_retries' => 3,
+            'retry_interval_seconds' => 1,
+        ],
+        'model-settings' => [
+            // User::class => [
+            //     'collection-schema' => [
+            //         'fields' => [
+            //             [
+            //                 'name' => 'id',
+            //                 'type' => 'string',
+            //             ],
+            //             [
+            //                 'name' => 'name',
+            //                 'type' => 'string',
+            //             ],
+            //             [
+            //                 'name' => 'email',
+            //                 'type' => 'string',
+            //             ],
+            //         ],
+            //     ],
+            // ],
+        ],
+    ],
+];
+```
+
+## 2. Searchable Models
+
+### 2.1 Basic Setup
+
+```php
+<?php
+
+// app/Models/Post.php
+namespace App\Models;
+
+use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Model;
+use Laravel\Scout\Searchable;
+
+class Post extends Model
+{
+    use HasFactory, Searchable;
+
+    /**
+     * Get the indexable data array for the model.
+     */
+    public function toSearchableArray(): array
+    {
+        return [
+            'id' => $this->id,
+            'title' => $this->title,
+            'content' => $this->content,
+            'excerpt' => $this->excerpt,
+            'slug' => $this->slug,
+            'status' => $this->status,
+            'published_at' => $this->published_at?->timestamp,
+            'author_name' => $this->author->name,
+            'category_name' => $this->category?->name,
+            'tags' => $this->tags->pluck('name')->toArray(),
+        ];
+    }
+
+    /**
+     * Get the value used to index the model.
+     */
+    public function getScoutKey(): mixed
+    {
+        return $this->id;
+    }
+
+    /**
+     * Get the key name used to index the model.
+     */
+    public function getScoutKeyName(): mixed
+    {
+        return 'id';
+    }
+
+    /**
+     * Determine if the model should be searchable.
+     */
+    public function shouldBeSearchable(): bool
+    {
+        return $this->isPublished();
+    }
+}
+```
+
+### 2.2 Searchable dengan Relationships
+
+```php
+<?php
+
+// app/Models/Product.php
+class Product extends Model
+{
+    use Searchable;
+
+    public function toSearchableArray(): array
+    {
+        $array = $this->toArray();
+
+        // Include relationship data
+        $array['category'] = $this->category?->name;
+        $array['brand'] = $this->brand?->name;
+        $array['variants'] = $this->variants->map(fn ($v) => [
+            'sku' => $v->sku,
+            'color' => $v->color,
+            'size' => $v->size,
+        ])->toArray();
+
+        // Computed fields untuk search
+        $array['searchable_price'] = $this->price * 100; // Integer untuk filtering
+        $array['in_stock'] => $this->stock > 0;
+
+        return $array;
+    }
+
+    /**
+     * Load relationships untuk indexing
+     */
+    protected function makeAllSearchableUsing($query)
+    {
+        return $query->with(['category', 'brand', 'variants']);
+    }
+}
+```
+
+## 3. Indexing Operations
+
+### 3.1 Manual Indexing
+
+```bash
+# Import all records into search index
+php artisan scout:import "App\Models\Post"
+
+# Flush all records from index
+php artisan scout:flush "App\Models\Post"
+
+# Index specific model
+php artisan scout:index App\\Models\\Post
+
+# Delete index
+php artisan scout:delete-index App\\Models\\Post
+```
+
+### 3.2 Programmatic Indexing
+
+```php
+<?php
+
+use App\Models\Post;
+
+// Index single model
+$post->searchable();
+
+// Remove from index
+$post->unsearchable();
+
+// Batch indexing
+Post::where('status', 'published')->searchable();
+
+// Batch removal
+Post::where('status', 'draft')->unsearchable();
+
+// Update index tanpa query ulang
+$post->searchable(); // Scout otomatis handle via model events
+```
+
+### 3.3 Queue-based Indexing
+
+```php
+<?php
+
+// config/scout.php
+'queue' => [
+    'connection' => 'redis',
+    'queue' => 'scout-indexing',
+],
+
+// Atau per-model
+class Post extends Model
+{
+    use Searchable;
+
+    public $scoutQueue = 'search-indexing';
+}
+```
+
+## 4. Searching
+
+### 4.1 Basic Search
+
+```php
+<?php
+
+use App\Models\Post;
+
+// Basic search
+$posts = Post::search('laravel tutorial')->get();
+
+// Search dengan pagination
+$posts = Post::search('laravel')->paginate(20);
+
+// Search dengan where clauses
+$posts = Post::search('tutorial')
+    ->where('status', 'published')
+    ->get();
+
+// Search dengan multiple conditions
+$posts = Post::search('laravel')
+    ->where('status', 'published')
+    ->where('author_id', 1)
+    ->orderBy('published_at', 'desc')
+    ->paginate(20);
+```
+
+### 4.2 Advanced Search
+
+```php
+<?php
+
+// Raw search (Algolia/Meilisearch specific)
+$posts = Post::search('laravel', function ($driver, $query, $options) {
+    $options['filters'] = 'status:published AND author_id = 1';
+    $options['attributesToHighlight'] = ['title', 'content'];
+    return $driver->search($query, $options);
+})->get();
+
+// Search dengan callback
+$posts = Post::search('tutorial', function ($driver, $query, $options) {
+    // Algolia-specific options
+    $options['hitsPerPage'] = 50;
+    $options['attributesToRetrieve'] = ['id', 'title', 'slug'];
+    return $driver->search($query, $options);
+})->get();
+```
+
+### 4.3 Database Engine (MySQL/PostgreSQL)
+
+```php
+<?php
+
+// .env
+SCOUT_DRIVER=database
+
+// config/scout.php
+'database' => [
+    'soft_delete' => true,
+    'maintain_index' => true,
+],
+
+// Model
+class Post extends Model
+{
+    use Searchable;
+
+    public function toSearchableArray(): array
+    {
+        return [
+            'id' => $this->id,
+            'title' => $this->title,
+            'content' => $this->content,
+        ];
+    }
+
+    /**
+     * Define searchable columns untuk database driver
+     */
+    public function scoutMetadata(): array
+    {
+        return [
+            'searchable_columns' => ['title', 'content'],
+        ];
+    }
+}
+```
+
+## 5. Aggregations & Facets
+
+### 5.1 Algolia Aggregations
+
+```php
+<?php
+
+$results = Post::search('laravel', function ($driver, $query, $options) {
+    $options['facets'] = ['category', 'status', 'author_id'];
+    $options['maxValuesPerFacet'] = 10;
+    return $driver->search($query, $options);
+})->raw();
+
+// Access aggregations
+$facets = $results['facets'];
+```
+
+### 5.2 Meilisearch Facets
+
+```php
+<?php
+
+// Index settings untuk Meilisearch
+'index-settings' => [
+    Post::class => [
+        'filterableAttributes' => ['status', 'category_id', 'author_id'],
+        'sortableAttributes' => ['published_at', 'title'],
+        'searchableAttributes' => ['title', 'content', 'excerpt'],
+    ],
+],
+
+// Search dengan facets
+$posts = Post::search('laravel', function ($driver, $query, $options) {
+    $options['facets'] = ['category_id', 'status'];
+    return $driver->search($query, $options);
+})->raw();
+```
+
+## 6. Search dalam Production
+
+### 6.1 Zero-Downtime Reindexing
+
+```php
+<?php
+
+// Command untuk safe reindexing
+class SafeReindexCommand extends Command
+{
+    public function handle()
+    {
+        $model = Post::class;
+        $tempIndex = 'posts_temp';
+        $productionIndex = 'posts';
+
+        // Create temporary index
+        Post::setSearchIndex($tempIndex);
+        
+        // Import to temporary index
+        $this->call('scout:import', ['model' => $model]);
+
+        // Swap indexes (Algolia)
+        $client = Search::client();
+        $client->moveIndex($tempIndex, $productionIndex);
+
+        $this->info('Reindexing completed successfully.');
+    }
+}
+```
+
+### 6.2 Search Analytics
+
+```php
+<?php
+
+// Log search queries
+class SearchController extends Controller
+{
+    public function search(Request $request)
+    {
+        $query = $request->input('q');
+        $startTime = microtime(true);
+
+        $results = Post::search($query)->paginate(20);
+
+        $duration = (microtime(true) - $startTime) * 1000;
+
+        // Log untuk analytics
+        SearchLog::create([
+            'query' => $query,
+            'results_count' => $results->total(),
+            'duration_ms' => $duration,
+            'user_id' => auth()->id(),
+            'ip' => $request->ip(),
+        ]);
+
+        return view('search.results', compact('results', 'query'));
+    }
+}
+```
+
+## 7. Testing Search
+
+```php
+<?php
+
+// tests/Feature/SearchTest.php
+class SearchTest extends TestCase
+{
+    use RefreshDatabase;
+
+    public function test_search_returns_relevant_results()
+    {
+        // Setup
+        Post::factory()->create(['title' => 'Laravel Tutorial']);
+        Post::factory()->create(['title' => 'Vue.js Guide']);
+        
+        $this->artisan('scout:import', ['model' => Post::class]);
+
+        // Test
+        $results = Post::search('laravel')->get();
+
+        $this->assertCount(1, $results);
+        $this->assertEquals('Laravel Tutorial', $results->first()->title);
+    }
+
+    public function test_search_with_filters()
+    {
+        Post::factory()->create(['title' => 'Published Post', 'status' => 'published']);
+        Post::factory()->create(['title' => 'Draft Post', 'status' => 'draft']);
+        
+        $this->artisan('scout:import', ['model' => Post::class]);
+
+        $results = Post::search('post')
+            ->where('status', 'published')
+            ->get();
+
+        $this->assertCount(1, $results);
+        $this->assertEquals('published', $results->first()->status);
+    }
+
+    public function test_search_pagination()
+    {
+        Post::factory()->count(25)->create();
+        
+        $this->artisan('scout:import', ['model' => Post::class]);
+
+        $results = Post::search('*')->paginate(10);
+
+        $this->assertCount(10, $results->items());
+        $this->assertEquals(25, $results->total());
+    }
+}
+```
+
+## Kesimpulan
+
+Laravel Scout menyederhanakan full-text search dengan multiple backend options:
+- **Multiple drivers**: Algolia, Meilisearch, Typesense, Database
+- **Easy indexing**: Automatic via model events atau manual batch
+- **Powerful search**: Dengan filtering, sorting, dan pagination
+- **Queue integration**: Untuk performa indexing pada dataset besar
+- **Production ready**: Dengan zero-downtime reindexing strategies
+
+Selanjutnya di **Sesi 50**, kita akan mempelajari Laravel Cashier untuk payment processing.
+```

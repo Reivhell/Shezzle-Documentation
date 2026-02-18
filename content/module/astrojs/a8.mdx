@@ -1,0 +1,733 @@
+---
+title: "Sesi 8: Content Management"
+description: "Content Collections adalah fitur flagship Astro untuk mengelola konten terstruktur (blog, dokumentasi, portfolio) dengan type safety dan validasi sche..."
+category: "astrojs"
+tags: ["astrojs"]
+order: 8
+---
+
+# Sesi 8: Content Management
+
+## 8.1 Content Collections
+
+Content Collections adalah fitur flagship Astro untuk mengelola konten terstruktur (blog, dokumentasi, portfolio) dengan type safety dan validasi schema.
+
+### Analogi Sederhana:
+
+> Bayangkan Content Collections seperti **perpustakaan modern dengan sistem katalog digital**. Setiap buku (konten) memiliki data katalog (frontmatter) yang tervalidasi, bisa dicari dengan query, dan selalu terorganisir. Tidak ada buku yang tersesat atau data yang salah input.
+
+### Struktur Folder Content Collections:
+
+```
+src/content/
+├── config.ts              # Konfigurasi schema semua collections
+├── blog/                  # Collection: blog posts
+│   ├── first-post.md
+│   ├── second-post.mdx
+│   └── 2026/
+│       └── astro-6-release.md
+├── authors/               # Collection: author profiles
+│   ├── budi-santoso.json
+│   └── ana-wijaya.yml
+└── products/              # Collection: product data
+    ├── laptop-pro.json
+    └── mouse-wireless.yml
+```
+
+### Konfigurasi Content Collections:
+
+```typescript
+// src/content/config.ts
+import { defineCollection, z } from 'astro:content';
+
+// Collection untuk blog posts (type: 'content')
+const blogCollection = defineCollection({
+  type: 'content', // 'content' = .md/.mdx files dengan body
+  schema: z.object({
+    pubDate: z.date(),
+    updatedDate: z.date().optional(),
+    author: z.string(), // Reference ke authors collection
+    tags: z.array(z.string()).default([]),
+    category: z.enum(['tech', 'tutorial', 'news', 'opinion']),
+    featured: z.boolean().default(false),
+    draft: z.boolean().default(false),
+    coverImage: z.string().url().optional(),
+    readingTime: z.number().int().positive().optional(),
+  }),
+});
+
+// Collection untuk authors (type: 'data')
+const authorsCollection = defineCollection({
+  type: 'data', // 'data' = .json/.yml files tanpa body
+  schema: z.object({
+    name: z.string(),
+    email: z.string().email(),
+    bio: z.string().max(500),
+    avatar: z.string().url(),
+    social: z.object({
+      twitter: z.string().optional(),
+      github: z.string().optional(),
+      linkedin: z.string().optional(),
+    }).optional(),
+    isActive: z.boolean().default(true),
+  }),
+});
+
+// Collection untuk products
+const productsCollection = defineCollection({
+  type: 'data',
+  schema: ({ image }) => z.object({
+    name: z.string(),
+    price: z.number().positive(),
+    currency: z.enum(['IDR', 'USD']).default('IDR'),
+    category: z.string(),
+    images: z.array(image()), // Validasi image reference
+    inStock: z.boolean().default(true),
+    specs: z.record(z.string()).optional(), // Key-value pairs
+  }),
+});
+
+export const collections = {
+  'blog': blogCollection,
+  'authors': authorsCollection,
+  'products': productsCollection,
+};
+```
+
+### Zod Schema Reference:
+
+| Validator | Fungsi | Contoh |
+|-----------|--------|--------|
+| `z.string()` | String | `z.string().min(5).max(100)` |
+| `z.number()` | Number | `z.number().int().positive()` |
+| `z.boolean()` | Boolean | `z.boolean().default(false)` |
+| `z.date()` | Date | `z.date()` |
+| `z.array()` | Array | `z.array(z.string())` |
+| `z.object()` | Object | `z.object({ name: z.string() })` |
+| `z.enum()` | Enum | `z.enum(['a', 'b', 'c'])` |
+| `z.optional()` | Opsional | `z.string().optional()` |
+| `z.default()` | Default value | `z.string().default('value')` |
+| `z.union()` | Multiple types | `z.union([z.string(), z.number()])` |
+| `z.record()` | Key-value | `z.record(z.string())` |
+
+---
+
+## 8.2 Live Content Collections (Stable in Astro 6)
+
+Fitur baru di Astro 6 untuk konten yang bisa di-update tanpa rebuild (ISR-like).
+
+### Konfigurasi Live Collections:
+
+```typescript
+// src/content/config.ts
+import { defineCollection, z } from 'astro:content';
+
+const announcementsCollection = defineCollection({
+  type: 'content',
+  // Mode live: konten bisa di-fetch ulang saat runtime
+  mode: 'live',
+  schema: z.object({
+    priority: z.enum(['low', 'medium', 'high']),
+    expiresAt: z.date().optional(),
+    isActive: z.boolean().default(true),
+  }),
+});
+
+export const collections = {
+  'announcements': announcementsCollection,
+};
+```
+
+### Menggunakan Live Collections:
+
+```astro
+---
+// src/pages/index.astro
+import { getLiveCollection } from 'astro:content';
+
+// Fetch konten live (bisa stale-while-revalidate)
+const announcements = await getLiveCollection('announcements', {
+  where: { isActive: true },
+  orderBy: { priority: 'desc' },
+  limit: 3,
+});
+---
+
+<div class="announcement-bar">
+  {announcements.map(announcement => (
+    <div class:list={['announcement', `priority-${announcement.data.priority}`]}>
+      <h3>{announcement.data.title}</h3>
+      <a href={`/announcements/${announcement.slug}`}>Baca selengkapnya</a>
+    </div>
+  ))}
+</div>
+```
+
+---
+
+## 8.3 Markdown (.md) Support
+
+Astro memiliki dukungan native untuk Markdown dengan ekstensi powerful.
+
+### Frontmatter Markdown:
+
+```markdown
+---
+# src/content/blog/my-post.md
+title: "Panduan Lengkap Astro Framework"
+description: "Belajar Astro dari dasar hingga mahir dalam satu artikel"
+pubDate: 2026-01-15
+author: "budi-santoso"
+tags: ["astro", "web-development", "tutorial"]
+category: "tutorial"
+featured: true
+coverImage: "https://example.com/cover.jpg"
+readingTime: 15
+---
+
+# Panduan Lengkap Astro Framework
+
+Astro adalah framework web modern yang...
+
+## Apa itu Astro?
+
+Astro dirancang untuk...
+
+### Keunggulan Utama
+
+1. **Zero JavaScript by Default**
+2. **Islands Architecture**
+3. **Multi-Framework Support**
+
+## Memulai Project
+
+```bash
+npm create astro@latest
+```
+
+## Kesimpulan
+
+Astro adalah pilihan tepat untuk...
+```
+
+### Mengakses Markdown di Astro:
+
+```astro
+---
+// src/pages/blog/[slug].astro
+import { getCollection, getEntry } from 'astro:content';
+
+export async function getStaticPaths() {
+  const posts = await getCollection('blog', post => !post.data.draft);
+  
+  return posts.map(post => ({
+    params: { slug: post.slug },
+    props: { post },
+  }));
+}
+
+const { post } = Astro.props;
+const { Content, headings, remarkPluginFrontmatter } = await post.render();
+
+// remarkPluginFrontmatter berisi data tambahan dari remark plugins
+---
+
+<article>
+  <header>
+    <h1>{post.data.title}</h1>
+    <p>{post.data.description}</p>
+    <time>{post.data.pubDate.toLocaleDateString('id-ID')}</time>
+  </header>
+  
+  <!-- Render konten Markdown -->
+  <div class="prose">
+    <Content />
+  </div>
+  
+  <!-- Headings untuk TOC -->
+  <nav class="toc">
+    <h2>Daftar Isi</h2>
+    <ul>
+      {headings.map(heading => (
+        <li style={`margin-left: ${(heading.depth - 1) * 1rem}`}>
+          <a href={`#${heading.slug}`}>{heading.text}</a>
+        </li>
+      ))}
+    </ul>
+  </nav>
+</article>
+```
+
+---
+
+## 8.4 MDX (.mdx) Support
+
+MDX memungkinkan kamu menggunakan komponen JSX di dalam Markdown.
+
+### Instalasi MDX:
+
+```bash
+npx astro add mdx
+```
+
+### Konten MDX:
+
+```mdx
+---
+# src/content/blog/interactive-post.mdx
+title: "Komponen Interaktif di MDX"
+description: "Menggunakan React dan Vue dalam artikel"
+pubDate: 2026-01-20
+---
+
+import { Counter } from '../../components/react/Counter.jsx';
+import { Image } from 'astro:assets';
+import heroImage from '../../assets/hero.jpg';
+
+# Artikel dengan Komponen Interaktif
+
+Ini paragraf biasa dalam Markdown.
+
+## Image dengan Optimasi
+
+<Image src={heroImage} alt="Hero" />
+
+## Counter Interaktif
+
+<Counter client:load initialCount={5} />
+
+## Tabs untuk Kode
+
+<div class="tabs-container">
+  
+### npm
+
+    ```bash
+    npm install package-name
+    ```
+  
+
+  
+### yarn
+
+    ```bash
+    yarn add package-name
+    ```
+  
+
+  
+### pnpm
+
+    ```bash
+    pnpm add package-name
+    ```
+  
+
+</div>
+
+## Layout Kustom
+
+<div class="info-box">
+  <h3>💡 Tips</h3>
+  <p>Gunakan MDX untuk konten yang memerlukan interaktivitas!</p>
+</div>
+```
+
+### MDX dengan Layout Astro:
+
+```astro
+---
+// src/layouts/MdxLayout.astro
+interface Props {
+  frontmatter: {
+    description?: string;
+  };
+}
+
+const { frontmatter } = Astro.props;
+---
+
+<article class="mdx-content">
+  <header>
+    <h1>{frontmatter.title}</h1>
+    {frontmatter.description && <p>{frontmatter.description}</p>}
+  </header>
+  
+  <div class="content">
+    <slot /> <!-- Konten MDX -->
+  </div>
+</article>
+
+<style>
+  .mdx-content :global(.info-box) {
+    background: #eff6ff;
+    border-left: 4px solid #3b82f6;
+    padding: 1rem;
+    margin: 1.5rem 0;
+    border-radius: 0 8px 8px 0;
+  }
+  
+  .mdx-content :global(.info-box h3) {
+    margin-top: 0;
+    color: #1e40af;
+  }
+</style>
+```
+
+---
+
+## 8.5 Frontmatter Schema Validation
+
+Validasi otomatis untuk memastikan data konten selalu benar.
+
+### Schema Lengkap dengan Transform:
+
+```typescript
+// src/content/config.ts
+import { defineCollection, z } from 'astro:content';
+
+const blogCollection = defineCollection({
+  type: 'content',
+  schema: z.object({
+    // String dengan validasi kompleks
+      .min(10, 'Judul terlalu pendek')
+      .max(100, 'Judul terlalu panjang')
+      .transform(val => val.trim()),
+    
+    // Slug auto-generate dari title jika tidak ada
+    slug: z.string()
+      .regex(/^[a-z0-9-]+$/, 'Slug hanya boleh alphanumeric dan dash')
+      .optional()
+      .transform(val => val || generateSlug(val)),
+    
+    // Date dengan default
+    pubDate: z.date()
+      .default(() => new Date()),
+    
+    // Array dengan validasi item
+    tags: z.array(
+      z.string()
+        .min(2, 'Tag minimal 2 karakter')
+        .max(20, 'Tag maksimal 20 karakter')
+        .transform(tag => tag.toLowerCase().replace(/\s+/g, '-'))
+    ).max(5, 'Maksimal 5 tags'),
+    
+    // Nested object
+    seo: z.object({
+      metaTitle: z.string().max(60).optional(),
+      metaDescription: z.string().max(160).optional(),
+      noIndex: z.boolean().default(false),
+      canonicalUrl: z.string().url().optional(),
+    }).default({}),
+    
+    // Union type
+    status: z.union([
+      z.literal('draft'),
+      z.literal('review'),
+      z.literal('published'),
+      z.literal('archived'),
+    ]).default('draft'),
+    
+    // Coerce untuk konversi tipe
+    views: z.coerce.number().int().nonnegative().default(0),
+    
+    // Custom validation
+    password: z.string()
+      .refine(val => val.length >= 8, 'Password minimal 8 karakter')
+      .refine(val => /[A-Z]/.test(val), 'Password harus ada huruf besar')
+      .optional(),
+  }),
+});
+
+function generateSlug(title: string): string {
+  return title
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '');
+}
+
+export const collections = {
+  'blog': blogCollection,
+};
+```
+
+### Error Handling:
+
+```bash
+# Jika frontmatter tidak valid:
+[content] The frontmatter of blog/invalid-post.md does not match the collection schema.
+[content] title: String must contain at least 10 character(s)
+[content] tags.0: Tag minimal 2 karakter
+```
+
+---
+
+## 8.6 Querying Content Collections
+
+Astro menyediakan API powerful untuk query konten.
+
+### Basic Querying:
+
+```astro
+---
+// src/pages/blog/index.astro
+import { getCollection, getEntry, getEntries } from 'astro:content';
+
+// 1. Get semua entries
+const allPosts = await getCollection('blog');
+
+// 2. Get dengan filter
+const publishedPosts = await getCollection('blog', post => 
+  post.data.status === 'published' && !post.data.draft
+);
+
+// 3. Get single entry by slug
+const specificPost = await getEntry('blog', 'hello-world');
+
+// 4. Get multiple entries by reference
+const authorIds = ['budi-santoso', 'ana-wijaya'];
+const authors = await getEntries('authors', authorIds);
+---
+
+<ul>
+  {publishedPosts.map(post => (
+    <li>
+      <a href={`/blog/${post.slug}`}>{post.data.title}</a>
+      <span>{post.data.pubDate.toLocaleDateString()}</span>
+    </li>
+  ))}
+</ul>
+```
+
+### Advanced Querying dengan Sort dan Limit:
+
+```astro
+---
+// src/pages/blog/index.astro
+import { getCollection } from 'astro:content';
+
+// Sort dan limit
+const recentPosts = await getCollection('blog', post => !post.data.draft)
+  .then(posts => posts
+    .sort((a, b) => b.data.pubDate.valueOf() - a.data.pubDate.valueOf())
+    .slice(0, 10)
+  );
+
+// Group by category
+const postsByCategory = await getCollection('blog')
+  .then(posts => {
+    const grouped: Record<string, typeof posts> = {};
+    posts.forEach(post => {
+      const cat = post.data.category;
+      if (!grouped[cat]) grouped[cat] = [];
+      grouped[cat].push(post);
+    });
+    return grouped;
+  });
+
+// Pagination
+const page = Number(Astro.url.searchParams.get('page')) || 1;
+const perPage = 10;
+const paginatedPosts = await getCollection('blog')
+  .then(posts => {
+    const start = (page - 1) * perPage;
+    return posts.slice(start, start + perPage);
+  });
+
+const totalPages = Math.ceil(allPosts.length / perPage);
+---
+
+<!-- Render paginated posts -->
+<div class="post-grid">
+  {paginatedPosts.map(post => <PostCard post={post} />)}
+</div>
+
+<!-- Pagination controls -->
+<nav class="pagination">
+  {page > 1 && <a href={`?page=${page - 1}`}>← Previous</a>}
+  <span>Page {page} of {totalPages}</span>
+  {page < totalPages && <a href={`?page=${page + 1}`}>Next →</a>}
+</nav>
+```
+
+### Relasi Antar Collections:
+
+```typescript
+// src/content/config.ts
+import { defineCollection, z, reference } from 'astro:content';
+
+const blogCollection = defineCollection({
+  type: 'content',
+  schema: z.object({
+    // Reference ke authors collection
+    author: reference('authors'),
+    // Multiple references
+    coAuthors: z.array(reference('authors')).default([]),
+    // Reference ke kategori (bisa buat collection categories)
+    category: reference('categories'),
+  }),
+});
+
+const authorsCollection = defineCollection({
+  type: 'data',
+  schema: z.object({
+    name: z.string(),
+    email: z.string().email(),
+  }),
+});
+
+export const collections = {
+  'blog': blogCollection,
+  'authors': authorsCollection,
+};
+```
+
+```astro
+---
+// src/pages/blog/[slug].astro
+import { getCollection, getEntry, getEntries } from 'astro:content';
+
+const { post } = Astro.props;
+
+// Resolve reference
+const author = await getEntry(post.data.author);
+const coAuthors = await getEntries(post.data.coAuthors);
+
+// Dengan data author yang lengkap
+---
+
+<article>
+  <h1>{post.data.title}</h1>
+  
+  <div class="authors">
+    <img src={author.data.avatar} alt={author.data.name} />
+    <div>
+      <p>{author.data.name}</p>
+      <p>{author.data.bio}</p>
+    </div>
+  </div>
+  
+  {coAuthors.length > 0 && (
+    <div class="co-authors">
+      <p>Bersama: {coAuthors.map(a => a.data.name).join(', ')}</p>
+    </div>
+  )}
+</article>
+```
+
+---
+
+## 8.7 Content Types & Validation
+
+Mengelola berbagai tipe konten dalam satu project.
+
+### Multiple Content Types:
+
+```typescript
+// src/content/config.ts
+import { defineCollection, z } from 'astro:content';
+
+// Blog posts
+const blog = defineCollection({
+  type: 'content',
+  schema: z.object({
+    pubDate: z.date(),
+    author: z.string(),
+  }),
+});
+
+// Documentation pages
+const docs = defineCollection({
+  type: 'content',
+  schema: z.object({
+    sidebar: z.object({
+      group: z.string().optional(),
+    }),
+    prev: z.string().optional(),
+    next: z.string().optional(),
+  }),
+});
+
+// Changelog
+const changelog = defineCollection({
+  type: 'content',
+  schema: z.object({
+    version: z.string(),
+    date: z.date(),
+    changes: z.array(z.object({
+      type: z.enum(['breaking', 'feature', 'fix', 'docs']),
+    })),
+  }),
+});
+
+// FAQ
+const faq = defineCollection({
+  type: 'data',
+  schema: z.array(z.object({
+    question: z.string(),
+    answer: z.string(),
+    category: z.string(),
+    popular: z.boolean().default(false),
+  })),
+});
+
+export const collections = { blog, docs, changelog, faq };
+```
+
+### Type-Safe Content Helpers:
+
+```typescript
+// src/lib/content.ts
+import { getCollection, type CollectionEntry } from 'astro:content';
+
+// Type aliases
+type BlogPost = CollectionEntry<'blog'>;
+type DocPage = CollectionEntry<'docs'>;
+
+// Helper functions dengan type safety
+export async function getPublishedPosts(): Promise<BlogPost[]> {
+  return getCollection('blog', post => 
+    post.data.pubDate <= new Date() && !post.data.draft
+  );
+}
+
+export async function getDocsByGroup(group: string): Promise<DocPage[]> {
+  return getCollection('docs', doc => 
+    doc.data.sidebar?.group === group
+  ).then(docs => docs.sort((a, b) => 
+    a.data.sidebar.order - b.data.sidebar.order
+  ));
+}
+
+export async function getChangelogByVersion(version: string) {
+  return getCollection('changelog', entry => 
+    entry.data.version === version
+  );
+}
+```
+
+---
+
+## Ringkasan Sesi 8
+
+| Konsep | Fungsi | Contoh |
+|--------|--------|--------|
+| **Content Collections** | Organisasi konten terstruktur | `src/content/blog/` |
+| **Schema Validation** | Validasi frontmatter dengan Zod | `z.object({ title: z.string() })` |
+| **Type: 'content'** | Markdown/MDX dengan body | Blog posts, docs |
+| **Type: 'data'** | JSON/YAML tanpa body | Authors, products |
+| **Live Collections** | Konten real-time (Astro 6) | `mode: 'live'` |
+| **Query API** | Mengambil konten | `getCollection()`, `getEntry()` |
+| **References** | Relasi antar collections | `reference('authors')` |
+
+### Best Practices:
+
+1. **Gunakan TypeScript**: Manfaatkan type safety penuh
+2. **Validasi Strict**: Schema yang ketat mencegah error runtime
+3. **Organisasi Folder**: Pisahkan by content type
+4. **Draft Mode**: Gunakan flag draft untuk konten WIP
+5. **References**: Hubungkan data terkait (author → post)
+
+---
+
+**Selanjutnya:** Di Sesi 9, kita akan membahas **Images & Assets** - optimasi gambar, responsive images, dan strategi loading.

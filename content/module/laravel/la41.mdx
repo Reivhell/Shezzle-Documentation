@@ -1,0 +1,631 @@
+---
+title: "Sesi 41: OAuth & Social Authentication (Socialite)"
+description: "Berikut **Sesi 41: OAuth & Social Authentication (Socialite)**:"
+category: "laravel"
+tags: ["laravel", "authentication"]
+order: 41
+---
+
+Berikut **Sesi 41: OAuth & Social Authentication (Socialite)**:
+
+```mdx
+---
+title: "Sesi 41: OAuth & Social Authentication (Socialite)"
+description: "Menguasai Laravel Socialite untuk OAuth authentication dengan Google, GitHub, Facebook, dan implementasi account linking"
+---
+
+## Tujuan Pembelajaran
+
+Menguasai integrasi OAuth providers untuk social authentication, mengimplementasikan account linking, dan menangani error handling untuk login yang seamless.
+
+## 1. Instalasi & Konfigurasi
+
+### 1.1 Instalasi Socialite
+
+```bash
+composer require laravel/socialite
+```
+
+### 1.2 Konfigurasi Providers
+
+```php
+<?php
+
+// config/services.php
+return [
+    'google' => [
+        'client_id' => env('GOOGLE_CLIENT_ID'),
+        'client_secret' => env('GOOGLE_CLIENT_SECRET'),
+        'redirect' => env('GOOGLE_REDIRECT_URI'),
+    ],
+
+    'github' => [
+        'client_id' => env('GITHUB_CLIENT_ID'),
+        'client_secret' => env('GITHUB_CLIENT_SECRET'),
+        'redirect' => env('GITHUB_REDIRECT_URI'),
+    ],
+
+    'facebook' => [
+        'client_id' => env('FACEBOOK_CLIENT_ID'),
+        'client_secret' => env('FACEBOOK_CLIENT_SECRET'),
+        'redirect' => env('FACEBOOK_REDIRECT_URI'),
+    ],
+
+    'twitter' => [
+        'client_id' => env('TWITTER_CLIENT_ID'),
+        'client_secret' => env('TWITTER_CLIENT_SECRET'),
+        'redirect' => env('TWITTER_REDIRECT_URI'),
+    ],
+];
+```
+
+```env
+# .env
+GOOGLE_CLIENT_ID=your-google-client-id
+GOOGLE_CLIENT_SECRET=your-google-secret
+GOOGLE_REDIRECT_URI=https://your-app.com/auth/google/callback
+
+GITHUB_CLIENT_ID=your-github-client-id
+GITHUB_CLIENT_SECRET=your-github-secret
+GITHUB_REDIRECT_URI=https://your-app.com/auth/github/callback
+```
+
+## 2. Basic OAuth Flow
+
+### 2.1 Redirect & Callback
+
+```php
+<?php
+
+// routes/web.php
+use Laravel\Socialite\Facades\Socialite;
+
+// Redirect ke OAuth provider
+Route::get('/auth/{provider}/redirect', function ($provider) {
+    return Socialite::driver($provider)->redirect();
+})->name('social.redirect');
+
+// Handle callback
+Route::get('/auth/{provider}/callback', [SocialAuthController::class, 'handleCallback'])
+    ->name('social.callback');
+```
+
+```php
+<?php
+
+// app/Http/Controllers/Auth/SocialAuthController.php
+namespace App\Http\Controllers\Auth;
+
+use App\Http\Controllers\Controller;
+use App\Models\User;
+use App\Models\SocialAccount;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Str;
+use Laravel\Socialite\Facades\Socialite;
+
+class SocialAuthController extends Controller
+{
+    /**
+     * Supported providers
+     */
+    protected array $providers = ['google', 'github', 'facebook', 'twitter'];
+
+    /**
+     * Redirect ke OAuth provider
+     */
+    public function redirect(string $provider)
+    {
+        $this->validateProvider($provider);
+
+        return Socialite::driver($provider)->redirect();
+    }
+
+    /**
+     * Handle OAuth callback
+     */
+    public function handleCallback(string $provider)
+    {
+        $this->validateProvider($provider);
+
+        try {
+            $socialUser = Socialite::driver($provider)->user();
+        } catch (\Exception $e) {
+            return redirect()->route('login')
+                ->with('error', 'Authentication failed. Please try again.');
+        }
+
+        // Find or create user
+        $user = $this->findOrCreateUser($socialUser, $provider);
+
+        Auth::login($user, true);
+
+        return redirect()->intended('/dashboard');
+    }
+
+    /**
+     * Validate provider
+     */
+    protected function validateProvider(string $provider): void
+    {
+        if (!in_array($provider, $this->providers)) {
+            abort(404, 'Provider not supported');
+        }
+    }
+
+    /**
+     * Find existing user atau create new
+     */
+    protected function findOrCreateUser($socialUser, string $provider): User
+    {
+        // Cek apakah social account sudah ada
+        $socialAccount = SocialAccount::where('provider', $provider)
+            ->where('provider_id', $socialUser->getId())
+            ->first();
+
+        if ($socialAccount) {
+            // Update token
+            $socialAccount->update([
+                'token' => $socialUser->token,
+                'refresh_token' => $socialUser->refreshToken,
+                'expires_at' => $socialUser->expiresIn ? now()->addSeconds($socialUser->expiresIn) : null,
+            ]);
+
+            return $socialAccount->user;
+        }
+
+        // Cek user dengan email yang sama
+        $user = User::where('email', $socialUser->getEmail())->first();
+
+        if (!$user) {
+            // Create user baru
+            $user = User::create([
+                'name' => $socialUser->getName() ?? $socialUser->getNickname(),
+                'email' => $socialUser->getEmail(),
+                'password' => Hash::make(Str::random(24)), // Random password
+                'email_verified_at' => now(), // OAuth emails are verified
+                'avatar' => $socialUser->getAvatar(),
+            ]);
+        }
+
+        // Link social account
+        $user->socialAccounts()->create([
+            'provider' => $provider,
+            'provider_id' => $socialUser->getId(),
+            'token' => $socialUser->token,
+            'refresh_token' => $socialUser->refreshToken,
+            'expires_at' => $socialUser->expiresIn ? now()->addSeconds($socialUser->expiresIn) : null,
+        ]);
+
+        return $user;
+    }
+}
+```
+
+### 2.2 Social Account Model
+
+```php
+<?php
+
+// app/Models/SocialAccount.php
+namespace App\Models;
+
+use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
+
+class SocialAccount extends Model
+{
+    use HasFactory;
+
+    protected $fillable = [
+        'provider',
+        'provider_id',
+        'token',
+        'refresh_token',
+        'expires_at',
+    ];
+
+    protected $casts = [
+        'expires_at' => 'datetime',
+    ];
+
+    public function user(): BelongsTo
+    {
+        return $this->belongsTo(User::class);
+    }
+
+    /**
+     * Check if token is expired
+     */
+    public function isExpired(): bool
+    {
+        return $this->expires_at && $this->expires_at->isPast();
+    }
+}
+```
+
+```php
+<?php
+
+// Migration
+Schema::create('social_accounts', function (Blueprint $table) {
+    $table->id();
+    $table->foreignId('user_id')->constrained()->cascadeOnDelete();
+    $table->string('provider'); // google, github, facebook, dll
+    $table->string('provider_id');
+    $table->text('token')->nullable();
+    $table->text('refresh_token')->nullable();
+    $table->timestamp('expires_at')->nullable();
+    $table->timestamps();
+
+    $table->unique(['provider', 'provider_id']);
+});
+```
+
+## 3. Account Linking (Multiple Providers)
+
+### 3.1 Link Account ke User Existing
+
+```php
+<?php
+
+// app/Http/Controllers/Auth/SocialLinkController.php
+class SocialLinkController extends Controller
+{
+    public function redirect(string $provider)
+    {
+        $this->validateProvider($provider);
+
+        // Simpan intended action dalam session
+        session(['social_link_intended' => true]);
+
+        return Socialite::driver($provider)->redirect();
+    }
+
+    public function handleCallback(string $provider)
+    {
+        $this->validateProvider($provider);
+
+        $socialUser = Socialite::driver($provider)->user();
+
+        // Cek apakah social account sudah linked ke user lain
+        $existingAccount = SocialAccount::where('provider', $provider)
+            ->where('provider_id', $socialUser->getId())
+            ->first();
+
+        if ($existingAccount && $existingAccount->user_id !== Auth::id()) {
+            return redirect()->route('profile.edit')
+                ->with('error', 'This social account is already linked to another user.');
+        }
+
+        // Link ke user yang sedang login
+        Auth::user()->socialAccounts()->updateOrCreate(
+            [
+                'provider' => $provider,
+                'provider_id' => $socialUser->getId(),
+            ],
+            [
+                'token' => $socialUser->token,
+                'refresh_token' => $socialUser->refreshToken,
+                'expires_at' => $socialUser->expiresIn ? now()->addSeconds($socialUser->expiresIn) : null,
+            ]
+        );
+
+        return redirect()->route('profile.edit')
+            ->with('status', 'Social account linked successfully.');
+    }
+
+    /**
+     * Unlink social account
+     */
+    public function unlink(string $provider)
+    {
+        $user = Auth::user();
+
+        // Pastikan user punya password atau social account lain
+        $socialCount = $user->socialAccounts()->count();
+        $hasPassword = $user->password !== null;
+
+        if (!$hasPassword && $socialCount <= 1) {
+            return back()->with('error', 'You must have a password or another linked account.');
+        }
+
+        $user->socialAccounts()
+            ->where('provider', $provider)
+            ->delete();
+
+        return back()->with('status', 'Social account unlinked.');
+    }
+}
+```
+
+### 3.2 UI untuk Link/Unlink
+
+```php
+<?php
+
+// resources/views/profile/social-accounts.blade.php
+<div class="mt-6">
+    <h3 class="text-lg font-medium">Connected Accounts</h3>
+    
+    <div class="mt-4 space-y-4">
+        @foreach(['google', 'github', 'facebook'] as $provider)
+            @php
+                $linked = Auth::user()->socialAccounts->firstWhere('provider', $provider);
+            @endphp
+            
+            <div class="flex items-center justify-between p-4 border rounded-lg">
+                <div class="flex items-center">
+                    <img src="/images/{{ $provider }}-icon.svg" class="w-8 h-8" alt="{{ $provider }}">
+                    <div class="ml-3">
+                        <p class="font-medium">{{ ucfirst($provider) }}</p>
+                        @if($linked)
+                            <p class="text-sm text-green-600">Connected</p>
+                        @else
+                            <p class="text-sm text-gray-500">Not connected</p>
+                        @endif
+                    </div>
+                </div>
+                
+                @if($linked)
+                    <form method="POST" action="{{ route('social.unlink', $provider) }}">
+                        @csrf
+                        @method('DELETE')
+                        <button type="submit" class="text-red-600 hover:text-red-800">
+                            Disconnect
+                        </button>
+                    </form>
+                @else
+                    <a href="{{ route('social.link', $provider) }}" class="text-blue-600 hover:text-blue-800">
+                        Connect
+                    </a>
+                @endif
+            </div>
+        @endforeach
+    </div>
+</div>
+```
+
+## 4. Advanced OAuth Features
+
+### 4.1 Scopes (Permissions)
+
+```php
+<?php
+
+// Request additional scopes
+Route::get('/auth/google/redirect', function () {
+    return Socialite::driver('google')
+        ->scopes(['openid', 'profile', 'email', 'https://www.googleapis.com/auth/calendar.readonly'])
+        ->with(['access_type' => 'offline', 'prompt' => 'consent_selective'])
+        ->redirect();
+});
+
+// GitHub private repos
+Route::get('/auth/github/redirect', function () {
+    return Socialite::driver('github')
+        ->scopes(['read:user', 'user:email', 'repo'])
+        ->redirect();
+});
+```
+
+### 4.2 State Parameter (Security)
+
+```php
+<?php
+
+// Socialite otomatis handle state parameter untuk CSRF protection
+// Untuk custom state:
+return Socialite::driver('google')
+    ->with(['state' => custom_state_value()])
+    ->redirect();
+
+// Atau disable (tidak direkomendasikan)
+return Socialite::driver('google')->stateless()->redirect();
+```
+
+### 4.3 Token Refresh
+
+```php
+<?php
+
+// app/Services/SocialTokenRefresher.php
+namespace App\Services;
+
+use App\Models\SocialAccount;
+use Laravel\Socialite\Facades\Socialite;
+
+class SocialTokenRefresher
+{
+    public function refreshIfNeeded(SocialAccount $account): void
+    {
+        if (!$account->isExpired()) {
+            return;
+        }
+
+        if (!$account->refresh_token) {
+            throw new \Exception('No refresh token available');
+        }
+
+        $driver = Socialite::driver($account->provider);
+        
+        // Google specific
+        if ($account->provider === 'google') {
+            $response = Http::asForm()->post('https://oauth2.googleapis.com/token', [
+                'grant_type' => 'refresh_token',
+                'refresh_token' => $account->refresh_token,
+                'client_id' => config('services.google.client_id'),
+                'client_secret' => config('services.google.client_secret'),
+            ]);
+
+            $data = $response->json();
+
+            $account->update([
+                'token' => $data['access_token'],
+                'expires_at' => now()->addSeconds($data['expires_in']),
+                // Google tidak selalu return refresh_token baru
+                'refresh_token' => $data['refresh_token'] ?? $account->refresh_token,
+            ]);
+        }
+    }
+}
+```
+
+## 5. Error Handling
+
+### 5.1 Common Errors
+
+```php
+<?php
+
+// app/Http/Controllers/Auth/SocialAuthController.php
+public function handleCallback(string $provider)
+{
+    try {
+        $socialUser = Socialite::driver($provider)->user();
+    } catch (\Laravel\Socialite\Two\InvalidStateException $e) {
+        // CSRF state mismatch
+        return redirect()->route('login')
+            ->with('error', 'Authentication session expired. Please try again.');
+            
+    } catch (\GuzzleHttp\Exception\ClientException $e) {
+        // OAuth error dari provider
+        $response = json_decode($e->getResponse()->getBody(), true);
+        
+        return redirect()->route('login')
+            ->with('error', $response['error_description'] ?? 'Authentication failed.');
+            
+    } catch (\Exception $e) {
+        Log::error('Social auth failed', [
+            'provider' => $provider,
+            'error' => $e->getMessage(),
+        ]);
+        
+        return redirect()->route('login')
+            ->with('error', 'Unable to authenticate. Please try again later.');
+    }
+
+    // ... continue processing
+}
+```
+
+### 5.2 Handling Denied Access
+
+```php
+<?php
+
+// routes/web.php
+Route::get('/auth/{provider}/callback', function ($provider) {
+    // Cek apakah user denied access
+    if (request()->has('error')) {
+        $error = request('error');
+        $description = request('error_description');
+        
+        if ($error === 'access_denied') {
+            return redirect()->route('login')
+                ->with('info', 'You cancelled the login process.');
+        }
+        
+        return redirect()->route('login')
+            ->with('error', "Authentication error: {$description}");
+    }
+
+    // ... normal flow
+});
+```
+
+## 6. Testing Social Authentication
+
+```php
+<?php
+
+// tests/Feature/Auth/SocialAuthTest.php
+namespace Tests\Feature\Auth;
+
+use App\Models\User;
+use Illuminate\Foundation\Testing\RefreshDatabase;
+use Laravel\Socialite\Facades\Socialite;
+use Mockery;
+use Tests\TestCase;
+
+class SocialAuthTest extends TestCase
+{
+    use RefreshDatabase;
+
+    protected function tearDown(): void
+    {
+        Mockery::close();
+        parent::tearDown();
+    }
+
+    public function test_user_can_login_with_google()
+    {
+        $abstractUser = Mockery::mock('Laravel\Socialite\Two\User');
+        $abstractUser->shouldReceive('getId')->andReturn('123456789');
+        $abstractUser->shouldReceive('getName')->andReturn('John Doe');
+        $abstractUser->shouldReceive('getEmail')->andReturn('john@example.com');
+        $abstractUser->shouldReceive('getAvatar')->andReturn('https://example.com/avatar.jpg');
+        $abstractUser->shouldReceive('getNickname')->andReturn('johndoe');
+        $abstractUser->token = 'fake-token';
+
+        Socialite::shouldReceive('driver->user')->andReturn($abstractUser);
+
+        $response = $this->get('/auth/google/callback');
+
+        $response->assertRedirect('/dashboard');
+        
+        $this->assertAuthenticated();
+        
+        $this->assertDatabaseHas('users', [
+            'email' => 'john@example.com',
+            'name' => 'John Doe',
+        ]);
+        
+        $this->assertDatabaseHas('social_accounts', [
+            'provider' => 'google',
+            'provider_id' => '123456789',
+        ]);
+    }
+
+    public function test_existing_user_can_link_social_account()
+    {
+        $user = User::factory()->create(['email' => 'john@example.com']);
+        
+        $abstractUser = Mockery::mock('Laravel\Socialite\Two\User');
+        $abstractUser->shouldReceive('getId')->andReturn('123456789');
+        $abstractUser->shouldReceive('getEmail')->andReturn('john@example.com');
+        $abstractUser->token = 'fake-token';
+
+        Socialite::shouldReceive('driver->user')->andReturn($abstractUser);
+
+        $response = $this->actingAs($user)->get('/auth/google/callback?link=1');
+
+        $response->assertRedirect();
+        
+        $this->assertDatabaseHas('social_accounts', [
+            'user_id' => $user->id,
+            'provider' => 'google',
+        ]);
+    }
+
+    public function test_invalid_provider_returns_404()
+    {
+        $response = $this->get('/auth/invalid-provider/redirect');
+        
+        $response->assertNotFound();
+    }
+}
+```
+
+## Kesimpulan
+
+Laravel Socialite menyederhanakan OAuth integration:
+- **Multiple providers** dengan API yang konsisten
+- **Account linking** untuk fleksibilitas user
+- **Token management** dengan refresh capability
+- **Security built-in** dengan state parameter
+- **Easy testing** dengan mocking support
+
+Selanjutnya di **Sesi 42**, kita akan mempelajari Authorization dengan Gates & Policies.
+```

@@ -1,0 +1,984 @@
+---
+title: "Sesi 21: Accessibility (A11y)"
+description: "Astro memiliki beberapa fitur bawaan yang membantu membangun website yang accessible secara default."
+category: "astrojs"
+tags: ["astrojs"]
+order: 21
+---
+
+# Sesi 21: Accessibility (A11y)
+
+## 21.1 Built-in Accessibility Features
+
+Astro memiliki beberapa fitur bawaan yang membantu membangun website yang accessible secara default.
+
+### Analogi Sederhana:
+
+> Bayangkan accessibility seperti **ramp di gedung**. Orang yang menggunakan kursi roda bisa masuk, tapi ramp itu juga membantu orang lain: ibu dengan stroller, kurir dengan troli, atau orang yang lelah setelah seharian berjalan. Accessibility benefits everyone!
+
+### Astro's Default A11y:
+
+```astro
+---
+// Astro secara OTOMATIS menghasilkan HTML yang valid
+// Tidak perlu extra configuration untuk basics
+---
+
+<!-- Output HTML selalu valid dan semantic -->
+<main>
+  <article>
+    <h1>Judul Artikel</h1>
+    <p>Konten...</p>
+  </article>
+</main>
+```
+
+### Automatic ID Generation:
+
+```astro
+---
+// src/components/FormField.astro
+interface Props {
+  label: string;
+  name: string;
+  type?: string;
+}
+
+const { label, name, type = 'text' } = Astro.props;
+
+// Generate unique ID untuk associasi label-input
+const id = `field-${name}-${Math.random().toString(36).substr(2, 9)}`;
+---
+
+<div class="form-field">
+  <!-- Label properly associated dengan input -->
+  <label for={id}>{label}</label>
+  <input 
+    type={type} 
+    id={id} 
+    name={name}
+    aria-describedby={`${id}-help`}
+  />
+  <span id={`${id}-help`} class="help-text">
+    Helper text untuk field ini
+  </span>
+</div>
+```
+
+---
+
+## 21.2 ARIA Attributes
+
+ARIA (Accessible Rich Internet Applications) menyediakan informasi tambahan untuk assistive technologies.
+
+### ARIA Landmarks:
+
+```astro
+---
+// src/layouts/AccessibleLayout.astro
+---
+
+<!DOCTYPE html>
+<html lang={Astro.locals.locale || 'id'}>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title}</title>
+  </head>
+  <body>
+    <!-- Skip link untuk keyboard navigation -->
+    <a href="#main-content" class="skip-link">
+      Skip to main content
+    </a>
+    
+    <!-- Header dengan role banner -->
+    <header role="banner">
+      <nav role="navigation" aria-label="Main navigation">
+        <!-- Navigation items -->
+      </nav>
+    </header>
+    
+    <!-- Main content dengan role main -->
+    <main id="main-content" role="main" tabindex="-1">
+      <slot />
+    </main>
+    
+    <!-- Complementary content (sidebar) -->
+    <aside role="complementary" aria-label="Related articles">
+      <!-- Sidebar content -->
+    </aside>
+    
+    <!-- Footer dengan role contentinfo -->
+    <footer role="contentinfo">
+      <!-- Footer content -->
+    </footer>
+  </body>
+</html>
+
+<style>
+  .skip-link {
+    position: absolute;
+    top: -40px;
+    left: 0;
+    background: #000;
+    color: #fff;
+    padding: 8px;
+    text-decoration: none;
+    z-index: 100;
+  }
+  
+  .skip-link:focus {
+    top: 0;
+  }
+</style>
+```
+
+### ARIA untuk Dynamic Content:
+
+```astro
+---
+// src/components/LiveRegion.astro
+interface Props {
+  type?: 'polite' | 'assertive';
+  atomic?: boolean;
+}
+
+const { type = 'polite', atomic = true } = Astro.props;
+---
+
+<!-- Live region untuk screen reader announcements -->
+<div 
+  aria-live={type}
+  aria-atomic={String(atomic)}
+  class="sr-only"
+  role="status"
+>
+  <slot />
+</div>
+
+<script>
+  // Update live region untuk announce changes
+  class LiveAnnouncer {
+    constructor(element) {
+      this.region = element;
+    }
+    
+    announce(message, priority = 'polite') {
+      this.region.setAttribute('aria-live', priority);
+      this.region.textContent = message;
+      
+      // Clear after announcement
+      setTimeout(() => {
+        this.region.textContent = '';
+      }, 1000);
+    }
+  }
+  
+  // Expose globally
+  window.announce = (message, priority) => {
+    const region = document.querySelector('[aria-live]');
+    if (region) {
+      new LiveAnnouncer(region).announce(message, priority);
+    }
+  };
+</script>
+```
+
+### ARIA untuk Complex Components:
+
+```astro
+---
+// src/components/Accordion.astro
+interface Props {
+  items: Array<{
+    id: string;
+    content: string;
+  }>;
+}
+
+const { items } = Astro.props;
+---
+
+<div class="accordion" role="region" aria-label="FAQ Accordion">
+  {items.map((item, index) => (
+    <div class="accordion-item">
+      <h3>
+        <button
+          type="button"
+          aria-expanded="false"
+          aria-controls={`panel-${item.id}`}
+          id={`header-${item.id}`}
+          class="accordion-header"
+        >
+          {item.title}
+          <span class="icon" aria-hidden="true">▼</span>
+        </button>
+      </h3>
+      
+      <div
+        id={`panel-${item.id}`}
+        role="region"
+        aria-labelledby={`header-${item.id}`}
+        class="accordion-panel"
+        hidden
+      >
+        <p>{item.content}</p>
+      </div>
+    </div>
+  ))}
+</div>
+
+<script>
+  document.querySelectorAll('.accordion-header').forEach(button => {
+    button.addEventListener('click', () => {
+      const expanded = button.getAttribute('aria-expanded') === 'true';
+      const panelId = button.getAttribute('aria-controls');
+      const panel = document.getElementById(panelId);
+      
+      // Toggle state
+      button.setAttribute('aria-expanded', !expanded);
+      panel.hidden = expanded;
+      
+      // Update icon
+      const icon = button.querySelector('.icon');
+      icon.textContent = expanded ? '▼' : '▲';
+    });
+  });
+</script>
+
+<style>
+  .accordion-header {
+    width: 100%;
+    padding: 1rem;
+    background: #f3f4f6;
+    border: none;
+    text-align: left;
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  
+  .accordion-header:hover {
+    background: #e5e7eb;
+  }
+  
+  .accordion-header:focus-visible {
+    outline: 2px solid #3b82f6;
+    outline-offset: -2px;
+  }
+  
+  .accordion-panel {
+    padding: 1rem;
+    border: 1px solid #e5e7eb;
+  }
+  
+  .accordion-panel[hidden] {
+    display: none;
+  }
+</style>
+```
+
+---
+
+## 21.3 Keyboard Navigation
+
+Memastikan semua fitur bisa diakses dengan keyboard.
+
+### Focus Management:
+
+```astro
+---
+// src/components/Modal.astro
+interface Props {
+  open?: boolean;
+}
+
+const { title, open = false } = Astro.props;
+---
+
+<div 
+  class="modal-backdrop" 
+  class:list={{ 'is-open': open }}
+  role="dialog"
+  aria-modal="true"
+  aria-labelledby="modal-title"
+  tabindex="-1"
+>
+  <div class="modal-content">
+    <header>
+      <h2 id="modal-title">{title}</h2>
+      <button 
+        type="button" 
+        class="close-btn"
+        aria-label="Close dialog"
+      >
+        ×
+      </button>
+    </header>
+    
+    <div class="modal-body">
+      <slot />
+    </div>
+    
+    <footer class="modal-footer">
+      <slot name="footer" />
+    </footer>
+  </div>
+</div>
+
+<script>
+  class AccessibleModal {
+    constructor(element) {
+      this.modal = element;
+      this.closeBtn = element.querySelector('.close-btn');
+      this.focusableElements = 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
+      this.firstFocusable = null;
+      this.lastFocusable = null;
+      this.previousActiveElement = null;
+      
+      this.init();
+    }
+    
+    init() {
+      // Close button
+      this.closeBtn?.addEventListener('click', () => this.close());
+      
+      // Close on backdrop click
+      this.modal.addEventListener('click', (e) => {
+        if (e.target === this.modal) this.close();
+      });
+      
+      // Close on Escape
+      this.modal.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') this.close();
+        if (e.key === 'Tab') this.handleTab(e);
+      });
+    }
+    
+    open() {
+      this.previousActiveElement = document.activeElement;
+      this.modal.classList.add('is-open');
+      
+      // Trap focus
+      const focusable = this.modal.querySelectorAll(this.focusableElements);
+      this.firstFocusable = focusable[0];
+      this.lastFocusable = focusable[focusable.length - 1];
+      
+      // Focus first element
+      this.firstFocusable?.focus();
+      
+      // Prevent body scroll
+      document.body.style.overflow = 'hidden';
+    }
+    
+    close() {
+      this.modal.classList.remove('is-open');
+      document.body.style.overflow = '';
+      
+      // Return focus to trigger
+      this.previousActiveElement?.focus();
+    }
+    
+    handleTab(e) {
+      if (e.shiftKey) {
+        // Shift + Tab
+        if (document.activeElement === this.firstFocusable) {
+          e.preventDefault();
+          this.lastFocusable?.focus();
+        }
+      } else {
+        // Tab
+        if (document.activeElement === this.lastFocusable) {
+          e.preventDefault();
+          this.firstFocusable?.focus();
+        }
+      }
+    }
+  }
+  
+  // Initialize
+  document.querySelectorAll('[role="dialog"]').forEach(modal => {
+    new AccessibleModal(modal);
+  });
+</script>
+
+<style>
+  .modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    display: none;
+    place-items: center;
+    z-index: 1000;
+  }
+  
+  .modal-backdrop.is-open {
+    display: grid;
+  }
+  
+  .modal-content {
+    background: white;
+    border-radius: 8px;
+    max-width: 500px;
+    width: 90%;
+    max-height: 90vh;
+    overflow: auto;
+  }
+  
+  .modal-content:focus {
+    outline: none;
+  }
+  
+  header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1rem;
+    border-bottom: 1px solid #e5e7eb;
+  }
+  
+  .close-btn {
+    background: none;
+    border: none;
+    font-size: 1.5rem;
+    cursor: pointer;
+    padding: 0.25rem;
+  }
+  
+  .close-btn:focus-visible {
+    outline: 2px solid #3b82f6;
+    border-radius: 4px;
+  }
+  
+  .modal-body {
+    padding: 1rem;
+  }
+  
+  .modal-footer {
+    padding: 1rem;
+    border-top: 1px solid #e5e7eb;
+  }
+</style>
+```
+
+### Skip Links:
+
+```astro
+---
+// src/components/SkipLinks.astro
+const sections = [
+  { id: 'main-content', label: 'Skip to main content' },
+  { id: 'navigation', label: 'Skip to navigation' },
+  { id: 'search', label: 'Skip to search' },
+];
+---
+
+<nav aria-label="Skip links" class="skip-links">
+  {sections.map(section => (
+    <a href={`#${section.id}`} class="skip-link">
+      {section.label}
+    </a>
+  ))}
+</nav>
+
+<style>
+  .skip-links {
+    position: absolute;
+    top: 0;
+    left: 0;
+    z-index: 9999;
+  }
+  
+  .skip-link {
+    position: absolute;
+    top: -100px;
+    left: 0;
+    background: #000;
+    color: #fff;
+    padding: 8px 16px;
+    text-decoration: none;
+    border-radius: 0 0 4px 0;
+  }
+  
+  .skip-link:focus {
+    top: 0;
+  }
+</style>
+```
+
+---
+
+## 21.4 Screen Reader Support
+
+Optimasi untuk screen readers dan assistive technologies.
+
+### Semantic HTML:
+
+```astro
+---
+// src/components/ArticleCard.astro
+interface Props {
+  excerpt: string;
+  author: string;
+  date: Date;
+  url: string;
+  tags?: string[];
+}
+
+const { title, excerpt, author, date, url, tags = [] } = Astro.props;
+
+const formattedDate = date.toLocaleDateString('id-ID', {
+  year: 'numeric',
+  month: 'long',
+  day: 'numeric',
+});
+---
+
+<article class="article-card">
+  <header>
+    <h2>
+      <a href={url} class="article-title">
+        {title}
+      </a>
+    </h2>
+    
+    <!-- Time dengan datetime attribute -->
+    <time datetime={date.toISOString()}>
+      {formattedDate}
+    </time>
+  </header>
+  
+  <p class="excerpt">{excerpt}</p>
+  
+  <!-- Author dengan semantic markup -->
+  <footer>
+    <address class="author">
+      By <a rel="author" href={`/authors/${author}`}>{author}</a>
+    </address>
+    
+    <!-- Tags dengan list semantics -->
+    {tags.length > 0 && (
+      <ul class="tags" aria-label="Article tags">
+        {tags.map(tag => (
+          <li>
+            <a href={`/tags/${tag}`} class="tag">#{tag}</a>
+          </li>
+        ))}
+      </ul>
+    )}
+  </footer>
+</article>
+
+<style>
+  .article-card {
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    padding: 1.5rem;
+  }
+  
+  .article-title {
+    text-decoration: none;
+    color: #111827;
+  }
+  
+  .article-title:hover {
+    text-decoration: underline;
+  }
+  
+  .article-title:focus-visible {
+    outline: 2px solid #3b82f6;
+    outline-offset: 2px;
+  }
+  
+  time {
+    color: #6b7280;
+    font-size: 0.875rem;
+  }
+  
+  .excerpt {
+    color: #4b5563;
+    line-height: 1.6;
+  }
+  
+  .author {
+    font-style: normal;
+    color: #6b7280;
+  }
+  
+  .tags {
+    list-style: none;
+    padding: 0;
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+  
+  .tag {
+    background: #f3f4f6;
+    padding: 0.25rem 0.75rem;
+    border-radius: 9999px;
+    font-size: 0.875rem;
+    text-decoration: none;
+    color: #4b5563;
+  }
+</style>
+```
+
+### Hidden Content untuk Screen Readers:
+
+```astro
+---
+// src/components/IconButton.astro
+interface Props {
+  icon: string;
+  label: string;
+  onClick?: string;
+}
+
+const { icon, label, onClick } = Astro.props;
+---
+
+<button 
+  type="button"
+  class="icon-button"
+  aria-label={label}
+  onclick={onClick}
+>
+  <span aria-hidden="true">{icon}</span>
+  <!-- Visually hidden text untuk redundancy -->
+  <span class="visually-hidden">{label}</span>
+</button>
+
+<style>
+  .icon-button {
+    padding: 0.5rem;
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 1.25rem;
+  }
+  
+  .icon-button:focus-visible {
+    outline: 2px solid #3b82f6;
+    border-radius: 4px;
+  }
+  
+  .visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+</style>
+```
+
+### Descriptive Links:
+
+```astro
+---
+// ❌ BAD: "Click here" atau "Read more"
+<a href="/article-1">Click here</a>
+<a href="/article-2">Read more</a>
+
+// ✅ GOOD: Descriptive link text
+<a href="/article-1">Read the full article about Astro Framework</a>
+<a href="/article-2">Continue reading about Web Accessibility</a>
+
+// ✅ GOOD: Dengan visually hidden context
+<a href="/article-1">
+  Read more
+  <span class="visually-hidden">about Astro Framework</span>
+</a>
+---
+```
+
+---
+
+## 21.5 Accessibility Audits
+
+Tools dan proses untuk memastikan accessibility.
+
+### Automated Testing:
+
+```bash
+# Install axe-core untuk testing
+npm install -D @axe-core/cli
+
+# Run audit
+npx axe https://localhost:4321 --tags wcag2a,wcag2aa,wcag21aa
+```
+
+### Lighthouse CI:
+
+```yaml
+# .github/workflows/lighthouse.yml
+name: Lighthouse CI
+
+on: [push]
+
+jobs:
+  lighthouse:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install dependencies
+        run: npm ci
+      
+      - name: Build
+        run: npm run build
+      
+      - name: Run Lighthouse
+        uses: treosh/lighthouse-ci-action@v10
+        with:
+          configPath: './lighthouserc.json'
+          uploadArtifacts: true
+```
+
+```json
+// lighthouserc.json
+{
+  "ci": {
+    "collect": {
+      "staticDistDir": "./dist",
+      "url": ["http://localhost/", "http://localhost/about"]
+    },
+    "assert": {
+      "assertions": {
+        "categories:accessibility": ["error", { "minScore": 0.95 }],
+        "categories:best-practices": ["error", { "minScore": 0.9 }]
+      }
+    }
+  }
+}
+```
+
+### Manual Testing Checklist:
+
+```markdown
+## Accessibility Testing Checklist
+
+### Keyboard Navigation
+- [ ] Semua interactive elements bisa diakses dengan Tab
+- [ ] Tab order logical dan mengikuti visual layout
+- [ ] Escape key menutup modal/dropdown
+- [ ] Enter/Space mengaktifkan buttons dan links
+- [ ] Arrow keys untuk navigation di complex components
+
+### Screen Reader
+- [ ] Heading hierarchy logical (h1 → h2 → h3)
+- [ ] Images memiliki alt text yang meaningful
+- [ ] Form labels properly associated
+- [ ] Error messages announced oleh screen reader
+- [ ] Live regions untuk dynamic content updates
+
+### Visual
+- [ ] Color contrast minimum 4.5:1 untuk normal text
+- [ ] Color contrast minimum 3:1 untuk large text
+- [ ] Tidak hanya mengandalkan color untuk convey information
+- [ ] Focus indicators visible
+- [ ] Text bisa di-resize sampai 200% tanpa loss of content
+
+### Cognitive
+- [ ] Language attribute set correctly
+- [ ] Abbreviations explained
+- [ ] Consistent navigation
+- [ ] Error prevention dan recovery
+```
+
+### A11y Component Library:
+
+```astro
+---
+// src/components/a11y/SrOnly.astro
+// Visually hidden tapi accessible untuk screen readers
+---
+
+<span class="sr-only">
+  <slot />
+</span>
+
+<style>
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border-width: 0;
+  }
+</style>
+```
+
+```astro
+---
+// src/components/a11y/Alert.astro
+interface Props {
+  type: 'info' | 'success' | 'warning' | 'error';
+  title?: string;
+}
+
+const { type, title } = Astro.props;
+
+const roles = {
+  info: 'status',
+  success: 'status',
+  warning: 'alert',
+  error: 'alert',
+};
+---
+
+<div 
+  role={roles[type]}
+  aria-live={type === 'error' ? 'assertive' : 'polite'}
+  class:list={['alert', `alert-${type}`]}
+>
+  {title && <strong>{title}</strong>}
+  <slot />
+</div>
+
+<style>
+  .alert {
+    padding: 1rem;
+    border-radius: 6px;
+    margin: 1rem 0;
+  }
+  
+  .alert-info {
+    background: #eff6ff;
+    border: 1px solid #3b82f6;
+  }
+  
+  .alert-success {
+    background: #f0fdf4;
+    border: 1px solid #22c55e;
+  }
+  
+  .alert-warning {
+    background: #fffbeb;
+    border: 1px solid #f59e0b;
+  }
+  
+  .alert-error {
+    background: #fef2f2;
+    border: 1px solid #ef4444;
+  }
+</style>
+```
+
+---
+
+## 21.6 Best Practices
+
+Ringkasan best practices untuk accessibility.
+
+### Do's and Don'ts:
+
+| ✅ Do | ❌ Don't |
+|-------|----------|
+| Gunakan semantic HTML | `<div>` untuk everything |
+| Provide alt text untuk images | `alt=""` untuk informative images |
+| Ensure color contrast 4.5:1 | Rely solely on color |
+| Test dengan keyboard only | Require mouse untuk navigation |
+| Use proper heading hierarchy | Skip heading levels |
+| Label all form inputs | Placeholder sebagai label |
+| Provide skip links | Trap keyboard users |
+| Test dengan screen reader | Assume "it looks fine" |
+
+### Focus Visible:
+
+```css
+/* Global focus styles */
+*:focus-visible {
+  outline: 3px solid #3b82f6;
+  outline-offset: 2px;
+}
+
+/* Remove default outline tapi maintain accessibility */
+button:focus:not(:focus-visible),
+a:focus:not(:focus-visible) {
+  outline: none;
+}
+
+button:focus-visible,
+a:focus-visible {
+  outline: 3px solid #3b82f6;
+  outline-offset: 2px;
+}
+```
+
+### Reduced Motion:
+
+```css
+/* Respect user preference */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+```
+
+```astro
+---
+// src/components/AnimatedComponent.astro
+---
+
+<div class="animated-content">
+  <slot />
+</div>
+
+<style>
+  .animated-content {
+    animation: fadeIn 0.5s ease;
+  }
+  
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(20px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  
+  @media (prefers-reduced-motion: reduce) {
+    .animated-content {
+      animation: none;
+    }
+  }
+</style>
+```
+
+---
+
+## Ringkasan Sesi 21
+
+| Area | Key Points | Tools |
+|------|-----------|-------|
+| **Semantic HTML** | Proper elements, landmarks | HTML validators |
+| **ARIA** | Labels, live regions, roles | ARIA authoring practices |
+| **Keyboard** | Tab order, focus trap, skip links | Manual testing |
+| **Screen Readers** | Alt text, descriptions, announcements | NVDA, VoiceOver, JAWS |
+| **Visual** | Contrast, focus indicators, zoom | Lighthouse, axe |
+| **Cognitive** | Clear language, consistent navigation | User testing |
+
+### A11y Resources:
+
+- [WCAG 2.1 Guidelines](https://www.w3.org/WAI/WCAG21/quickref/)
+- [A11y Project](https://www.a11yproject.com/)
+- [MDN A11y](https://developer.mozilla.org/en-US/docs/Web/Accessibility)
+- [Astro A11y Docs](https://docs.astro.build/en/guides/accessibility/)
+
+---
+
+**Selanjutnya:** Di Sesi 22, kita akan membahas **Internationalization (i18n)** - multi-language support, RTL, dan localization strategies.

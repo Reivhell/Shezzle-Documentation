@@ -1,0 +1,436 @@
+---
+title: "Sesi 45: Rate Limiting & Throttling"
+description: "Mengimplementasikan rate limiting yang efektif untuk melindungi API dan web routes dari abuse, dengan strategi dynamic dan custom keys."
+category: "laravel"
+tags: ["laravel"]
+order: 45
+---
+
+## Tujuan Pembelajaran
+
+Mengimplementasikan rate limiting yang efektif untuk melindungi API dan web routes dari abuse, dengan strategi dynamic dan custom keys.
+
+## 1. Rate Limiter Configuration
+
+### 1.1 Basic Rate Limiting
+
+```php
+<?php
+
+// app/Providers/RouteServiceProvider.php
+use Illuminate\Cache\RateLimiting\Limit;
+use Illuminate\Support\Facades\RateLimiter;
+
+public function boot(): void
+{
+    // Global rate limit
+    RateLimiter::for('global', function (Request $request) {
+        return Limit::perMinute(1000)->by($request->ip());
+    });
+
+    // API rate limit
+    RateLimiter::for('api', function (Request $request) {
+        return Limit::perMinute(60)->by($request->user()?->id ?: $request->ip());
+    });
+
+    // Authentication routes
+    RateLimiter::for('auth', function (Request $request) {
+        return Limit::perMinute(5)->by($request->ip());
+    });
+
+    // Strict rate limit untuk sensitive operations
+    RateLimiter::for('sensitive', function (Request $request) {
+        return [
+            Limit::perMinute(10)->by($request->user()?->id ?: $request->ip()),
+            Limit::perHour(50)->by($request->ip()),
+        ];
+    });
+}
+```
+
+### 1.2 Applying Rate Limits
+
+```php
+<?php
+
+// routes/api.php
+Route::middleware(['throttle:api'])->group(function () {
+    Route::get('/users', [UserController::class, 'index']);
+    Route::post('/orders', [OrderController::class, 'store']);
+});
+
+// Multiple rate limits
+Route::middleware(['throttle:sensitive'])->group(function () {
+    Route::post('/transfer', [TransferController::class, 'store']);
+    Route::post('/withdraw', [WithdrawController::class, 'store']);
+});
+
+// Specific route dengan limit berbeda
+Route::post('/login', [AuthController::class, 'login'])
+    ->middleware('throttle:auth');
+```
+
+## 2. Dynamic Rate Limiting
+
+### 2.1 User-based Limits
+
+```php
+<?php
+
+// app/Providers/RouteServiceProvider.php
+RateLimiter::for('api', function (Request $request) {
+    $user = $request->user();
+
+    // Different limits berdasarkan user type
+    if ($user?->isPremium()) {
+        return Limit::perMinute(1000)->by($user->id);
+    }
+
+    if ($user?->isVerified()) {
+        return Limit::perMinute(100)->by($user->id);
+    }
+
+    // Guest atau unverified
+    return Limit::perMinute(30)->by($request->ip());
+});
+```
+
+### 2.2 Subscription Tier Limits
+
+```php
+<?php
+
+RateLimiter::for('api', function (Request $request) {
+    $user = $request->user();
+    
+    $limits = match($user?->subscription_tier) {
+        'enterprise' => [10000, 'minute'],
+        'business' => [1000, 'minute'],
+        'pro' => [100, 'minute'],
+        'free' => [30, 'minute'],
+        default => [10, 'minute'],
+    };
+
+    return Limit::per($limits[1], $limits[0])->by($user?->id ?: $request->ip());
+});
+```
+
+### 2.3 Endpoint-specific Limits
+
+```php
+<?php
+
+RateLimiter::for('uploads', function (Request $request) {
+    $user = $request->user();
+
+    // Limit berdasarkan file size history
+    $dailyUploads = Cache::get("user:{$user->id}:uploads:today", 0);
+    $maxDaily = $user?->isPremium() ? 1000 : 100; // MB
+
+    if ($dailyUploads >= $maxDaily) {
+        return Limit::perDay(0); // Block
+    }
+
+    return Limit::perMinute(10)->by($user->id);
+});
+
+RateLimiter::for('exports', function (Request $request) {
+    // Limit berdasarkan complexity
+    $complexity = $request->input('date_range', 30); // days
+    
+    if ($complexity > 365) {
+        return Limit::perHour(1)->by($request->user()?->id);
+    }
+
+    return Limit::perHour(10)->by($request->user()?->id);
+});
+```
+
+## 3. Custom Rate Limiter Keys
+
+### 3.1 Composite Keys
+
+```php
+<?php
+
+// Rate limit berdasarkan user + endpoint
+RateLimiter::for('api', function (Request $request) {
+    $key = sprintf('%s:%s', 
+        $request->user()?->id ?: $request->ip(),
+        $request->route()->getName()
+    );
+
+    return Limit::perMinute(60)->by($key);
+});
+
+// Rate limit berdasarkan user + action
+RateLimiter::for('actions', function (Request $request) {
+    $key = sprintf('user:%d:action:%s',
+        $request->user()->id,
+        $request->input('action_type', 'default')
+    );
+
+    return Limit::perMinute(10)->by($key);
+});
+```
+
+### 3.2 Geographic Rate Limiting
+
+```php
+<?php
+
+RateLimiter::for('api', function (Request $request) {
+    $ip = $request->ip();
+    
+    // Deteksi country dari IP (gunakan library geoip)
+    $country = geoip($ip)->iso_code;
+    
+    // Stricter limits untuk certain countries (jika ada abuse)
+    $highRiskCountries = ['XX', 'YY', 'ZZ'];
+    
+    if (in_array($country, $highRiskCountries)) {
+        return Limit::perMinute(10)->by($ip);
+    }
+
+    return Limit::perMinute(60)->by($request->user()?->id ?: $ip);
+});
+```
+
+### 3.3 Device-based Limiting
+
+```php
+<?php
+
+RateLimiter::for('mobile-api', function (Request $request) {
+    $deviceId = $request->header('X-Device-ID');
+    $userId = $request->user()?->id;
+
+    if ($deviceId && $userId) {
+        // Limit per device per user
+        return Limit::perMinute(100)->by("user:{$userId}:device:{$deviceId}");
+    }
+
+    return Limit::perMinute(30)->by($request->ip());
+});
+```
+
+## 4. Advanced Rate Limiting Patterns
+
+### 4.1 Progressive Rate Limiting
+
+```php
+<?php
+
+RateLimiter::for('login', function (Request $request) {
+    $key = $request->ip();
+    $attempts = Cache::get("login:attempts:{$key}", 0);
+
+    // Progressive: semakin banyak attempt, semakin lama cooldown
+    if ($attempts > 10) {
+        return Limit::perHour(1)->by($key); // Lockout 1 jam
+    }
+
+    if ($attempts > 5) {
+        return Limit::perMinute(1)->by($key); // Slow down
+    }
+
+    return Limit::perMinute(5)->by($key); // Normal
+});
+```
+
+### 4.2 Sliding Window Rate Limiting
+
+```php
+<?php
+
+use Illuminate\Support\Facades\Redis;
+
+class SlidingWindowRateLimiter
+{
+    public function allow(string $key, int $maxAttempts, int $windowSeconds): bool
+    {
+        $now = microtime(true);
+        $windowStart = $now - $windowSeconds;
+
+        // Remove old entries
+        Redis::zremrangebyscore("rate:{$key}", 0, $windowStart);
+
+        // Count current
+        $current = Redis::zcard("rate:{$key}");
+
+        if ($current >= $maxAttempts) {
+            return false;
+        }
+
+        // Add current request
+        Redis::zadd("rate:{$key}", $now, $now);
+        Redis::expire("rate:{$key}", $windowSeconds);
+
+        return true;
+    }
+
+    public function remaining(string $key, int $maxAttempts): int
+    {
+        return $maxAttempts - Redis::zcard("rate:{$key}");
+    }
+}
+```
+
+### 4.3 Rate Limit dengan Queue
+
+```php
+<?php
+
+RateLimiter::for('webhooks', function (Request $request) {
+    // Rate limit berdasarkan queue size
+    $queueSize = Queue::size('webhooks');
+    
+    if ($queueSize > 1000) {
+        // Reject jika queue penuh
+        return Limit::perMinute(0);
+    }
+
+    // Delayed rate limit untuk smooth processing
+    return Limit::perMinute(100)->by($request->user()?->id);
+});
+```
+
+## 5. Custom Response untuk Rate Limit
+
+### 5.1 Custom Response Handler
+
+```php
+<?php
+
+// app/Exceptions/Handler.php
+use Illuminate\Http\Exceptions\ThrottleRequestsException;
+
+public function register(): void
+{
+    $this->renderable(function (ThrottleRequestsException $e, Request $request) {
+        $retryAfter = $e->getHeaders()['Retry-After'] ?? 60;
+
+        if ($request->expectsJson()) {
+            return response()->json([
+                'message' => 'Too many requests. Please slow down.',
+                'retry_after' => (int) $retryAfter,
+                'retry_after_human' => Carbon::now()->addSeconds($retryAfter)->diffForHumans(),
+            ], 429, $e->getHeaders());
+        }
+
+        return response()->view('errors.429', [
+            'retryAfter' => $retryAfter,
+        ], 429, $e->getHeaders());
+    });
+}
+```
+
+### 5.2 Rate Limit Headers
+
+```php
+<?php
+
+// Middleware untuk tambah headers
+class AddRateLimitHeaders
+{
+    public function handle($request, $next)
+    {
+        $response = $next($request);
+
+        // Tambah rate limit info ke headers
+        if (RateLimiter::attempts('api:' . $request->ip()) > 0) {
+            $response->headers->set('X-RateLimit-Limit', 60);
+            $response->headers->set('X-RateLimit-Remaining', 
+                60 - RateLimiter::attempts('api:' . $request->ip())
+            );
+        }
+
+        return $response;
+    }
+}
+```
+
+## 6. Testing Rate Limits
+
+```php
+<?php
+
+// tests/Feature/RateLimitTest.php
+class RateLimitTest extends TestCase
+{
+    use RefreshDatabase;
+
+    public function test_api_rate_limit_blocks_excessive_requests()
+    {
+        $user = User::factory()->create();
+
+        // 60 requests should pass
+        for ($i = 0; $i < 60; $i++) {
+            $response = $this->actingAs($user)->getJson('/api/user');
+            $response->assertOk();
+        }
+
+        // 61st request should be blocked
+        $response = $this->actingAs($user)->getJson('/api/user');
+        $response->assertStatus(429);
+        $response->assertHeader('Retry-After');
+    }
+
+    public function test_different_users_have_separate_limits()
+    {
+        $user1 = User::factory()->create();
+        $user2 = User::factory()->create();
+
+        // Exhaust user1's limit
+        for ($i = 0; $i < 60; $i++) {
+            $this->actingAs($user1)->getJson('/api/user');
+        }
+
+        // User1 blocked
+        $this->actingAs($user1)->getJson('/api/user')->assertStatus(429);
+
+        // User2 still allowed
+        $this->actingAs($user2)->getJson('/api/user')->assertOk();
+    }
+
+    public function test_premium_users_have_higher_limits()
+    {
+        $premium = User::factory()->create(['is_premium' => true]);
+        $free = User::factory()->create(['is_premium' => false]);
+
+        // Premium: 1000 requests
+        // Free: 30 requests
+        
+        // Test implementation...
+    }
+
+    public function test_rate_limit_resets_after_window()
+    {
+        $user = User::factory()->create();
+
+        // Exhaust limit
+        for ($i = 0; $i < 60; $i++) {
+            $this->actingAs($user)->getJson('/api/user');
+        }
+
+        $this->actingAs($user)->getJson('/api/user')->assertStatus(429);
+
+        // Travel forward in time
+        $this->travel(2)->minutes();
+
+        // Should work again
+        $this->actingAs($user)->getJson('/api/user')->assertOk();
+    }
+}
+```
+
+## Kesimpulan
+
+Rate limiting melindungi aplikasi dari abuse dan ensures fair usage:
+- **Dynamic limits** berdasarkan user type, subscription, atau behavior
+- **Custom keys** untuk granular control (user+device, IP+endpoint, dll)
+- **Progressive penalties** untuk repeated violations
+- **Informative responses** dengan retry-after headers
+
+Selanjutnya di **Sesi 46**, kita akan memasuki Bagian V: First-Party Packages Ekosistem dengan Laravel Nova.
+```

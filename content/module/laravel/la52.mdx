@@ -1,0 +1,595 @@
+---
+title: "Sesi 52: Laravel Echo & Broadcasting"
+description: "Menguasai sistem broadcasting Laravel untuk real-time events, mengkonfigurasi berbagai drivers, dan mengimplementasikan channel authorization."
+category: "laravel"
+tags: ["laravel"]
+order: 52
+---
+
+## Tujuan Pembelajaran
+
+Menguasai sistem broadcasting Laravel untuk real-time events, mengkonfigurasi berbagai drivers, dan mengimplementasikan channel authorization.
+
+## 1. Instalasi & Konfigurasi
+
+### 1.1 Setup Broadcasting
+
+```bash
+# Install Echo & Pusher (atau driver lain)
+npm install --save-dev laravel-echo pusher-js
+
+# Atau Ably
+npm install --save-dev laravel-echo ably
+
+# Install Laravel Reverb (alternatif self-hosted)
+composer require laravel/reverb
+php artisan reverb:install
+```
+
+### 1.2 Konfigurasi
+
+```php
+<?php
+
+// config/broadcasting.php
+return [
+    'default' => env('BROADCAST_DRIVER', 'null'),
+
+    'connections' => [
+        'pusher' => [
+            'driver' => 'pusher',
+            'key' => env('PUSHER_APP_KEY'),
+            'secret' => env('PUSHER_APP_SECRET'),
+            'app_id' => env('PUSHER_APP_ID'),
+            'options' => [
+                'cluster' => env('PUSHER_APP_CLUSTER'),
+                'host' => env('PUSHER_HOST') ?: 'api-'.env('PUSHER_APP_CLUSTER', 'mt1').'.pusher.com',
+                'port' => env('PUSHER_PORT', 443),
+                'scheme' => env('PUSHER_SCHEME', 'https'),
+                'encrypted' => true,
+                'useTLS' => env('PUSHER_SCHEME', 'https') === 'https',
+            ],
+            'client_options' => [
+                // Guzzle client options
+            ],
+        ],
+
+        'ably' => [
+            'driver' => 'ably',
+            'key' => env('ABLY_KEY'),
+        ],
+
+        'redis' => [
+            'driver' => 'redis',
+            'connection' => 'default',
+        ],
+
+        'log' => [
+            'driver' => 'log',
+        ],
+
+        'null' => [
+            'driver' => 'null',
+        ],
+
+        'reverb' => [
+            'driver' => 'reverb',
+            'key' => env('REVERB_APP_KEY'),
+            'secret' => env('REVERB_APP_SECRET'),
+            'app_id' => env('REVERB_APP_ID'),
+            'options' => [
+                'host' => env('REVERB_HOST'),
+                'port' => env('REVERB_PORT', 8080),
+                'scheme' => env('REVERB_SCHEME', 'http'),
+                'useTLS' => env('REVERB_SCHEME', 'http') === 'https',
+            ],
+        ],
+    ],
+];
+```
+
+```env
+# .env
+BROADCAST_DRIVER=pusher
+# atau ably, redis, reverb
+
+PUSHER_APP_ID=your-app-id
+PUSHER_APP_KEY=your-app-key
+PUSHER_APP_SECRET=your-app-secret
+PUSHER_HOST=
+PUSHER_PORT=443
+PUSHER_SCHEME=https
+PUSHER_APP_CLUSTER=ap1
+
+# Ably
+ABLY_KEY=your-ably-key
+
+# Reverb
+REVERB_APP_ID=your-app-id
+REVERB_APP_KEY=your-app-key
+REVERB_APP_SECRET=your-app-secret
+REVERB_HOST=localhost
+REVERB_PORT=8080
+REVERB_SCHEME=http
+```
+
+## 2. Event Broadcasting
+
+### 2.1 Creating Broadcast Events
+
+```php
+<?php
+
+// app/Events/OrderShipped.php
+namespace App\Events;
+
+use App\Models\Order;
+use Illuminate\Broadcasting\Channel;
+use Illuminate\Broadcasting\InteractsWithSockets;
+use Illuminate\Broadcasting\PresenceChannel;
+use Illuminate\Broadcasting\PrivateChannel;
+use Illuminate\Contracts\Broadcasting\ShouldBroadcast;
+use Illuminate\Foundation\Events\Dispatchable;
+use Illuminate\Queue\SerializesModels;
+
+class OrderShipped implements ShouldBroadcast
+{
+    use Dispatchable, InteractsWithSockets, SerializesModels;
+
+    public Order $order;
+
+    /**
+     * Create a new event instance.
+     */
+    public function __construct(Order $order)
+    {
+        $this->order = $order;
+    }
+
+    /**
+     * Get the channels the event should broadcast on.
+     *
+     * @return array<int, \Illuminate\Broadcasting\Channel>
+     */
+    public function broadcastOn(): array
+    {
+        return [
+            new PrivateChannel('orders.' . $this->order->user_id),
+        ];
+    }
+
+    /**
+     * The event's broadcast name.
+     */
+    public function broadcastAs(): string
+    {
+        return 'order.shipped';
+    }
+
+    /**
+     * Get the data to broadcast.
+     */
+    public function broadcastWith(): array
+    {
+        return [
+            'order_id' => $this->order->id,
+            'tracking_number' => $this->order->tracking_number,
+            'shipped_at' => $this->order->shipped_at->toIso8601String(),
+            'estimated_delivery' => $this->order->estimated_delivery?->toIso8601String(),
+        ];
+    }
+
+    /**
+     * Determine if this event should broadcast.
+     */
+    public function broadcastWhen(): bool
+    {
+        return $this->order->status === 'shipped';
+    }
+}
+```
+
+### 2.2 Dispatching Events
+
+```php
+<?php
+
+// Trigger broadcast event
+OrderShipped::dispatch($order);
+
+// Atau dengan delay
+broadcast(new OrderShipped($order))->toOthers();
+
+// Hanya broadcast jika kondisi terpenuhi
+broadcast(new OrderShipped($order))->onCondition($order->isPaid());
+
+// Broadcast ke multiple channels
+broadcast(new OrderShipped($order))->to(
+    new PrivateChannel('orders.' . $order->user_id),
+    new PrivateChannel('admin.notifications')
+);
+```
+
+## 3. Channel Authorization
+
+### 3.1 Defining Authorization Routes
+
+```php
+<?php
+
+// routes/channels.php
+use App\Models\Order;
+use App\Models\User;
+use Illuminate\Support\Facades\Broadcast;
+
+// Public channel (no auth required)
+Broadcast::channel('notifications', function () {
+    return true;
+});
+
+// Private channel - user hanya bisa akses channel miliknya
+Broadcast::channel('orders.{userId}', function (User $user, int $userId) {
+    return $user->id === $userId;
+});
+
+// Private channel dengan model binding
+Broadcast::channel('orders.{orderId}', function (User $user, int $orderId) {
+    return $user->id === Order::findOrNew($orderId)->user_id;
+});
+
+// Presence channel - return data untuk presence info
+Broadcast::channel('chat.{roomId}', function (User $user, int $roomId) {
+    if ($user->canJoinRoom($roomId)) {
+        return ['id' => $user->id, 'name' => $user->name];
+    }
+    return false;
+});
+
+// Channel dengan multiple parameters
+Broadcast::channel('team.{teamId}.project.{projectId}', function (User $user, int $teamId, int $projectId) {
+    return $user->belongsToTeam($teamId) && $user->canAccessProject($projectId);
+});
+```
+
+### 3.2 Authorization Middleware
+
+```php
+<?php
+
+// app/Providers/BroadcastServiceProvider.php
+namespace App\Providers;
+
+use Illuminate\Support\Facades\Broadcast;
+use Illuminate\Support\ServiceProvider;
+
+class BroadcastServiceProvider extends ServiceProvider
+{
+    public function boot(): void
+    {
+        // Default auth middleware untuk broadcast routes
+        Broadcast::routes(['middleware' => ['auth:sanctum']]);
+
+        // Atau dengan custom middleware
+        Broadcast::routes([
+            'middleware' => ['auth:api', 'verified'],
+            'prefix' => 'api/broadcasting',
+        ]);
+
+        require base_path('routes/channels.php');
+    }
+}
+```
+
+## 4. Laravel Echo Client
+
+### 4.1 Setup Echo
+
+```javascript
+// resources/js/echo.js
+import Echo from 'laravel-echo';
+import Pusher from 'pusher-js';
+
+window.Pusher = Pusher;
+
+window.Echo = new Echo({
+    broadcaster: 'pusher',
+    key: import.meta.env.VITE_PUSHER_APP_KEY,
+    cluster: import.meta.env.VITE_PUSHER_APP_CLUSTER,
+    wsHost: import.meta.env.VITE_PUSHER_HOST,
+    wsPort: import.meta.env.VITE_PUSHER_PORT,
+    wssPort: import.meta.env.VITE_PUSHER_PORT,
+    forceTLS: (import.meta.env.VITE_PUSHER_SCHEME ?? 'https') === 'https',
+    enabledTransports: ['ws', 'wss'],
+    
+    // Auth endpoint untuk private/presence channels
+    authEndpoint: '/broadcasting/auth',
+    auth: {
+        headers: {
+            Authorization: `Bearer ${localStorage.getItem('token')}`,
+        },
+    },
+});
+
+// Atau dengan Ably
+window.Echo = new Echo({
+    broadcaster: 'ably',
+    key: import.meta.env.VITE_ABLY_KEY,
+});
+
+// Atau dengan Reverb
+window.Echo = new Echo({
+    broadcaster: 'reverb',
+    key: import.meta.env.VITE_REVERB_APP_KEY,
+    wsHost: import.meta.env.VITE_REVERB_HOST,
+    wsPort: import.meta.env.VITE_REVERB_PORT,
+    forceTLS: false,
+    enabledTransports: ['ws'],
+});
+```
+
+### 4.2 Listening to Events
+
+```javascript
+// Listen to private channel
+Echo.private(`orders.${userId}`)
+    .listen('.order.shipped', (e) => {
+        console.log('Order shipped:', e);
+        
+        // Show notification
+        showNotification({
+            message: `Order #${e.order_id} has been shipped.`,
+            tracking: e.tracking_number,
+        });
+        
+        // Update UI
+        updateOrderStatus(e.order_id, 'shipped');
+    })
+    .listen('.order.delivered', (e) => {
+        console.log('Order delivered:', e);
+    })
+    .error((error) => {
+        console.error('Channel error:', error);
+    });
+
+// Listen to public channel
+Echo.channel('notifications')
+    .listen('SystemNotification', (e) => {
+        showSystemNotification(e.message);
+    });
+
+// Listen to presence channel
+Echo.join(`chat.${roomId}`)
+    .here((users) => {
+        // Initial list of users
+        updateOnlineUsers(users);
+    })
+    .joining((user) => {
+        // User joined
+        addOnlineUser(user);
+        showToast(`${user.name} joined the chat`);
+    })
+    .leaving((user) => {
+        // User left
+        removeOnlineUser(user);
+        showToast(`${user.name} left the chat`);
+    })
+    .listen('MessageSent', (e) => {
+        appendMessage(e.message);
+    })
+    .error((error) => {
+        console.error('Presence channel error:', error);
+    });
+```
+
+## 5. Whispering (Client Events)
+
+```javascript
+// Client-side event (tanpa server)
+Echo.join(`chat.${roomId}`)
+    .whisper('typing', {
+        user: userId,
+        name: userName,
+    });
+
+// Listen untuk client event
+Echo.join(`chat.${roomId}`)
+    .listenForWhisper('typing', (e) => {
+        showTypingIndicator(e.name);
+    });
+```
+
+```php
+<?php
+
+// Enable client events di Pusher dashboard
+// Atau konfigurasi Ably/Reverb
+```
+
+## 6. Notification Broadcasting
+
+### 6.1 Broadcast Notifications
+
+```php
+<?php
+
+// app/Notifications/OrderShippedNotification.php
+namespace App\Notifications;
+
+use Illuminate\Bus\Queueable;
+use Illuminate\Contracts\Broadcasting\ShouldBroadcast;
+use Illuminate\Notifications\Messages\BroadcastMessage;
+use Illuminate\Notifications\Notification;
+
+class OrderShippedNotification extends Notification implements ShouldBroadcast
+{
+    use Queueable;
+
+    public function __construct(public $order) {}
+
+    public function via($notifiable): array
+    {
+        return ['database', 'broadcast'];
+    }
+
+    public function toBroadcast($notifiable): BroadcastMessage
+    {
+        return new BroadcastMessage([
+            'order_id' => $this->order->id,
+            'message' => 'Your order has been shipped!',
+            'action_url' => url("/orders/{$this->order->id}"),
+        ]);
+    }
+
+    public function broadcastOn(): array
+    {
+        return [
+            new PrivateChannel('App.Models.User.' . $this->order->user_id),
+        ];
+    }
+
+    public function broadcastType(): string
+    {
+        return 'order.shipped';
+    }
+}
+```
+
+### 6.2 Listening Notification Events
+
+```javascript
+// Listen ke notification channel
+Echo.private(`App.Models.User.${userId}`)
+    .notification((notification) => {
+        console.log('New notification:', notification);
+        
+        showNotification({
+            message: notification.message,
+            url: notification.action_url,
+        });
+    });
+```
+
+## 7. Advanced Broadcasting
+
+### 7.1 Broadcasting to Multiple Channels
+
+```php
+<?php
+
+class OrderStatusUpdated implements ShouldBroadcast
+{
+    public function broadcastOn(): array
+    {
+        return [
+            // Ke user
+            new PrivateChannel('orders.' . $this->order->user_id),
+            
+            // Ke admin
+            new PrivateChannel('admin.orders'),
+            
+            // Ke warehouse jika status processing
+            $this->order->status === 'processing' 
+                ? new PrivateChannel('warehouse.orders') 
+                : null,
+        ];
+    }
+}
+```
+
+### 7.2 Conditional Broadcasting
+
+```php
+<?php
+
+class PriceUpdated implements ShouldBroadcast
+{
+    public function broadcastWhen(): bool
+    {
+        // Hanya broadcast jika price change > 5%
+        $change = abs($this->newPrice - $this->oldPrice) / $this->oldPrice;
+        return $change > 0.05;
+    }
+
+    public function broadcastOn(): array
+    {
+        return [
+            new Channel('product.' . $this->productId),
+        ];
+    }
+}
+```
+
+## 8. Testing Broadcasting
+
+```php
+<?php
+
+// tests/Feature/BroadcastingTest.php
+use Illuminate\Support\Facades\Broadcast;
+use Illuminate\Support\Facades\Event;
+
+class BroadcastingTest extends TestCase
+{
+    public function test_event_broadcasts_on_correct_channel()
+    {
+        Event::fake([OrderShipped::class]);
+
+        $order = Order::factory()->create();
+
+        event(new OrderShipped($order));
+
+        Event::assertDispatched(OrderShipped::class, function ($event) use ($order) {
+            return $event->broadcastOn()[0]->name === 'private-orders.' . $order->user_id;
+        });
+    }
+
+    public function test_channel_authorization()
+    {
+        $user = User::factory()->create();
+        $otherUser = User::factory()->create();
+
+        // Authorized
+        $this->actingAs($user)
+            ->postJson('/broadcasting/auth', [
+                'channel_name' => 'private-orders.' . $user->id,
+                'socket_id' => '1234.5678',
+            ])
+            ->assertOk();
+
+        // Unauthorized
+        $this->actingAs($otherUser)
+            ->postJson('/broadcasting/auth', [
+                'channel_name' => 'private-orders.' . $user->id,
+                'socket_id' => '1234.5678',
+            ])
+            ->assertForbidden();
+    }
+
+    public function test_presence_channel_returns_user_data()
+    {
+        $user = User::factory()->create();
+
+        $response = $this->actingAs($user)
+            ->postJson('/broadcasting/auth', [
+                'channel_name' => 'presence-chat.1',
+                'socket_id' => '1234.5678',
+            ]);
+
+        $response->assertOk()
+            ->assertJsonPath('channel_data.user_info.id', $user->id)
+            ->assertJsonPath('channel_data.user_info.name', $user->name);
+    }
+}
+```
+
+## Kesimpulan
+
+Laravel Broadcasting menyediakan infrastruktur real-time yang powerful:
+- **Multiple drivers**: Pusher, Ably, Redis, Reverb
+- **Channel types**: Public, Private, Presence
+- **Authorization**: Secure channel access dengan Gates
+- **Echo client**: JavaScript library untuk subscription
+- **Notifications**: Broadcast notifications real-time
+
+Selanjutnya di **Sesi 53**, kita akan mempelajari Laravel Reverb (WebSockets server).
+```

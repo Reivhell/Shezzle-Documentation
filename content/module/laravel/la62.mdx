@@ -1,0 +1,639 @@
+---
+title: "Sesi 62: Livewire (Full-stack Framework)"
+description: "Menguasai Livewire untuk membangun aplikasi web interaktif modern tanpa menulis JavaScript, dengan komponen reaktif dan real-time updates."
+category: "laravel"
+tags: ["laravel"]
+order: 62
+---
+
+## Tujuan Pembelajaran
+
+Menguasai Livewire untuk membangun aplikasi web interaktif modern tanpa menulis JavaScript, dengan komponen reaktif dan real-time updates.
+
+## 1. Instalasi & Konsep Dasar
+
+### 1.1 Instalasi Livewire
+
+```bash
+# Livewire sudah include di Laravel 11+
+# Untuk install manual:
+composer require livewire/livewire
+
+# Publish config (opsional)
+php artisan livewire:publish --config
+```
+
+### 1.2 Konsep Dasar
+
+```php
+<?php
+
+// app/Livewire/Counter.php
+namespace App\Livewire;
+
+use Livewire\Component;
+
+class Counter extends Component
+{
+    public int $count = 0;
+
+    public function increment(): void
+    {
+        $this->count++;
+    }
+
+    public function decrement(): void
+    {
+        $this->count--;
+    }
+
+    public function render()
+    {
+        return view('livewire.counter');
+    }
+}
+```
+
+```blade
+{{-- resources/views/livewire/counter.blade.php --}}
+<div>
+    <h1>Count: {{ $count }}</h1>
+    
+    <button wire:click="increment">+</button>
+    <button wire:click="decrement">-</button>
+    
+    <button wire:click="$set('count', 0)">Reset</button>
+</div>
+```
+
+```blade
+{{-- Gunakan di Blade --}}
+<!DOCTYPE html>
+<html>
+<head>
+    @livewireStyles
+</head>
+<body>
+    <livewire:counter />
+    
+    @livewireScripts
+</body>
+</html>
+```
+
+## 2. Properties & Data Binding
+
+### 2.1 Public Properties
+
+```php
+<?php
+
+// app/Livewire/SearchUsers.php
+namespace App\Livewire;
+
+use App\Models\User;
+use Livewire\Attributes\Url;
+use Livewire\Component;
+
+class SearchUsers extends Component
+{
+    #[Url(as: 'q', history: true)]  // Query string sync
+    public string $search = '';
+
+    public string $sortBy = 'name';
+    public string $sortDirection = 'asc';
+
+    // Computed property
+    public function getUsersProperty()
+    {
+        return User::query()
+            ->when($this->search, fn ($q) => 
+                $q->where('name', 'like', "%{$this->search}%")
+                  ->orWhere('email', 'like', "%{$this->search}%")
+            )
+            ->orderBy($this->sortBy, $this->sortDirection)
+            ->paginate(10);
+    }
+
+    public function sort($column): void
+    {
+        if ($this->sortBy === $column) {
+            $this->sortDirection = $this->sortDirection === 'asc' ? 'desc' : 'asc';
+        } else {
+            $this->sortBy = $column;
+            $this->sortDirection = 'asc';
+        }
+    }
+
+    public function render()
+    {
+        return view('livewire.search-users');
+    }
+}
+```
+
+```blade
+{{-- resources/views/livewire/search-users.blade.php --}}
+<div>
+    <input 
+        type="text" 
+        wire:model.live.debounce.500ms="search" 
+        placeholder="Search users..."
+    >
+    
+    <table>
+        <thead>
+            <tr>
+                <th wire:click="sort('name')">
+                    Name
+                    @if($sortBy === 'name')
+                        {{ $sortDirection === 'asc' ? '↑' : '↓' }}
+                    @endif
+                </th>
+                <th wire:click="sort('email')">Email</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach($this->users as $user)
+                <tr wire:key="{{ $user->id }}">
+                    <td>{{ $user->name }}</td>
+                    <td>{{ $user->email }}</td>
+                </tr>
+            @endforeach
+        </tbody>
+    </table>
+    
+    {{ $this->users->links() }}
+</div>
+```
+
+### 2.2 Data Binding Modifiers
+
+```blade
+<!-- Real-time updates (setiap keystroke) -->
+<input wire:model.live="name">
+
+<!-- Debounced (tunggu user berhenti typing) -->
+<input wire:model.live.debounce.300ms="search">
+
+<!-- Lazy (update saat blur/change) -->
+<input wire:model="email">
+
+<!-- Deferred (update saat form submit) -->
+<input wire:model.defer="bio">
+
+<!-- Number casting -->
+<input wire:model.number="quantity" type="number">
+
+<!-- Boolean casting -->
+<input wire:model.boolean="isActive" type="checkbox">
+
+<!-- Array casting -->
+<input wire:model="tags" type="checkbox" value="laravel">
+<input wire:model="tags" type="checkbox" value="vue">
+```
+
+## 3. Actions & Events
+
+### 3.1 Component Methods
+
+```php
+<?php
+
+// app/Livewire/ShoppingCart.php
+namespace App\Livewire;
+
+use App\Models\Product;
+use Livewire\Attributes\On;
+use Livewire\Component;
+
+class ShoppingCart extends Component
+{
+    public array $items = [];
+
+    public function mount(): void
+    {
+        $this->items = session()->get('cart', []);
+    }
+
+    public function addToCart(int $productId): void
+    {
+        $product = Product::find($productId);
+        
+        if (isset($this->items[$productId])) {
+            $this->items[$productId]['quantity']++;
+        } else {
+            $this->items[$productId] = [
+                'name' => $product->name,
+                'price' => $product->price,
+                'quantity' => 1,
+            ];
+        }
+        
+        $this->dispatch('cart-updated');
+        session()->put('cart', $this->items);
+    }
+
+    public function removeFromCart(int $productId): void
+    {
+        unset($this->items[$productId]);
+        session()->put('cart', $this->items);
+    }
+
+    public function updateQuantity(int $productId, int $quantity): void
+    {
+        if ($quantity < 1) {
+            $this->removeFromCart($productId);
+            return;
+        }
+        
+        $this->items[$productId]['quantity'] = $quantity;
+        session()->put('cart', $this->items);
+    }
+
+    public function getTotalProperty(): float
+    {
+        return collect($this->items)->sum(fn ($item) => 
+            $item['price'] * $item['quantity']
+        );
+    }
+
+    #[On('product-added')]  // Listen ke event global
+    public function refreshCart(): void
+    {
+        $this->items = session()->get('cart', []);
+    }
+
+    public function render()
+    {
+        return view('livewire.shopping-cart');
+    }
+}
+```
+
+### 3.2 Event Dispatching
+
+```php
+<?php
+
+// Dispatch event dari component
+$this->dispatch('notify', 
+    type: 'success',
+    message: 'Product added to cart!'
+);
+
+// Dispatch ke component spesifik
+$this->dispatch('refresh')->to(ShoppingCart::class);
+
+// Browser event
+$this->dispatch('scroll-to-top');
+```
+
+```blade
+{{-- Listen di Blade --}}
+<div x-data="{ show: false }" 
+     x-on:notify.window="show = true; setTimeout(() => show = false, 3000)">
+    <div x-show="show" class="notification">
+        Notification!
+    </div>
+</div>
+```
+
+## 4. Lifecycle Hooks
+
+```php
+<?php
+
+namespace App\Livewire;
+
+use Livewire\Attributes\Computed;
+use Livewire\Attributes\Js;
+use Livewire\Attributes\Layout;
+use Livewire\Attributes\Locked;
+use Livewire\Attributes\On;
+use Livewire\Attributes\Reactive;
+use Livewire\Attributes\Renderless;
+use Livewire\Attributes\Rule;
+use Livewire\Attributes\Title;
+use Livewire\Attributes\Url;
+use Livewire\Component;
+
+class ProductDetail extends Component
+{
+    #[Url]  // Sync dengan URL
+    public int $productId;
+
+    #[Locked]  // Tidak bisa dimodifikasi dari frontend
+    public string $sku;
+
+    #[Reactive]  // Re-render saat parent update
+    public array $options = [];
+
+    #[Rule('required|min:3')]  // Validation
+    public string $review = '';
+
+    // Mount: Saat component diinisialisasi
+    public function mount(int $id): void
+    {
+        $this->productId = $id;
+        $this->loadProduct();
+    }
+
+    // Hydrate: Saat component dihydrate dari request
+    public function hydrate(): void
+    {
+        // Logic setelah state di-restore
+    }
+
+    // Dehydrate: Sebelum state disimpan
+    public function dehydrate(): void
+    {
+        // Logic sebelum state di-persist
+    }
+
+    // Updating: Sebelum property diupdate
+    public function updating($name, $value): void
+    {
+        if ($name === 'quantity' && $value > 10) {
+            $this->quantity = 10; // Cap at 10
+        }
+    }
+
+    // Updated: Setelah property diupdate
+    public function updated($name, $value): void
+    {
+        if ($name === 'country') {
+            $this->reset('state', 'city'); // Reset dependent fields
+        }
+    }
+
+    // Renderless: Method tidak trigger re-render
+    #[Renderless]
+    public function trackView(): void
+    {
+        analytics()->track('product_view', $this->productId);
+    }
+
+    // Computed: Cacheable computed property
+    #[Computed]
+    public function product(): Product
+    {
+        return Product::with('reviews', 'category')->find($this->productId);
+    }
+
+    #[Computed(persist: true)]  // Persist di session
+    public function relatedProducts(): Collection
+    {
+        return Product::where('category_id', $this->product->category_id)
+            ->where('id', '!=', $this->productId)
+            ->take(4)
+            ->get();
+    }
+
+    // JS: Method callable dari JavaScript
+    #[Js]
+    public function getCoordinates(): array
+    {
+        return ['lat' => $this->product->lat, 'lng' => $this->product->lng];
+    }
+
+    // Title: Dynamic page title
+    #[Title('Product Detail')]
+    // Atau
+    public function getTitle(): string
+    {
+        return $this->product->name;
+    }
+
+    // Layout: Spesifik layout
+    #[Layout('layouts.shop')]
+    public function render()
+    {
+        return view('livewire.product-detail');
+    }
+}
+```
+
+## 5. Forms & Validation
+
+```php
+<?php
+
+// app/Livewire/ContactForm.php
+namespace App\Livewire;
+
+use Livewire\Attributes\Rule;
+use Livewire\Component;
+
+class ContactForm extends Component
+{
+    #[Rule('required|min:3')]
+    public string $name = '';
+
+    #[Rule('required|email')]
+    public string $email = '';
+
+    #[Rule('required|min:10')]
+    public string $message = '';
+
+    #[Rule('required|in:support,sales,general')]
+    public string $department = 'general';
+
+    public function save(): void
+    {
+        $validated = $this->validate();
+
+        Contact::create($validated);
+
+        $this->reset(['name', 'email', 'message']);
+        
+        $this->dispatch('notify', 
+            message: 'Message sent successfully!',
+            type: 'success'
+        );
+    }
+
+    public function render()
+    {
+        return view('livewire.contact-form');
+    }
+}
+```
+
+```blade
+{{-- resources/views/livewire/contact-form.blade.php --}}
+<form wire:submit="save">
+    <div>
+        <label>Name</label>
+        <input type="text" wire:model="name">
+        @error('name') <span class="error">{{ $message }}</span> @enderror
+    </div>
+
+    <div>
+        <label>Email</label>
+        <input type="email" wire:model="email">
+        @error('email') <span class="error">{{ $message }}</span> @enderror
+    </div>
+
+    <div>
+        <label>Department</label>
+        <select wire:model="department">
+            <option value="general">General</option>
+            <option value="support">Support</option>
+            <option value="sales">Sales</option>
+        </select>
+    </div>
+
+    <div>
+        <label>Message</label>
+        <textarea wire:model="message"></textarea>
+        @error('message') <span class="error">{{ $message }}</span> @enderror
+    </div>
+
+    <button type="submit" wire:loading.attr="disabled">
+        <span wire:loading.remove>Send Message</span>
+        <span wire:loading>Sending...</span>
+    </button>
+</form>
+```
+
+## 6. File Uploads
+
+```php
+<?php
+
+// app/Livewire/UploadPhotos.php
+namespace App\Livewire;
+
+use Livewire\Attributes\Rule;
+use Livewire\Component;
+use Livewire\WithFileUploads;
+
+class UploadPhotos extends Component
+{
+    use WithFileUploads;
+
+    #[Rule(['photos.*' => 'image|max:1024'])] // 1MB Max
+    public array $photos = [];
+
+    public function save(): void
+    {
+        $this->validate();
+
+        foreach ($this->photos as $photo) {
+            $path = $photo->store('photos', 'public');
+            
+            auth()->user()->photos()->create(['path' => $path]);
+        }
+
+        $this->photos = [];
+        
+        $this->dispatch('photos-uploaded');
+    }
+
+    public function remove($index): void
+    {
+        unset($this->photos[$index]);
+        $this->photos = array_values($this->photos);
+    }
+
+    public function render()
+    {
+        return view('livewire.upload-photos');
+    }
+}
+```
+
+```blade
+{{-- resources/views/livewire/upload-photos.blade.php --}}
+<div>
+    <input type="file" wire:model="photos" multiple>
+    
+    @error('photos.*') <span class="error">{{ $message }}</span> @enderror
+    
+    <div wire:loading wire:target="photos">Uploading...</div>
+    
+    @if($photos)
+        <div class="preview">
+            @foreach($photos as $index => $photo)
+                <div wire:key="{{ $index }}">
+                    <img src="{{ $photo->temporaryUrl() }}">
+                    <button type="button" wire:click="remove({{ $index }})">Remove</button>
+                </div>
+            @endforeach
+        </div>
+        
+        <button wire:click="save">Save Photos</button>
+    @endif
+</div>
+```
+
+## 7. Testing Livewire
+
+```php
+<?php
+
+// tests/Feature/Livewire/CounterTest.php
+use App\Livewire\Counter;
+use Livewire\Livewire;
+
+class CounterTest extends TestCase
+{
+    public function test_counter_increments()
+    {
+        Livewire::test(Counter::class)
+            ->assertSet('count', 0)
+            ->call('increment')
+            ->assertSet('count', 1)
+            ->call('increment')
+            ->assertSet('count', 2);
+    }
+
+    public function test_counter_decrements()
+    {
+        Livewire::test(Counter::class)
+            ->set('count', 5)
+            ->call('decrement')
+            ->assertSet('count', 4);
+    }
+
+    public function test_search_filters_results()
+    {
+        $user1 = User::factory()->create(['name' => 'John Doe']);
+        $user2 = User::factory()->create(['name' => 'Jane Smith']);
+
+        Livewire::test(SearchUsers::class)
+            ->set('search', 'John')
+            ->assertSee('John Doe')
+            ->assertDontSee('Jane Smith');
+    }
+
+    public function test_form_validation()
+    {
+        Livewire::test(ContactForm::class)
+            ->set('email', 'invalid-email')
+            ->call('save')
+            ->assertHasErrors(['email' => 'email'])
+            ->assertHasNoErrors(['name']);
+    }
+
+    public function test_events_dispatched()
+    {
+        Livewire::test(ShoppingCart::class)
+            ->call('addToCart', 1)
+            ->assertDispatched('cart-updated');
+    }
+}
+```
+
+## Kesimpulan
+
+Livewire menyediakan full-stack development tanpa JavaScript framework:
+- **Reactive components**: Auto-re-render saat state berubah
+- **Data binding**: Two-way binding dengan modifiers
+- **File uploads**: Built-in handling dengan progress
+- **Validation**: Integrasi Laravel validation
+- **Testing**: First-class testing utilities
+
+Selanjutnya di **Sesi 63**, kita akan mempelajari Inertia.js Integration.
+```

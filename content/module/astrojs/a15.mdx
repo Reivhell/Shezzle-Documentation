@@ -1,0 +1,913 @@
+---
+title: "Sesi 15: Actions & Form Handling"
+description: "Astro Actions adalah fitur baru (Astro 4.5+) untuk menangani form submissions dan data mutations dengan type safety dan validasi bawaan."
+category: "astrojs"
+tags: ["astrojs"]
+order: 15
+---
+
+# Sesi 15: Actions & Form Handling
+
+## 15.1 Astro Actions Overview
+
+Astro Actions adalah fitur baru (Astro 4.5+) untuk menangani form submissions dan data mutations dengan type safety dan validasi bawaan.
+
+### Analogi Sederhana:
+
+> Bayangkan Actions seperti **formulir online dengan asisten pintar**. Asisten ini memeriksa kelengkapan data (validasi), mengantarkan ke bagian yang tepat (handler), dan memberi tahu hasilnya dengan jelas (response). Semua terstruktur dan aman!
+
+### Keunggulan Astro Actions:
+
+| Fitur | Deskripsi |
+|-------|-----------|
+| **Type Safety** | TypeScript end-to-end untuk form data |
+| **Validasi** | Validasi otomatis dengan Zod |
+| **Progressive Enhancement** | Works tanpa JavaScript, enhanced dengan JS |
+| **Error Handling** | Structured error responses |
+| **Optimistic UI** | Update UI sebelum server response |
+
+---
+
+## 15.2 Creating Actions
+
+Membuat actions dengan definisi schema dan handler.
+
+### Struktur Actions:
+
+```
+src/
+├── actions/
+│   └── index.ts          # Definisi semua actions
+└── pages/
+    └── contact.astro     # Form yang menggunakan actions
+```
+
+### Definisi Actions:
+
+```typescript
+// src/actions/index.ts
+import { defineAction } from 'astro:actions';
+import { z } from 'astro:schema';
+
+export const server = {
+  // Action: contact form
+  contact: defineAction({
+    accept: 'form', // Menerima FormData
+    input: z.object({
+      name: z.string().min(2, 'Nama minimal 2 karakter'),
+      email: z.string().email('Email tidak valid'),
+      subject: z.enum(['general', 'support', 'sales']),
+      message: z.string().min(10, 'Pesan minimal 10 karakter'),
+      newsletter: z.boolean().optional().default(false),
+    }),
+    handler: async (input) => {
+      // Handler: proses data
+      console.log('Contact form submitted:', input);
+      
+      // Simpan ke database
+      await db.insert(contacts).values({
+        name: input.name,
+        email: input.email,
+        subject: input.subject,
+        message: input.message,
+        newsletter: input.newsletter,
+        createdAt: new Date(),
+      });
+      
+      // Kirim email notification
+      await sendEmail({
+        to: 'admin@example.com',
+        subject: `New contact: ${input.subject}`,
+        body: `From: ${input.name} (${input.email})\n\n${input.message}`,
+      });
+      
+      // Return success response
+      return {
+        success: true,
+        message: 'Terima kasih! Pesan Anda telah terkirim.',
+        ticketId: crypto.randomUUID(),
+      };
+    },
+  }),
+  
+  // Action: update profile
+  updateProfile: defineAction({
+    accept: 'form',
+    input: z.object({
+      displayName: z.string().min(3).max(50),
+      bio: z.string().max(500).optional(),
+      avatar: z.instanceof(File).optional(),
+    }),
+    handler: async (input, context) => {
+      // Akses context (cookies, locals, dll)
+      const userId = context.locals.user?.id;
+      
+      if (!userId) {
+        throw new Error('Unauthorized');
+      }
+      
+      // Upload avatar jika ada
+      let avatarUrl = undefined;
+      if (input.avatar && input.avatar.size > 0) {
+        avatarUrl = await uploadFile(input.avatar, `avatars/${userId}`);
+      }
+      
+      // Update database
+      await db.update(users)
+        .set({
+          displayName: input.displayName,
+          bio: input.bio,
+          ...(avatarUrl && { avatar: avatarUrl }),
+          updatedAt: new Date(),
+        })
+        .where(eq(users.id, userId));
+      
+      return {
+        success: true,
+        message: 'Profile updated successfully',
+      };
+    },
+  }),
+  
+  // Action: JSON API (untuk AJAX)
+  addToCart: defineAction({
+    accept: 'json', // Menerima JSON
+    input: z.object({
+      productId: z.string(),
+      quantity: z.number().int().positive(),
+      variant: z.string().optional(),
+    }),
+    handler: async (input, context) => {
+      const sessionId = context.cookies.get('sessionId')?.value;
+      
+      // Add to cart logic
+      const cartItem = await addToCart(sessionId, input);
+      
+      return {
+        success: true,
+        cartItem,
+        cartTotal: await getCartTotal(sessionId),
+      };
+    },
+  }),
+};
+```
+
+### Setup Actions di Config:
+
+```javascript
+// astro.config.mjs
+import { defineConfig } from 'astro/config';
+
+export default defineConfig({
+  experimental: {
+    actions: true,
+  },
+});
+```
+
+---
+
+## 15.3 Form Submission
+
+Menggunakan actions di form dengan berbagai cara.
+
+### Progressive Enhancement Form:
+
+```astro
+---
+// src/pages/contact.astro
+import { actions } from 'astro:actions';
+
+// Handle form submission (works tanpa JavaScript!)
+const result = Astro.getActionResult(actions.contact);
+---
+
+<Layout title="Contact Us">
+  <h1>Hubungi Kami</h1>
+  
+  <!-- Success message -->
+  {result?.data?.success && (
+    <div class="success-alert" role="alert">
+      <p>{result.data.message}</p>
+      <p>Ticket ID: {result.data.ticketId}</p>
+    </div>
+  )}
+  
+  <!-- Error message -->
+  {result?.error && (
+    <div class="error-alert" role="alert">
+      <p>Terjadi kesalahan: {result.error.message}</p>
+    </div>
+  )}
+  
+  <!-- Form dengan Astro Actions -->
+  <form method="POST" action={actions.contact}>
+    <div class="form-group">
+      <label for="name">Nama</label>
+      <input 
+        type="text" 
+        id="name" 
+        name="name" 
+        required
+        value={result?.input?.name}
+        aria-invalid={result?.error?.fields?.name ? 'true' : 'false'}
+      />
+      {result?.error?.fields?.name && (
+        <span class="error-text">{result.error.fields.name}</span>
+      )}
+    </div>
+    
+    <div class="form-group">
+      <label for="email">Email</label>
+      <input 
+        type="email" 
+        id="email" 
+        name="email" 
+        required
+        value={result?.input?.email}
+      />
+      {result?.error?.fields?.email && (
+        <span class="error-text">{result.error.fields.email}</span>
+      )}
+    </div>
+    
+    <div class="form-group">
+      <label for="subject">Subjek</label>
+      <select id="subject" name="subject" required>
+        <option value="general">Pertanyaan Umum</option>
+        <option value="support">Bantuan Teknis</option>
+        <option value="sales">Penjualan</option>
+      </select>
+    </div>
+    
+    <div class="form-group">
+      <label for="message">Pesan</label>
+      <textarea 
+        id="message" 
+        name="message" 
+        rows="5" 
+        required
+      >{result?.input?.message}</textarea>
+      {result?.error?.fields?.message && (
+        <span class="error-text">{result.error.fields.message}</span>
+      )}
+    </div>
+    
+    <div class="form-group checkbox">
+      <label>
+        <input type="checkbox" name="newsletter" value="true" />
+        Berlangganan newsletter
+      </label>
+    </div>
+    
+    <button type="submit">Kirim Pesan</button>
+  </form>
+</Layout>
+
+<style>
+  .form-group {
+    margin-bottom: 1.5rem;
+  }
+  
+  label {
+    display: block;
+    margin-bottom: 0.5rem;
+    font-weight: 600;
+  }
+  
+  input, select, textarea {
+    width: 100%;
+    padding: 0.75rem;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    font-size: 1rem;
+  }
+  
+  input[aria-invalid="true"],
+  textarea[aria-invalid="true"] {
+    border-color: #ef4444;
+  }
+  
+  .error-text {
+    color: #ef4444;
+    font-size: 0.875rem;
+    margin-top: 0.25rem;
+  }
+  
+  .success-alert {
+    background: #f0fdf4;
+    border: 1px solid #22c55e;
+    color: #166534;
+    padding: 1rem;
+    border-radius: 6px;
+    margin-bottom: 1.5rem;
+  }
+  
+  .error-alert {
+    background: #fef2f2;
+    border: 1px solid #ef4444;
+    color: #991b1b;
+    padding: 1rem;
+    border-radius: 6px;
+    margin-bottom: 1.5rem;
+  }
+  
+  button {
+    background: #3b82f6;
+    color: white;
+    padding: 0.75rem 2rem;
+    border: none;
+    border-radius: 6px;
+    font-size: 1rem;
+    cursor: pointer;
+  }
+  
+  button:hover {
+    background: #2563eb;
+  }
+</style>
+```
+
+### Enhanced Form dengan JavaScript:
+
+```astro
+---
+// src/pages/contact-enhanced.astro
+---
+
+<Layout title="Contact Us">
+  <h1>Hubungi Kami (Enhanced)</h1>
+  
+  <form id="contact-form" class="contact-form">
+    <!-- Form fields sama seperti di atas -->
+    <div class="form-group">
+      <label for="name">Nama</label>
+      <input type="text" id="name" name="name" required />
+      <span class="error-text" data-error="name"></span>
+    </div>
+    
+    <!-- ... other fields ... -->
+    
+    <button type="submit" data-submit-text="Kirim Pesan">
+      <span class="btn-text">Kirim Pesan</span>
+      <span class="btn-loader" hidden>Loading...</span>
+    </button>
+  </form>
+  
+  <div id="success-message" hidden class="success-alert"></div>
+</Layout>
+
+<script>
+  import { actions } from 'astro:actions';
+  
+  const form = document.getElementById('contact-form');
+  const submitBtn = form?.querySelector('button[type="submit"]');
+  const btnText = submitBtn?.querySelector('.btn-text');
+  const btnLoader = submitBtn?.querySelector('.btn-loader');
+  const successMsg = document.getElementById('success-message');
+  
+  form?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    
+    // Loading state
+    submitBtn.disabled = true;
+    btnText.hidden = true;
+    btnLoader.hidden = false;
+    
+    // Clear previous errors
+    form.querySelectorAll('[data-error]').forEach(el => {
+      el.textContent = '';
+      el.previousElementSibling?.removeAttribute('aria-invalid');
+    });
+    
+    try {
+      // Submit dengan Astro Actions
+      const formData = new FormData(form);
+      const { data, error } = await actions.contact(formData);
+      
+      if (error) {
+        // Handle validation errors
+        if (error.fields) {
+          Object.entries(error.fields).forEach(([field, message]) => {
+            const errorEl = form.querySelector(`[data-error="${field}"]`);
+            const inputEl = form.querySelector(`[name="${field}"]`);
+            if (errorEl) errorEl.textContent = message;
+            if (inputEl) inputEl.setAttribute('aria-invalid', 'true');
+          });
+        } else {
+          alert(error.message);
+        }
+        return;
+      }
+      
+      // Success
+      form.hidden = true;
+      if (successMsg) {
+        successMsg.hidden = false;
+        successMsg.innerHTML = `
+          <p>${data.message}</p>
+          <p>Ticket ID: ${data.ticketId}</p>
+        `;
+      }
+      
+    } finally {
+      submitBtn.disabled = false;
+      btnText.hidden = false;
+      btnLoader.hidden = true;
+    }
+  });
+</script>
+```
+
+---
+
+## 15.4 Input Validation
+
+Validasi komprehensif dengan Zod schema.
+
+### Advanced Validation:
+
+```typescript
+// src/actions/index.ts
+import { defineAction } from 'astro:actions';
+import { z } from 'astro:schema';
+
+export const server = {
+  register: defineAction({
+    accept: 'form',
+    input: z.object({
+      // String validation
+      username: z.string()
+        .min(3, 'Username minimal 3 karakter')
+        .max(20, 'Username maksimal 20 karakter')
+        .regex(/^[a-zA-Z0-9_]+$/, 'Hanya huruf, angka, dan underscore')
+        .transform(val => val.toLowerCase()),
+      
+      // Email dengan custom validation
+      email: z.string()
+        .email('Format email tidak valid')
+        .refine(async (email) => {
+          // Check email belum terdaftar
+          const existing = await db.query.users.findFirst({
+            where: eq(users.email, email),
+          });
+          return !existing;
+        }, 'Email sudah terdaftar'),
+      
+      // Password dengan requirements
+      password: z.string()
+        .min(8, 'Password minimal 8 karakter')
+        .regex(/[A-Z]/, 'Password harus mengandung huruf besar')
+        .regex(/[a-z]/, 'Password harus mengandung huruf kecil')
+        .regex(/[0-9]/, 'Password harus mengandung angka')
+        .regex(/[^A-Za-z0-9]/, 'Password harus mengandung karakter spesial'),
+      
+      // Confirm password
+      confirmPassword: z.string(),
+      
+      // Terms agreement
+      agreeTerms: z.boolean().refine(val => val === true, {
+        message: 'Anda harus menyetujui syarat dan ketentuan',
+      }),
+      
+      // Optional fields dengan default
+      referralCode: z.string().optional().default(''),
+      
+      // File upload
+      avatar: z.instanceof(File)
+        .refine(file => file.size <= 5 * 1024 * 1024, 'File maksimal 5MB')
+        .refine(
+          file => ['image/jpeg', 'image/png', 'image/webp'].includes(file.type),
+          'Hanya format JPG, PNG, atau WebP'
+        )
+        .optional(),
+    }).refine(data => data.password === data.confirmPassword, {
+      message: 'Password tidak cocok',
+      path: ['confirmPassword'],
+    }),
+    
+    handler: async (input) => {
+      // Hash password
+      const hashedPassword = await bcrypt.hash(input.password, 10);
+      
+      // Upload avatar jika ada
+      let avatarUrl = null;
+      if (input.avatar && input.avatar.size > 0) {
+        avatarUrl = await uploadToS3(input.avatar, `avatars/${input.username}`);
+      }
+      
+      // Create user
+      const user = await db.insert(users).values({
+        username: input.username,
+        email: input.email,
+        password: hashedPassword,
+        avatar: avatarUrl,
+        referralCode: input.referralCode,
+        createdAt: new Date(),
+      }).returning().get();
+      
+      return {
+        success: true,
+        userId: user.id,
+        message: 'Registrasi berhasil! Silakan login.',
+      };
+    },
+  }),
+};
+```
+
+### Custom Error Messages:
+
+```typescript
+// src/actions/index.ts
+const customErrorMap: z.ZodErrorMap = (issue, ctx) => {
+  if (issue.code === z.ZodIssueCode.too_small) {
+    return { message: `Minimal ${issue.minimum} karakter` };
+  }
+  if (issue.code === z.ZodIssueCode.invalid_string) {
+    if (issue.validation === 'email') {
+      return { message: 'Format email tidak valid (contoh: nama@email.com)' };
+    }
+  }
+  return { message: ctx.defaultError };
+};
+
+z.setErrorMap(customErrorMap);
+```
+
+---
+
+## 15.5 Error Handling
+
+Menangani berbagai jenis error di actions.
+
+### Error Types:
+
+```typescript
+// src/actions/index.ts
+import { defineAction, ActionError } from 'astro:actions';
+
+export const server = {
+  checkout: defineAction({
+    accept: 'json',
+    input: z.object({
+      cartId: z.string(),
+      paymentMethod: z.enum(['credit_card', 'bank_transfer', 'ewallet']),
+    }),
+    handler: async (input, context) => {
+      try {
+        // Check authentication
+        if (!context.locals.user) {
+          throw new ActionError({
+            code: 'UNAUTHORIZED',
+            message: 'Silakan login terlebih dahulu',
+          });
+        }
+        
+        // Validate cart
+        const cart = await getCart(input.cartId);
+        if (!cart) {
+          throw new ActionError({
+            code: 'NOT_FOUND',
+            message: 'Keranjang tidak ditemukan',
+          });
+        }
+        
+        if (cart.items.length === 0) {
+          throw new ActionError({
+            code: 'BAD_REQUEST',
+            message: 'Keranjang masih kosong',
+          });
+        }
+        
+        // Check stock
+        for (const item of cart.items) {
+          const stock = await checkStock(item.productId, item.quantity);
+          if (!stock.available) {
+            throw new ActionError({
+              code: 'CONFLICT',
+              message: `Stok ${item.name} tidak mencukupi. Tersedia: ${stock.quantity}`,
+            });
+          }
+        }
+        
+        // Process payment
+        const payment = await processPayment({
+          amount: cart.total,
+          method: input.paymentMethod,
+          userId: context.locals.user.id,
+        });
+        
+        if (payment.status === 'failed') {
+          throw new ActionError({
+            code: 'PAYMENT_REQUIRED',
+            message: 'Pembayaran gagal: ' + payment.errorMessage,
+          });
+        }
+        
+        // Create order
+        const order = await createOrder({
+          userId: context.locals.user.id,
+          items: cart.items,
+          paymentId: payment.id,
+          total: cart.total,
+        });
+        
+        return {
+          success: true,
+          orderId: order.id,
+          redirectUrl: `/orders/${order.id}`,
+        };
+        
+      } catch (error) {
+        // Log error untuk monitoring
+        console.error('Checkout error:', error);
+        
+        // Re-throw ActionError
+        if (error instanceof ActionError) {
+          throw error;
+        }
+        
+        // Unexpected error
+        throw new ActionError({
+          code: 'INTERNAL_SERVER_ERROR',
+          message: 'Terjadi kesalahan sistem. Silakan coba lagi.',
+        });
+      }
+    },
+  }),
+};
+```
+
+### Error Codes Standar:
+
+| Code | HTTP Status | Use Case |
+|------|-------------|----------|
+| `BAD_REQUEST` | 400 | Validasi gagal |
+| `UNAUTHORIZED` | 401 | Belum login |
+| `FORBIDDEN` | 403 | Tidak punya akses |
+| `NOT_FOUND` | 404 | Resource tidak ditemukan |
+| `CONFLICT` | 409 | Resource conflict |
+| `PAYMENT_REQUIRED` | 402 | Pembayaran gagal |
+| `INTERNAL_SERVER_ERROR` | 500 | Server error |
+
+### Error Handling di Client:
+
+```astro
+---
+// src/pages/checkout.astro
+---
+
+<script>
+  import { actions, isActionError } from 'astro:actions';
+  
+  async function handleCheckout() {
+    try {
+      const { data, error } = await actions.checkout({
+        cartId: 'cart-123',
+        paymentMethod: 'credit_card',
+      });
+      
+      if (error) {
+        // Handle specific error codes
+        switch (error.code) {
+          case 'UNAUTHORIZED':
+            window.location.href = '/login?redirect=/checkout';
+            return;
+            
+          case 'PAYMENT_REQUIRED':
+            showPaymentError(error.message);
+            return;
+            
+          case 'CONFLICT':
+            showStockWarning(error.message);
+            return;
+            
+          default:
+            showGenericError(error.message);
+        }
+        return;
+      }
+      
+      // Success
+      window.location.href = data.redirectUrl;
+      
+    } catch (err) {
+      // Network atau unexpected error
+      if (isActionError(err)) {
+        console.error('Action error:', err);
+      } else {
+        console.error('Unexpected error:', err);
+      }
+      showGenericError('Terjadi kesalahan. Silakan coba lagi.');
+    }
+  }
+</script>
+```
+
+---
+
+## 15.6 Type-Safe Actions
+
+Memaksimalkan type safety di seluruh workflow.
+
+### Type Inference:
+
+```typescript
+// src/actions/index.ts
+export const server = {
+  updateSettings: defineAction({
+    accept: 'form',
+    input: z.object({
+      theme: z.enum(['light', 'dark', 'system']),
+      language: z.enum(['id', 'en']),
+      notifications: z.object({
+        email: z.boolean(),
+        push: z.boolean(),
+        sms: z.boolean(),
+      }),
+    }),
+    handler: async (input) => {
+      // Input fully typed!
+      // input.theme: 'light' | 'dark' | 'system'
+      // input.notifications.email: boolean
+      
+      return {
+        success: true,
+        settings: input, // Return type inferred
+      };
+    },
+  }),
+};
+```
+
+```astro
+---
+// src/pages/settings.astro
+import { actions } from 'astro:actions';
+
+// Type-safe form handling
+const result = Astro.getActionResult(actions.updateSettings);
+
+// result.data?.settings.theme fully typed!
+---
+
+<form method="POST" action={actions.updateSettings}>
+  <select name="theme">
+    <option value="light">Light</option>
+    <option value="dark">Dark</option>
+    <option value="system">System</option>
+  </select>
+  
+  <!-- Nested objects dengan dot notation -->
+  <input type="checkbox" name="notifications.email" />
+  <input type="checkbox" name="notifications.push" />
+  <input type="checkbox" name="notifications.sms" />
+</form>
+```
+
+### Reusable Form Components:
+
+```astro
+---
+// src/components/FormField.astro
+interface Props {
+  name: string;
+  label: string;
+  type?: 'text' | 'email' | 'password' | 'textarea';
+  required?: boolean;
+  error?: string;
+  value?: string;
+}
+
+const { name, label, type = 'text', required = false, error, value } = Astro.props;
+---
+
+<div class="form-field">
+  <label for={name}>{label}{required && ' *'}</label>
+  
+  {type === 'textarea' ? (
+    <textarea
+      id={name}
+      name={name}
+      required={required}
+      aria-invalid={error ? 'true' : 'false'}
+      aria-describedby={error ? `${name}-error` : undefined}
+    >{value}</textarea>
+  ) : (
+    <input
+      type={type}
+      id={name}
+      name={name}
+      required={required}
+      value={value}
+      aria-invalid={error ? 'true' : 'false'}
+      aria-describedby={error ? `${name}-error` : undefined}
+    />
+  )}
+  
+  {error && (
+    <span id={`${name}-error`} class="error" role="alert">
+      {error}
+    </span>
+  )}
+</div>
+
+<style>
+  .form-field {
+    margin-bottom: 1rem;
+  }
+  
+  label {
+    display: block;
+    margin-bottom: 0.5rem;
+    font-weight: 500;
+  }
+  
+  input, textarea {
+    width: 100%;
+    padding: 0.5rem;
+    border: 1px solid #d1d5db;
+    border-radius: 4px;
+  }
+  
+  input[aria-invalid="true"],
+  textarea[aria-invalid="true"] {
+    border-color: #ef4444;
+  }
+  
+  .error {
+    color: #ef4444;
+    font-size: 0.875rem;
+    margin-top: 0.25rem;
+  }
+</style>
+```
+
+```astro
+---
+// src/pages/contact.astro
+import { actions } from 'astro:actions';
+import FormField from '../components/FormField.astro';
+
+const result = Astro.getActionResult(actions.contact);
+---
+
+<form method="POST" action={actions.contact}>
+  <FormField
+    name="name"
+    label="Nama"
+    required
+    value={result?.input?.name}
+    error={result?.error?.fields?.name}
+  />
+  
+  <FormField
+    name="email"
+    label="Email"
+    type="email"
+    required
+    value={result?.input?.email}
+    error={result?.error?.fields?.email}
+  />
+  
+  <FormField
+    name="message"
+    label="Pesan"
+    type="textarea"
+    required
+    value={result?.input?.message}
+    error={result?.error?.fields?.message}
+  />
+  
+  <button type="submit">Kirim</button>
+</form>
+```
+
+---
+
+## Ringkasan Sesi 15
+
+| Konsep | Deskripsi | Contoh |
+|--------|-----------|--------|
+| **defineAction** | Definisi action dengan schema | `defineAction({ input: z.object({}) })` |
+| **accept** | Format data: 'form' atau 'json' | `accept: 'form'` untuk FormData |
+| **input** | Zod schema untuk validasi | `z.object({ name: z.string() })` |
+| **handler** | Fungsi processing | Async function dengan logic bisnis |
+| **ActionError** | Structured error handling | `throw new ActionError({ code, message })` |
+| **Astro.getActionResult** | Ambil result di page | `Astro.getActionResult(actions.contact)` |
+| **Progressive Enhancement** | Works tanpa JS, enhanced dengan JS | Form submit → AJAX dengan JS |
+
+### Best Practices:
+
+1. **Validasi Komprehensif**: Gunakan Zod untuk semua input
+2. **Error Spesifik**: Berikan error message yang helpful
+3. **Progressive Enhancement**: Form harus works tanpa JavaScript
+4. **Type Safety**: Manfaatkan TypeScript inference
+5. **Security**: Validasi di server, jangan percaya client
+6. **UX**: Loading states, success messages, error recovery
+
+---
+
+**Selanjutnya:** Di Sesi 16, kita akan membahas **Server Islands** - fitur baru Astro untuk static shell dengan dynamic content.

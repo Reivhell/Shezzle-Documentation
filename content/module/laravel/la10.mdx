@@ -1,0 +1,974 @@
+---
+title: "Sesi 10: Asset Management & Vite"
+description: "Vite adalah build tool generasi baru yang menggantikan Laravel Mix (Webpack) sejak Laravel 9.19. Bayangkan Vite seperti mesin sport yang baru—lebih ce..."
+category: "laravel"
+tags: ["laravel"]
+order: 10
+---
+
+## 10.1 Vite Integration: vite.config.js Setup
+
+Vite adalah build tool generasi baru yang menggantikan Laravel Mix (Webpack) sejak Laravel 9.19. Bayangkan Vite seperti mesin sport yang baru—lebih cepat, lebih responsif, dan lebih efisien dibanding mesin lama.
+
+### 10.1.1 Struktur File Vite
+
+```
+project-root/
+├── vite.config.js          # Konfigurasi utama Vite
+├── package.json            # Dependencies Node.js
+├── resources/
+│   ├── css/
+│   │   └── app.css         # Entry point CSS
+│   ├── js/
+│   │   └── app.js          # Entry point JS
+│   └── views/
+│       └── layouts/
+│           └── app.blade.php
+└── public/
+    └── build/              # Output build (auto-generated)
+        ├── assets/
+        │   ├── app-abc123.js
+        │   ├── app-def456.css
+        │   └── manifest.json
+```
+
+### 10.1.2 Konfigurasi vite.config.js
+
+```javascript
+// vite.config.js
+
+import { defineConfig } from 'vite';
+import laravel from 'laravel-vite-plugin';
+import react from '@vitejs/plugin-react';      // Jika menggunakan React
+import vue from '@vitejs/plugin-vue';          // Jika menggunakan Vue
+
+export default defineConfig({
+    plugins: [
+        laravel({
+            // Entry points aplikasi
+            input: [
+                'resources/css/app.css',
+                'resources/js/app.js',
+                
+                // Multiple entry points untuk code splitting
+                'resources/css/admin.css',
+                'resources/js/admin.js',
+                
+                // Page-specific assets
+                'resources/js/pages/dashboard.js',
+                'resources/js/pages/profile.js',
+            ],
+            
+            // Refresh browser saat file berubah
+            refresh: true,
+            
+            // Build directory (default: public/build)
+            buildDirectory: 'build',
+        }),
+        
+        // Plugin tambahan sesuai framework frontend
+        // react(),
+        // vue(),
+    ],
+    
+    // Development server configuration
+    server: {
+        host: 'localhost',
+        port: 5173,
+        strictPort: true,      // Gagal jika port 5173 tidak tersedia
+        https: false,          // Set true untuk HTTPS development
+        
+        // HMR (Hot Module Replacement) configuration
+        hmr: {
+            host: 'localhost',
+            port: 5173,
+        },
+        
+        // Watch additional paths
+        watch: {
+            usePolling: true,  // Diperlukan di some Docker environments
+        },
+    },
+    
+    // Build configuration
+    build: {
+        // Output directory
+        outDir: 'public/build',
+        
+        // Generate manifest.json untuk Laravel
+        manifest: true,
+        
+        // Chunk size warning (in kB)
+        chunkSizeWarningLimit: 1000,
+        
+        // Rollup options untuk advanced configuration
+        rollupOptions: {
+            output: {
+                manualChunks: {
+                    // Split vendor code untuk caching yang lebih baik
+                    'vendor': ['axios', 'lodash'],
+                    'ui': ['alpinejs', '@alpinejs/focus'],
+                },
+            },
+        },
+    },
+    
+    // Resolve aliases
+    resolve: {
+        alias: {
+            '@': '/resources/js',
+            '@components': '/resources/js/components',
+            '@utils': '/resources/js/utils',
+            '@images': '/resources/images',
+        },
+    },
+    
+    // CSS configuration
+    css: {
+        devSourcemap: true,
+        preprocessorOptions: {
+            scss: {
+                additionalData: `@import "resources/scss/variables.scss";`,
+            },
+        },
+    },
+    
+    // Optimize dependencies
+    optimizeDeps: {
+        include: ['axios', 'alpinejs'],
+    },
+});
+```
+
+### 10.1.3 Package.json Dependencies
+
+```json
+{
+    "private": true,
+    "type": "module",
+    "scripts": {
+        "dev": "vite",
+        "build": "vite build",
+        "preview": "vite preview"
+    },
+    "devDependencies": {
+        "axios": "^1.6.4",
+        "laravel-vite-plugin": "^1.0.0",
+        "vite": "^5.0.0",
+        
+        "tailwindcss": "^3.4.0",
+        "postcss": "^8.4.32",
+        "autoprefixer": "^10.4.16",
+        
+        "@vitejs/plugin-react": "^4.2.0",
+        "@vitejs/plugin-vue": "^5.0.0",
+        
+        "sass": "^1.69.0",
+        "typescript": "^5.3.0"
+    },
+    "dependencies": {
+        "alpinejs": "^3.13.0",
+        "lodash": "^4.17.21"
+    }
+}
+```
+
+---
+
+## 10.2 Hot Module Replacement (HMR)
+
+HMR adalah fitur "ajaib" Vite yang memperbarui browser secara real-time saat Anda mengedit code—tanpa kehilangan state aplikasi.
+
+### 10.2.1 Cara Kerja HMR
+
+> **tip**
+>
+  Analogi sederhana: HMR seperti mengganti mesin mobil saat masih berjalan. Tidak perlu berhenti total (full reload), hanya komponen yang berubah yang diperbarui.
+
+```javascript
+// resources/js/app.js
+
+import './bootstrap';
+import Alpine from 'alpinejs';
+
+// HMR accept untuk module ini
+if (import.meta.hot) {
+    import.meta.hot.accept((newModule) => {
+        console.log('Module updated:', newModule);
+    });
+}
+
+window.Alpine = Alpine;
+Alpine.start();
+```
+
+### 10.2.2 Menjalankan Development Server
+
+```bash
+# Install dependencies (pertama kali)
+npm install
+
+# Jalankan development server dengan HMR
+npm run dev
+
+# Output:
+#   VITE v5.0.0  ready in 234 ms
+#   ➜  Local:   http://localhost:5173/
+#   ➜  Network: use --host to expose
+#   ➜  press h + enter to show help
+#   ➜  Laravel: http://localhost:8000
+```
+
+### 10.2.3 Blade Integration dengan HMR
+
+```blade
+{{-- resources/views/layouts/app.blade.php --}}
+
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    
+    {{-- Vite directive - otomatis handle HMR atau production build --}}
+    @vite(['resources/css/app.css', 'resources/js/app.js'])
+    
+    {{-- Atau dengan React --}}
+    {{-- @viteReactRefresh --}}
+    {{-- @vite(['resources/css/app.css', 'resources/js/app.jsx']) --}}
+</head>
+<body>
+    <div id="app">
+        @yield('content')
+    </div>
+</body>
+</html>
+```
+
+### 10.2.4 HMR dengan React
+
+```javascript
+// resources/js/app.jsx
+
+import React from 'react';
+import ReactDOM from 'react-dom/client';
+import App from './App';
+
+const root = ReactDOM.createRoot(document.getElementById('app'));
+
+root.render(
+    <React.StrictMode>
+        <App />
+    </React.StrictMode>
+);
+
+// HMR untuk React
+if (import.meta.hot) {
+    import.meta.hot.accept();
+}
+```
+
+```blade
+{{-- Blade template untuk React --}}
+
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    @viteReactRefresh
+    @vite('resources/js/app.jsx')
+</head>
+<body>
+    <div id="app"></div>
+</body>
+</html>
+```
+
+### 10.2.5 HMR dengan Vue
+
+```javascript
+// resources/js/app.js
+
+import { createApp } from 'vue';
+import App from './App.vue';
+
+const app = createApp(App);
+
+app.mount('#app');
+
+// HMR untuk Vue
+if (import.meta.hot) {
+    import.meta.hot.accept();
+}
+```
+
+---
+
+## 10.3 CSS Preprocessing (Tailwind, Sass)
+
+### 10.3.1 Tailwind CSS Integration
+
+Tailwind adalah utility-first CSS framework yang sangat populer di ekosistem Laravel.
+
+1. **Install Tailwind**
+   ```bash
+   npm install -D tailwindcss postcss autoprefixer
+   npx tailwindcss init -p
+   ```
+
+2. **Konfigurasi tailwind.config.js**
+   ```javascript
+   // tailwind.config.js
+   
+   /** @type {import('tailwindcss').Config} */
+   export default {
+       content: [
+           "./resources/**/*.blade.php",
+           "./resources/**/*.js",
+           "./resources/**/*.jsx",
+           "./resources/**/*.ts",
+           "./resources/**/*.tsx",
+           "./resources/**/*.vue",
+       ],
+       
+       theme: {
+           extend: {
+               colors: {
+                   brand: {
+                       50: '#eff6ff',
+                       100: '#dbeafe',
+                       500: '#3b82f6',
+                       600: '#2563eb',
+                       700: '#1d4ed8',
+                       900: '#1e3a8a',
+                   },
+               },
+               fontFamily: {
+                   sans: ['Inter', 'system-ui', 'sans-serif'],
+                   mono: ['Fira Code', 'monospace'],
+               },
+               animation: {
+                   'fade-in': 'fadeIn 0.5s ease-in',
+                   'slide-up': 'slideUp 0.3s ease-out',
+               },
+               keyframes: {
+                   fadeIn: {
+                       '0%': { opacity: '0' },
+                       '100%': { opacity: '1' },
+                   },
+                   slideUp: {
+                       '0%': { transform: 'translateY(10px)', opacity: '0' },
+                       '100%': { transform: 'translateY(0)', opacity: '1' },
+                   },
+               },
+           },
+       },
+       
+       plugins: [
+           require('@tailwindcss/forms'),
+           require('@tailwindcss/typography'),
+           require('@tailwindcss/aspect-ratio'),
+       ],
+   };
+   ```
+
+3. **Setup CSS Entry Point**
+   ```css
+   /* resources/css/app.css */
+   
+   @tailwind base;
+   @tailwind components;
+   @tailwind utilities;
+   
+   /* Custom base styles */
+   @layer base {
+       body {
+           @apply antialiased text-gray-900 bg-gray-50;
+       }
+       
+       h1 {
+           @apply text-3xl font-bold text-gray-900;
+       }
+       
+       h2 {
+           @apply text-2xl font-semibold text-gray-800;
+       }
+   }
+   
+   /* Custom components */
+   @layer components {
+       .btn {
+           @apply inline-flex items-center px-4 py-2 border border-transparent rounded-md font-semibold text-xs uppercase tracking-widest focus:outline-none focus:ring-2 focus:ring-offset-2 transition ease-in-out duration-150;
+       }
+       
+       .btn-primary {
+           @apply btn bg-blue-600 text-white hover:bg-blue-700 focus:ring-blue-500;
+       }
+       
+       .card {
+           @apply bg-white overflow-hidden shadow-sm rounded-lg;
+       }
+   }
+   
+   /* Custom utilities */
+   @layer utilities {
+       .text-shadow {
+           text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.1);
+       }
+       
+       .bg-gradient-brand {
+           @apply bg-gradient-to-r from-blue-500 to-purple-600;
+       }
+   }
+   ```
+
+### 10.3.2 Sass/SCSS Integration
+
+```bash
+npm install -D sass
+```
+
+```scss
+// resources/scss/app.scss
+
+// Variables
+$primary-color: #3b82f6;
+$secondary-color: #64748b;
+$font-stack: 'Inter', sans-serif;
+
+// Mixins
+@mixin flex-center {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+@mixin responsive($breakpoint) {
+    @if $breakpoint == mobile {
+        @media (max-width: 640px) { @content; }
+    }
+    @if $breakpoint == tablet {
+        @media (max-width: 1024px) { @content; }
+    }
+}
+
+// Base styles
+body {
+    font-family: $font-stack;
+    color: #1f2937;
+}
+
+// Component styles
+.navbar {
+    background-color: white;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    
+    &__brand {
+        font-size: 1.5rem;
+        font-weight: 700;
+        color: $primary-color;
+    }
+    
+    &__menu {
+        display: flex;
+        gap: 1.5rem;
+        
+        @include responsive(mobile) {
+            display: none;
+        }
+    }
+}
+
+.button {
+    @include flex-center;
+    padding: 0.5rem 1rem;
+    border-radius: 0.375rem;
+    transition: all 0.2s;
+    
+    &--primary {
+        background-color: $primary-color;
+        color: white;
+        
+        &:hover {
+            background-color: darken($primary-color, 10%);
+        }
+    }
+}
+```
+
+Update `vite.config.js`:
+
+```javascript
+export default defineConfig({
+    // ...
+    css: {
+        preprocessorOptions: {
+            scss: {
+                additionalData: `
+                    @import "resources/scss/variables.scss";
+                    @import "resources/scss/mixins.scss";
+                `,
+            },
+        },
+    },
+});
+```
+
+---
+
+## 10.4 JavaScript Bundling dan Code Splitting
+
+### 10.4.1 Dynamic Imports
+
+Code splitting memecah bundle besar menjadi chunk-chunk kecil yang di-load on-demand.
+
+```javascript
+// resources/js/app.js
+
+// Static import (selalu di-bundle)
+import Alpine from 'alpinejs';
+import axios from 'axios';
+
+// Dynamic import (di-load saat dibutuhkan)
+const loadChartLibrary = async () => {
+    const { default: Chart } = await import('chart.js/auto');
+    return Chart;
+};
+
+// Lazy load komponen berat
+const loadDataTable = () => import('./components/DataTable.js');
+
+// Route-based code splitting
+const routes = {
+    '/dashboard': () => import('./pages/Dashboard.js'),
+    '/reports': () => import('./pages/Reports.js'),
+    '/settings': () => import('./pages/Settings.js'),
+};
+
+// Load page sesuai route
+const loadPage = async (path) => {
+    const loader = routes[path];
+    if (loader) {
+        const { default: Page } = await loader();
+        return Page;
+    }
+};
+```
+
+### 10.4.2 Prefetching dan Preloading
+
+```javascript
+// Prefetch: load saat browser idle
+const prefetchPage = () => {
+    const link = document.createElement('link');
+    link.rel = 'prefetch';
+    link.href = '/build/assets/reports-page.js';
+    document.head.appendChild(link);
+};
+
+// Preload: load dengan priority tinggi
+const preloadCritical = () => {
+    const link = document.createElement('link');
+    link.rel = 'modulepreload';
+    link.href = '/build/assets/app.js';
+    document.head.appendChild(link);
+};
+
+// Vite magic comments untuk prefetch
+const AdminPanel = () => import(
+    /* webpackChunkName: "admin" */
+    /* webpackPrefetch: true */
+    './pages/AdminPanel.js'
+);
+```
+
+### 10.4.3 Vendor Splitting
+
+```javascript
+// vite.config.js
+
+export default defineConfig({
+    build: {
+        rollupOptions: {
+            output: {
+                manualChunks: {
+                    // Core framework (rarely changes)
+                    'vendor': [
+                        'vue',
+                        'vue-router',
+                        'pinia',
+                    ],
+                    // UI components (changes occasionally)
+                    'ui': [
+                        '@headlessui/vue',
+                        '@heroicons/vue',
+                    ],
+                    // Utilities (changes frequently)
+                    'utils': [
+                        'axios',
+                        'dayjs',
+                        'lodash-es',
+                    ],
+                },
+                // Naming pattern untuk chunks
+                chunkFileNames: 'assets/js/[name]-[hash].js',
+                entryFileNames: 'assets/js/[name]-[hash].js',
+                assetFileNames: ({name}) => {
+                    if (/\.(gif|jpe?g|png|svg)$/.test(name ?? '')) {
+                        return 'assets/images/[name]-[hash][extname]';
+                    }
+                    if (/\.css$/.test(name ?? '')) {
+                        return 'assets/css/[name]-[hash][extname]';
+                    }
+                    return 'assets/[name]-[hash][extname]';
+                },
+            },
+        },
+    },
+});
+```
+
+---
+
+## 10.5 Asset Versioning dan Caching
+
+### 10.5.1 Manifest.json
+
+Vite menghasilkan `manifest.json` yang memetakan nama file asli ke file hashed untuk cache busting.
+
+```json
+{
+    "resources/css/app.css": {
+        "file": "assets/app-a1b2c3d4.css",
+        "src": "resources/css/app.css",
+        "isEntry": true
+    },
+    "resources/js/app.js": {
+        "file": "assets/app-e5f6g7h8.js",
+        "src": "resources/js/app.js",
+        "isEntry": true,
+        "css": ["assets/app-a1b2c3d4.css"],
+        "assets": ["assets/logo-i9j0k1l2.png"]
+    },
+    "resources/js/admin.js": {
+        "file": "assets/admin-m3n4o5p6.js",
+        "src": "resources/js/admin.js",
+        "isEntry": true,
+        "imports": ["_shared-q7r8s9t0.js"]
+    },
+    "_shared-q7r8s9t0.js": {
+        "file": "assets/shared-q7r8s9t0.js"
+    }
+}
+```
+
+### 10.5.2 Laravel Vite Helper
+
+```blade
+{{-- Production: load dari manifest --}}
+@vite(['resources/css/app.css', 'resources/js/app.js'])
+
+{{-- Hasil HTML di production --}}
+<link rel="stylesheet" href="/build/assets/app-a1b2c3d4.css" />
+<script type="module" src="/build/assets/app-e5f6g7h8.js"></script>
+
+{{-- Dengan attributes tambahan --}}
+@vite(['resources/css/app.css', 'resources/js/app.js'], 'build', [
+    'integrity' => true,  // Tambah integrity hash
+])
+
+{{-- Manual asset URL --}}
+<img src="{{ Vite::asset('resources/images/logo.png') }}" alt="Logo">
+
+{{-- Check hot reload status --}}
+@if(Vite::isRunningHot())
+    <div class="debug-banner">Vite HMR Active</div>
+@endif
+```
+
+### 10.5.3 Cache Strategy
+
+```apache
+# .htaccess atau nginx config untuk assets
+
+# Cache static assets selama 1 tahun
+<IfModule mod_expires.c>
+    ExpiresActive On
+    ExpiresByType application/javascript "access plus 1 year"
+    ExpiresByType text/css "access plus 1 year"
+    ExpiresByType image/png "access plus 1 year"
+    ExpiresByType image/jpg "access plus 1 year"
+    ExpiresByType image/svg+xml "access plus 1 year"
+    ExpiresByType font/woff2 "access plus 1 year"
+</IfModule>
+
+# Enable gzip compression
+<IfModule mod_deflate.c>
+    AddOutputFilterByType DEFLATE text/css application/javascript
+</IfModule>
+```
+
+```nginx
+# nginx.conf
+
+location ~* \.(js|css|png|jpg|jpeg|gif|svg|woff|woff2)$ {
+    expires 1y;
+    add_header Cache-Control "public, immutable";
+    add_header Vary "Accept-Encoding";
+    access_log off;
+}
+```
+
+### 10.5.4 Service Worker untuk Offline Caching
+
+```javascript
+// resources/js/sw.js
+
+const CACHE_NAME = 'laravel-app-v1';
+const STATIC_ASSETS = [
+    '/',
+    '/build/assets/app.js',
+    '/build/assets/app.css',
+];
+
+self.addEventListener('install', (event) => {
+    event.waitUntil(
+        caches.open(CACHE_NAME).then((cache) => {
+            return cache.addAll(STATIC_ASSETS);
+        })
+    );
+});
+
+self.addEventListener('fetch', (event) => {
+    event.respondWith(
+        caches.match(event.request).then((response) => {
+            // Cache hit - return response
+            if (response) {
+                return response;
+            }
+            
+            // Fetch dari network dan cache
+            return fetch(event.request).then((response) => {
+                if (!response || response.status !== 200 || response.type !== 'basic') {
+                    return response;
+                }
+                
+                const responseToCache = response.clone();
+                caches.open(CACHE_NAME).then((cache) => {
+                    cache.put(event.request, responseToCache);
+                });
+                
+                return response;
+            });
+        })
+    );
+});
+```
+
+Register di app.js:
+
+```javascript
+if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/sw.js');
+    });
+}
+```
+
+---
+
+## 10.6 Advanced Vite Configuration
+
+### 10.6.1 Multi-Page Application
+
+```javascript
+// vite.config.js
+
+import { defineConfig } from 'vite';
+import laravel from 'laravel-vite-plugin';
+import { resolve } from 'path';
+
+export default defineConfig({
+    plugins: [
+        laravel({
+            input: {
+                // Multiple entry points
+                main: 'resources/js/main.js',
+                admin: 'resources/js/admin.js',
+                landing: 'resources/js/landing.js',
+                
+                // CSS only entries
+                'print-styles': 'resources/css/print.css',
+            },
+            refresh: true,
+        }),
+    ],
+    
+    build: {
+        rollupOptions: {
+            input: {
+                main: resolve(__dirname, 'resources/js/main.js'),
+                admin: resolve(__dirname, 'resources/js/admin.js'),
+                landing: resolve(__dirname, 'resources/js/landing.js'),
+            },
+        },
+    },
+});
+```
+
+Blade usage:
+
+```blade
+{{-- Layout utama --}}
+@vite(['resources/js/main.js'])
+
+{{-- Layout admin --}}
+@vite(['resources/js/admin.js'])
+
+{{-- Landing page --}}
+@vite(['resources/js/landing.js'])
+```
+
+### 10.6.2 Environment Variables
+
+```javascript
+// .env
+VITE_APP_NAME="My Laravel App"
+VITE_API_URL="https://api.example.com"
+VITE_DEBUG=true
+```
+
+```javascript
+// resources/js/app.js
+
+// Akses env variables dengan import.meta.env
+console.log(import.meta.env.VITE_APP_NAME);
+console.log(import.meta.env.VITE_API_URL);
+
+// Hanya VITE_ prefix yang terekspos ke client
+// import.meta.env.APP_KEY // undefined (server-only)
+```
+
+### 10.6.3 Import Aliases
+
+```javascript
+// vite.config.js
+
+export default defineConfig({
+    resolve: {
+        alias: {
+            '@': '/resources/js',
+            '@components': '/resources/js/components',
+            '@composables': '/resources/js/composables',
+            '@stores': '/resources/js/stores',
+            '@utils': '/resources/js/utils',
+            '@css': '/resources/css',
+            '@images': '/resources/images',
+        },
+    },
+});
+```
+
+```javascript
+// Penggunaan alias
+import Button from '@components/Button.vue';
+import { useAuth } from '@composables/useAuth';
+import { formatDate } from '@utils/helpers';
+import logo from '@images/logo.png';
+```
+
+### 10.6.4 Dev vs Production Behavior
+
+```javascript
+// resources/js/bootstrap.js
+
+import axios from 'axios';
+
+window.axios = axios;
+window.axios.defaults.headers.common['X-Requested-With'] = 'XMLHttpRequest';
+
+// CSRF token setup
+const token = document.head.querySelector('meta[name="csrf-token"]');
+if (token) {
+    window.axios.defaults.headers.common['X-CSRF-TOKEN'] = token.content;
+}
+
+// Development-only logging
+if (import.meta.env.DEV) {
+    console.log('Development mode active');
+    axios.interceptors.request.use((config) => {
+        console.log('API Request:', config);
+        return config;
+    });
+}
+
+// Production optimizations
+if (import.meta.env.PROD) {
+    // Disable console logs di production
+    console.log = () => {};
+    console.warn = () => {};
+}
+```
+
+---
+
+## 10.7 Kesimpulan
+
+Vite membawa pengalaman development modern ke Laravel dengan kecepatan dan efisiensi yang superior:
+
+| Fitur | Keuntungan |
+|-------|-----------|
+| **HMR** | Instant feedback saat development |
+| **Native ESM** | Tidak perlu bundle saat dev, lebih cepat |
+| **Code Splitting** | Load hanya yang diperlukan |
+| **Asset Hashing** | Cache busting otomatis |
+| **Tree Shaking** | Hanya include code yang digunakan |
+
+**Checklist Production:**
+
+1. **Build untuk production**
+   ```bash
+   npm run build
+   ```
+
+2. **Verifikasi manifest**
+   ```bash
+   ls -la public/build/
+   # Pastikan manifest.json dan assets ada
+   ```
+
+3. **Test tanpa dev server**
+   ```bash
+   php artisan serve
+   # Buka http://127.0.0.1:8000
+   # Pastikan assets load dengan benar
+   ```
+
+4. **Configure web server**
+   - Enable gzip/brotli compression
+   - Set cache headers untuk static assets
+   - Configure HTTPS
+
+5. **Deploy**
+   ```bash
+   # Include di deployment script
+   npm ci
+   npm run build
+   
+   # Jangan lupa:
+   # - node_modules tidak perlu di-upload
+   # - public/build/ harus di-upload
+   ```
+
+**Migrasi dari Laravel Mix:**
+
+| Laravel Mix | Vite Equivalent |
+|-------------|-----------------|
+| `mix.js()` | Entry di `vite.config.js` |
+| `mix.sass()` | `css.preprocessorOptions` |
+| `mix.version()` | Otomatis dengan manifest |
+| `mix.extract()` | `build.rollupOptions.output.manualChunks` |
+| `mix.browserSync()` | `server.hmr` built-in |
+| `npm run hot` | `npm run dev` (HMR included) |
+| `npm run prod` | `npm run build` |
+```

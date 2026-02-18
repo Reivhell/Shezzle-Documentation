@@ -1,0 +1,503 @@
+---
+title: "Sesi 47: Laravel Horizon (Queue Monitoring)"
+description: "Menguasai Laravel Horizon untuk monitoring dan managing queue workers, mengkonfigurasi auto-scaling, dan setup notifikasi untuk failed jobs."
+category: "laravel"
+tags: ["laravel"]
+order: 47
+---
+
+## Tujuan Pembelajaran
+
+Menguasai Laravel Horizon untuk monitoring dan managing queue workers, mengkonfigurasi auto-scaling, dan setup notifikasi untuk failed jobs.
+
+## 1. Instalasi & Konfigurasi
+
+### 1.1 Instalasi Horizon
+
+```bash
+# Install Horizon
+composer require laravel/horizon
+
+# Publish assets
+php artisan horizon:install
+
+# Publish configuration (opsional)
+php artisan vendor:publish --tag=horizon-config
+```
+
+### 1.2 Konfigurasi
+
+```php
+<?php
+
+// config/horizon.php
+return [
+    'domain' => env('HORIZON_DOMAIN'),
+    
+    'path' => env('HORIZON_PATH', 'horizon'),
+    
+    'use' => 'default', // Redis connection
+    
+    'prefix' => env('HORIZON_PREFIX', 'horizon:'),
+    
+    'middleware' => ['web', 'auth', 'can:viewHorizon'],
+    
+    'waits' => [
+        'redis:default' => 60,
+    ],
+    
+    'trim' => [
+        'recent' => 60,
+        'pending' => 60,
+        'completed' => 60,
+        'recent_failed' => 10080,
+        'failed' => 10080,
+        'monitored' => 10080,
+    ],
+    
+    'metrics' => [
+        'trim_snapshots' => [
+            'job' => 24,
+            'queue' => 24,
+        ],
+    ],
+    
+    'fast_termination' => false,
+    
+    'memory_limit' => 64,
+    
+    'defaults' => [
+        'supervisor-1' => [
+            'connection' => 'redis',
+            'queue' => ['default'],
+            'balance' => 'auto',
+            'maxProcesses' => 1,
+            'maxTime' => 0,
+            'maxJobs' => 0,
+            'memory' => 128,
+            'tries' => 1,
+            'timeout' => 60,
+            'nice' => 0,
+        ],
+    ],
+    
+    'environments' => [
+        'production' => [
+            'supervisor-1' => [
+                'connection' => 'redis',
+                'queue' => ['default', 'emails', 'notifications'],
+                'balance' => 'auto',
+                'minProcesses' => 5,
+                'maxProcesses' => 20,
+                'tries' => 3,
+                'timeout' => 90,
+            ],
+            'supervisor-2' => [
+                'connection' => 'redis',
+                'queue' => [' heavy-processing'],
+                'balance' => 'false',
+                'maxProcesses' => 5,
+                'tries' => 1,
+                'timeout' => 300,
+            ],
+        ],
+        
+        'local' => [
+            'supervisor-1' => [
+                'maxProcesses' => 3,
+            ],
+        ],
+    ],
+];
+```
+
+## 2. Running Horizon
+
+### 2.1 Basic Commands
+
+```bash
+# Start Horizon
+php artisan horizon
+
+# Start dengan specific environment
+php artisan horizon --environment=production
+
+# Pause Horizon
+php artisan horizon:pause
+
+# Continue Horizon
+php artisan horizon:continue
+
+# Terminate gracefully
+php artisan horizon:terminate
+
+# Check status
+php artisan horizon:status
+
+# Purge failed jobs
+php artisan horizon:purge
+```
+
+### 2.2 Supervisor Configuration
+
+```ini
+; /etc/supervisor/conf.d/horizon.conf
+[program:horizon]
+process_name=%(program_name)s
+command=php /var/www/html/artisan horizon
+autostart=true
+autorestart=true
+user=www-data
+redirect_stderr=true
+stdout_logfile=/var/log/horizon.log
+stopwaitsecs=3600
+```
+
+## 3. Job Configuration
+
+### 3.1 Job Classes
+
+```php
+<?php
+
+// app/Jobs/ProcessPodcast.php
+namespace App\Jobs;
+
+use Illuminate\Bus\Queueable;
+use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Foundation\Bus\Dispatchable;
+use Illuminate\Queue\InteractsWithQueue;
+use Illuminate\Queue\SerializesModels;
+use Illuminate\Support\Facades\Redis;
+
+class ProcessPodcast implements ShouldQueue
+{
+    use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
+
+    public $timeout = 300; // 5 menit
+    
+    public $tries = 3;
+    
+    public $backoff = [30, 60, 120]; // Delay antar retry
+    
+    public $deleteWhenMissingModels = true;
+    
+    public $failOnTimeout = true;
+
+    protected $podcast;
+
+    public function __construct(Podcast $podcast)
+    {
+        $this->podcast = $podcast;
+        
+        // Dispatch ke queue spesifik
+        $this->onQueue('processing');
+        
+        // Connection spesifik
+        $this->onConnection('redis');
+    }
+
+    public function handle(): void
+    {
+        // Rate limiting dalam job
+        Redis::throttle('process-podcast')->allow(10)->every(60)->then(function () {
+            // Process podcast
+            $processor = new PodcastProcessor($this->podcast);
+            $processor->process();
+            
+            // Update status
+            $this->podcast->update(['status' => 'processed']);
+            
+        }, function () {
+            // Could not obtain lock...
+            return $this->release(30);
+        });
+    }
+
+    public function failed(\Throwable $exception): void
+    {
+        // Send notification
+        Notification::route('mail', 'admin@example.com')
+            ->notify(new JobFailedNotification($this->podcast, $exception));
+        
+        // Update status
+        $this->podcast->update(['status' => 'failed']);
+    }
+
+    public function tags(): array
+    {
+        return ['podcast', 'podcast:' . $this->podcast->id];
+    }
+}
+```
+
+### 3.2 Batching Jobs
+
+```php
+<?php
+
+use Illuminate\Bus\Batch;
+use Illuminate\Support\Facades\Bus;
+
+$batch = Bus::batch([
+    new ProcessPodcast($podcast1),
+    new ProcessPodcast($podcast2),
+    new ProcessPodcast($podcast3),
+])->then(function (Batch $batch) {
+    // All jobs completed successfully
+    Log::info('All podcasts processed');
+})->catch(function (Batch $batch, \Throwable $e) {
+    // First job failure
+    Log::error('Batch failed', ['error' => $e->getMessage()]);
+})->finally(function (Batch $batch) {
+    // Always run
+    Statistics::update(['processed' => $batch->processedJobs()]);
+})->name('Process Podcasts')->dispatch();
+
+// Check batch status
+$batch = Bus::findBatch($batchId);
+```
+
+## 4. Monitoring & Metrics
+
+### 4.1 Dashboard Metrics
+
+Horizon menyediakan dashboard real-time untuk monitoring:
+- **Throughput**: Jobs processed per minute
+- **Wait Time**: Rata-rata waktu tunggu di queue
+- **Workload**: Jobs waiting per queue
+- **Failed Jobs**: Recent failed jobs dengan details
+- **Slow Jobs**: Jobs yang memakan waktu lama
+
+### 4.2 Custom Metrics
+
+```php
+<?php
+
+// app/Providers/HorizonServiceProvider.php
+use Laravel\Horizon\Horizon;
+use Laravel\Horizon\JobRepository;
+
+public function boot(): void
+{
+    // Custom notification thresholds
+    Horizon::routeSmsNotificationsTo('+1234567890');
+    Horizon::routeMailNotificationsTo('admin@example.com');
+    Horizon::routeSlackNotificationsTo('slack-webhook-url', '#queues');
+
+    // Custom monitoring
+    Horizon::monitor([
+        \App\Jobs\ProcessPodcast::class,
+        \App\Jobs\SendEmail::class,
+    ]);
+}
+```
+
+## 5. Auto-Scaling Configuration
+
+### 5.1 Balance Strategies
+
+```php
+<?php
+
+// config/horizon.php
+'environments' => [
+    'production' => [
+        'supervisor-1' => [
+            'connection' => 'redis',
+            'queue' => ['default', 'emails'],
+            
+            // Balance strategies:
+            // 'simple' - Workers dibagi rata per queue
+            // 'auto' - Scale berdasarkan queue size (default)
+            // 'false' - Workers assigned ke queue sampai selesai
+            'balance' => 'auto',
+            
+            // Auto-scaling config
+            'minProcesses' => 5,      // Minimum workers
+            'maxProcesses' => 20,     // Maximum workers
+            'tries' => 3,
+            'timeout' => 60,
+            
+            // Memory management
+            'memory' => 128,          // MB per worker
+            'maxTime' => 3600,        // Max lifetime (seconds)
+            'maxJobs' => 1000,        // Max jobs before restart
+        ],
+    ],
+],
+```
+
+### 5.2 Queue Priorities
+
+```php
+<?php
+
+// Dispatch dengan priority
+ProcessPodcast::dispatch($podcast)->onQueue('high');
+SendEmail::dispatch($email)->onQueue('low');
+
+// config/horizon.php
+'supervisor-1' => [
+    'queue' => ['high', 'default', 'low'], // Processed in order
+    'balance' => 'auto',
+],
+```
+
+## 6. Notifications
+
+### 6.1 Failed Job Notifications
+
+```php
+<?php
+
+// app/Notifications/LongWaitDetected.php
+namespace App\Notifications;
+
+use Illuminate\Bus\Queueable;
+use Illuminate\Notifications\Notification;
+use Laravel\Horizon\Notifications\LongWait;
+
+class LongWaitDetected extends Notification
+{
+    use Queueable;
+
+    public function via($notifiable): array
+    {
+        return ['mail', 'slack'];
+    }
+
+    public function toMail($notifiable): MailMessage
+    {
+        return (new MailMessage)
+            ->subject('Queue Wait Time Alert')
+            ->line('Queue wait time exceeded threshold.')
+            ->action('View Horizon', url('/horizon'));
+    }
+}
+```
+
+### 6.2 Custom Alert Conditions
+
+```php
+<?php
+
+// app/Providers/HorizonServiceProvider.php
+use Laravel\Horizon\Horizon;
+
+public function boot(): void
+{
+    // Alert jika wait time > 60 detik
+    Horizon::nightlight(function ($waitTime, $queue) {
+        return $waitTime > 60;
+    });
+
+    // Custom SMS untuk critical queues
+    Horizon::routeSmsNotificationsTo(function ($notification) {
+        if (str_contains($notification->description, 'critical')) {
+            return '+1234567890';
+        }
+        return null;
+    });
+}
+```
+
+## 7. Tag Monitoring
+
+### 7.1 Job Tagging
+
+```php
+<?php
+
+class ProcessPodcast implements ShouldQueue
+{
+    // ... other methods
+
+    public function tags(): array
+    {
+        return [
+            'podcast',
+            'podcast:' . $this->podcast->id,
+            'user:' . $this->podcast->user_id,
+        ];
+    }
+}
+
+// Dispatch dengan tags
+ProcessPodcast::dispatch($podcast)->tags(['urgent', 'paid-customer']);
+```
+
+### 7.2 Monitoring Specific Tags
+
+```php
+<?php
+
+// Di Horizon dashboard, monitor tags:
+// - podcast:123 (specific podcast)
+// - user:456 (all jobs untuk user)
+// - urgent (priority jobs)
+```
+
+## 8. Testing dengan Horizon
+
+```php
+<?php
+
+// tests/Feature/JobTest.php
+use Illuminate\Support\Facades\Bus;
+use Illuminate\Support\Facades\Queue;
+
+class JobTest extends TestCase
+{
+    public function test_job_is_dispatched_to_horizon()
+    {
+        Queue::fake();
+
+        ProcessPodcast::dispatch($podcast);
+
+        Queue::assertPushed(ProcessPodcast::class);
+    }
+
+    public function test_job_handles_failure()
+    {
+        Bus::fake();
+
+        $job = new ProcessPodcast($podcast);
+        
+        // Simulate failure
+        $job->failed(new \Exception('Processing failed'));
+
+        // Assert notification sent
+        Notification::assertSentTo(
+            ['admin@example.com'],
+            JobFailedNotification::class
+        );
+    }
+
+    public function test_batch_processing()
+    {
+        Bus::fake();
+
+        $batch = Bus::batch([
+            new ProcessPodcast($podcast1),
+            new ProcessPodcast($podcast2),
+        ])->dispatch();
+
+        Bus::assertBatched(function ($batch) {
+            return $batch->name === 'Process Podcasts';
+        });
+    }
+}
+```
+
+## Kesimpulan
+
+Laravel Horizon menyediakan monitoring dan management untuk queue systems:
+- **Real-time dashboard** untuk throughput, wait times, dan failed jobs
+- **Auto-scaling** dengan configurable balance strategies
+- **Job tagging** untuk granular monitoring
+- **Notifications** untuk alerts dan failures
+- **Batch processing** untuk job grouping
+
+Selanjutnya di **Sesi 48**, kita akan mempelajari Laravel Telescope untuk debugging.
+```

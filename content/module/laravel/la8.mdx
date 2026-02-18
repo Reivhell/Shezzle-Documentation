@@ -1,0 +1,947 @@
+---
+title: "Sesi 8: Response & Views"
+description: "Response adalah \"balasan\" dari server ke browser. Seperti surat yang dikirim kembali setelah menerima—bisa berupa halaman web, data JSON, file downloa..."
+category: "laravel"
+tags: ["laravel", "frontend"]
+order: 8
+---
+
+## 8.1 Response Types: View, JSON, Redirect, Stream, Download
+
+Response adalah "balasan" dari server ke browser. Seperti surat yang dikirim kembali setelah menerima—bisa berupa halaman web, data JSON, file download, atau arahan ke alamat lain.
+
+### 8.1.1 Basic Response
+
+```php
+<?php
+
+namespace App\Http\Controllers;
+
+use Illuminate\Http\Response;
+
+class HomeController extends Controller
+{
+    public function index()
+    {
+        // String response paling sederhana
+        return 'Hello, World!';
+        
+        // Response dengan HTTP status
+        return response('Hello, World!', 200);
+        
+        // Response dengan headers
+        return response('Hello', 200)
+            ->header('Content-Type', 'text/plain')
+            ->header('X-Custom-Header', 'MyValue');
+        
+        // Response object
+        return new Response('Hello', 200, [
+            'Content-Type' => 'text/plain'
+        ]);
+    }
+}
+```
+
+### 8.1.2 View Response
+
+```php
+<?php
+
+public function show($id)
+{
+    $user = User::find($id);
+    
+    // Return view dengan data
+    return view('users.show', ['user' => $user]);
+    
+    // Atau dengan compact
+    return view('users.show', compact('user'));
+    
+    // Atau dengan with
+    return view('users.show')
+        ->with('user', $user)
+        ->with('posts', $user->posts);
+    
+    // First exists (coba view pertama yang ada)
+    return view()->first(['users.custom-show', 'users.show'], compact('user'));
+}
+```
+
+### 8.1.3 JSON Response
+
+> **tip**
+>
+  JSON response sangat penting untuk API development. Laravel menyediakan helper yang powerful untuk ini.
+
+```php
+<?php
+
+public function apiUser($id)
+{
+    $user = User::with('posts')->findOrFail($id);
+    
+    // Otomatis convert array/object ke JSON
+    return response()->json($user);
+    
+    // Dengan status code
+    return response()->json($user, 200);
+    
+    // Dengan headers tambahan
+    return response()->json($user, 200, [
+        'X-Total-Count' => User::count()
+    ]);
+    
+    // JSONP (untuk cross-domain legacy)
+    return response()->json($user)->withCallback($request->input('callback'));
+    
+    // JSON dengan encoding options
+    return response()->json($user, 200, [], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+}
+
+public function apiCollection()
+{
+    $users = User::paginate(10);
+    
+    // Transform dengan resource (best practice)
+    return UserResource::collection($users);
+    
+    // Atau manual
+    return response()->json([
+        'data' => $users->items(),
+        'meta' => [
+            'current_page' => $users->currentPage(),
+            'last_page' => $users->lastPage(),
+            'total' => $users->total(),
+        ],
+        'links' => [
+            'first' => $users->url(1),
+            'last' => $users->url($users->lastPage()),
+            'prev' => $users->previousPageUrl(),
+            'next' => $users->nextPageUrl(),
+        ],
+    ]);
+}
+```
+
+### 8.1.4 Redirect Response
+
+```php
+<?php
+
+public function store(Request $request)
+{
+    $post = Post::create($request->validated());
+    
+    // Redirect ke route
+    return redirect()->route('posts.show', $post);
+    
+    // Redirect dengan data flash (session sekali pakai)
+    return redirect()->route('posts.show', $post)
+        ->with('success', 'Post created successfully!');
+    
+    // Redirect ke URL
+    return redirect('/posts');
+    return redirect()->to('/posts');
+    return redirect()->away('https://external.com'); // External URL
+    
+    // Redirect back
+    return redirect()->back();
+    return back()->withInput(); // Bawa input lama
+    
+    // Redirect dengan errors
+    return redirect()->back()->withErrors([
+        'email' => 'The email is invalid.'
+    ]);
+    
+    // Redirect intended (setelah login)
+    return redirect()->intended('/dashboard');
+    
+    // Refresh halaman
+    return redirect()->refresh();
+}
+```
+
+### 8.1.5 File Download Response
+
+```php
+<?php
+
+use Illuminate\Support\Facades\Storage;
+
+public function download($filename)
+{
+    $path = storage_path("app/documents/{$filename}");
+    
+    // Download dengan nama asli
+    return response()->download($path);
+    
+    // Download dengan nama custom
+    return response()->download($path, 'report-final.pdf');
+    
+    // Download dengan headers custom
+    return response()->download($path, 'report.pdf', [
+        'Content-Type' => 'application/pdf',
+        'X-Download-Date' => now()->toDateTimeString(),
+    ]);
+    
+    // Delete file setelah download
+    return response()->download($path)->deleteFileAfterSend();
+}
+
+public function downloadFromStorage($filename)
+{
+    // Dari storage disk
+    return Storage::download("documents/{$filename}");
+    
+    // Atau
+    return Storage::disk('s3')->download("files/{$filename}");
+}
+```
+
+### 8.1.6 Stream dan File Response
+
+```php
+<?php
+
+public function streamVideo($filename)
+{
+    $path = storage_path("app/videos/{$filename}");
+    
+    // Stream response (untuk file besar)
+    return response()->stream(function () use ($path) {
+        $stream = fopen($path, 'rb');
+        fpassthru($stream);
+        fclose($stream);
+    }, 200, [
+        'Content-Type' => 'video/mp4',
+        'Content-Disposition' => 'inline; filename="' . $filename . '"',
+    ]);
+}
+
+public function fileResponse($filename)
+{
+    $path = storage_path("app/public/{$filename}");
+    
+    // Tampilkan file di browser (inline)
+    return response()->file($path);
+    
+    // Atau dengan headers custom
+    return response()->file($path, [
+        'Content-Type' => 'image/jpeg',
+        'Cache-Control' => 'public, max-age=3600',
+    ]);
+}
+
+// Stream CSV untuk data besar
+public function exportCsv()
+{
+    $headers = [
+        'Content-Type' => 'text/csv',
+        'Content-Disposition' => 'attachment; filename="users.csv"',
+        'Pragma' => 'no-cache',
+        'Cache-Control' => 'must-revalidate, post-check=0, pre-check=0',
+    ];
+
+    $callback = function () {
+        $file = fopen('php://output', 'w');
+        fputcsv($file, ['ID', 'Name', 'Email', 'Created At']);
+
+        User::chunk(1000, function ($users) use ($file) {
+            foreach ($users as $user) {
+                fputcsv($file, [
+                    $user->id,
+                    $user->name,
+                    $user->email,
+                    $user->created_at,
+                ]);
+            }
+        });
+
+        fclose($file);
+    };
+
+    return response()->stream($callback, 200, $headers);
+}
+```
+
+---
+
+## 8.2 Blade Templating Dasar
+
+### 8.2.1 Syntax Blade
+
+> **note**
+>
+  Blade adalah templating engine Laravel yang powerful namun sederhana. Semua Blade view di-compile ke PHP biasa dan di-cache, sehingga performanya optimal.
+
+```blade
+{{-- resources/views/welcome.blade.php --}}
+
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <title>@yield('title', 'My App')</title>
+    @vite(['resources/css/app.css', 'resources/js/app.js'])
+</head>
+<body>
+    {{-- Include partial view --}}
+    @include('partials.navbar')
+    
+    {{-- Main content section --}}
+    <main>
+        @yield('content')
+    </main>
+    
+    @include('partials.footer')
+</body>
+</html>
+```
+
+### 8.2.2 Echo dan Escaping
+
+```blade
+{{-- Echo dengan escaping (default) --}}
+<p>Hello, {{ $name }}</p>
+{{-- <script>alert('xss')</script> menjadi &lt;script&gt;... --}}
+
+{{-- Echo tanpa escaping (hati-hati XSS!) --}}
+<p>{!! $htmlContent !!}</p>
+
+{{-- Echo dengan JSON encoding (untuk JavaScript) --}}
+<script>
+    const user = @json($user);
+    const users = @json($users, JSON_PRETTY_PRINT);
+</script>
+
+{{-- Echo dengan default value --}}
+<p>{{ $name ?? 'Guest' }}</p>
+<p>{{ $name or 'Guest' }}</p> {{-- Laravel 5.7 ke bawah --}}
+
+{{-- Blade directives untuk PHP echo --}}
+@{{ $name }}  {{-- Output: {{ $name }} (tampilkan literal) }}
+@@if         {{-- Output: @if --}}
+
+{{-- Comment (tidak muncul di output HTML) --}}
+{{-- Ini adalah comment --}}
+```
+
+### 8.2.3 Control Structures
+
+```blade
+{{-- If statements --}}
+@if($user->isAdmin())
+    <p>Welcome, Admin!</p>
+@elseif($user->isModerator())
+    <p>Welcome, Moderator!</p>
+@else
+    <p>Welcome, User!</p>
+@endif
+
+{{-- Unless (kebalikan if) --}}
+@unless($user->isSubscribed())
+    <p>Please subscribe to continue.</p>
+@endunless
+
+{{-- Isset dan Empty --}}
+@isset($records)
+    <p>Records exist.</p>
+@endisset
+
+@empty($records)
+    <p>No records found.</p>
+@endempty
+
+{{-- Authentication check --}}
+@auth
+    <p>Welcome, {{ auth()->user()->name }}</p>
+@endauth
+
+@guest
+    <p>Please <a href="{{ route('login') }}">login</a>.</p>
+@endguest
+
+{{-- Environment check --}}
+@env('local')
+    <div class="debug">Debug mode active</div>
+@endenv
+
+@production
+    {{-- Hanya di production --}}
+@endproduction
+```
+
+### 8.2.4 Loops
+
+```blade
+{{-- For loop --}}
+@for($i = 0; $i < 10; $i++)
+    <p>Iteration {{ $i }}</p>
+@endfor
+
+{{-- Foreach --}}
+@foreach($users as $user)
+    <p>{{ $user->name }} ({{ $user->email }})</p>
+@endforeach
+
+{{-- Foreach dengan key --}}
+@foreach($users as $id => $user)
+    <p>{{ $id }}: {{ $user->name }}</p>
+@endforeach
+
+{{-- Forelse (foreach dengan empty handling) --}}
+@forelse($posts as $post)
+    <article>
+        <h2>{{ $post->title }}</h2>
+        <p>{{ $post->excerpt }}</p>
+    </article>
+@empty
+    <p>No posts yet. <a href="{{ route('posts.create') }}">Create one</a>!</p>
+@endforelse
+
+{{-- While loop --}}
+@while($condition)
+    <p>Looping...</p>
+@endwhile
+
+{{-- Loop variable (informasi tentang loop) --}}
+@foreach($users as $user)
+    <tr class="{{ $loop->even ? 'bg-gray-100' : '' }}">
+        <td>{{ $loop->iteration }}</td> {{-- Nomor urut mulai 1 --}}
+        <td>{{ $loop->index }}</td>     {{-- Index mulai 0 --}}
+        <td>{{ $user->name }}</td>
+        <td>
+            @if($loop->first)
+                <span class="badge">First</span>
+            @endif
+            @if($loop->last)
+                <span class="badge">Last</span>
+            @endif
+        </td>
+        <td>{{ $loop->count }} total</td>
+        <td>{{ $loop->remaining }} remaining</td>
+        <td>Depth: {{ $loop->depth }}</td>
+        <td>Parent: {{ $loop->parent ? $loop->parent->index : 'none' }}</td>
+    </tr>
+@endforeach
+
+{{-- Break dan Continue --}}
+@foreach($users as $user)
+    @if($user->isBanned())
+        @continue
+    @endif
+    
+    <p>{{ $user->name }}</p>
+    
+    @if($user->isAdmin())
+        @break
+    @endif
+@endforeach
+```
+
+---
+
+## 8.3 Blade Inheritance (@extends, @section)
+
+### 8.3.1 Layout Master
+
+```blade
+{{-- resources/views/layouts/app.blade.php --}}
+
+<!DOCTYPE html>
+<html lang="{{ str_replace('_', '-', app()->getLocale()) }}">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
+    
+    <title>@yield('title') - {{ config('app.name') }}</title>
+    
+    {{-- Stack untuk push styles dari child views --}}
+    @stack('styles')
+    
+    @vite(['resources/css/app.css', 'resources/js/app.js'])
+</head>
+<body class="bg-gray-100">
+    <div id="app">
+        {{-- Navigation --}}
+        @include('layouts.navigation')
+        
+        {{-- Page Heading --}}
+        @hasSection('header')
+            <header class="bg-white shadow">
+                <div class="max-w-7xl mx-auto py-6 px-4">
+                    @yield('header')
+                </div>
+            </header>
+        @endif
+        
+        {{-- Page Content --}}
+        <main class="max-w-7xl mx-auto py-6 px-4">
+            {{-- Session messages --}}
+            @if(session('success'))
+                <div class="alert alert-success">
+                    {{ session('success') }}
+                </div>
+            @endif
+            
+            @if(session('error'))
+                <div class="alert alert-danger">
+                    {{ session('error') }}
+                </div>
+            @endif
+            
+            {{-- Main content --}}
+            @yield('content')
+        </main>
+    </div>
+    
+    {{-- Stack untuk push scripts dari child views --}}
+    @stack('scripts')
+</body>
+</html>
+```
+
+### 8.3.2 Child View
+
+```blade
+{{-- resources/views/posts/index.blade.php --}}
+
+@extends('layouts.app')
+
+{{-- Section title --}}
+@section('title', 'All Posts')
+
+{{-- Section header (opsional) --}}
+@section('header')
+    <h2 class="font-semibold text-xl text-gray-800">
+        Blog Posts
+    </h2>
+@endsection
+
+{{-- Main content --}}
+@section('content')
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+        @forelse($posts as $post)
+            <article class="bg-white rounded-lg shadow p-6">
+                <h3 class="text-lg font-bold mb-2">
+                    <a href="{{ route('posts.show', $post) }}">
+                        {{ $post->title }}
+                    </a>
+                </h3>
+                <p class="text-gray-600">{{ $post->excerpt }}</p>
+            </article>
+        @empty
+            <p>No posts available.</p>
+        @endforelse
+    </div>
+    
+    {{-- Pagination --}}
+    {{ $posts->links() }}
+@endsection
+
+{{-- Push additional styles --}}
+@push('styles')
+    <style>
+        .post-card:hover {
+            transform: translateY(-2px);
+        }
+    </style>
+@endpush
+
+{{-- Push additional scripts --}}
+@push('scripts')
+    <script>
+        console.log('Posts page loaded');
+    </script>
+@endpush
+```
+
+### 8.3.3 Component Slot (Laravel 7+)
+
+```blade
+{{-- resources/views/components/alert.blade.php --}}
+
+@props(['type' => 'info', 'dismissible' => false])
+
+<div {{ $attributes->merge(['class' => "alert alert-{$type}"]) }}>
+    @if($dismissible)
+        <button type="button" class="close" data-dismiss="alert">&times;</button>
+    @endif
+    
+    {{-- Default slot --}}
+    {{ $slot }}
+    
+    {{-- Named slot --}}
+    @if(isset($title))
+        <h4 class="alert-heading">{{ $title }}</h4>
+    @endif
+    
+    @if(isset($footer))
+        <div class="alert-footer">
+            {{ $footer }}
+        </div>
+    @endif
+</div>
+```
+
+Penggunaan:
+
+```blade
+<x-alert type="success" :dismissible="true" class="mb-4">
+    <x-slot:title>
+        Success!
+    </x-slot:title>
+    
+    Your profile has been updated.
+    
+    <x-slot:footer>
+        <a href="{{ route('profile.show') }}">View Profile</a>
+    </x-slot:footer>
+</x-alert>
+```
+
+---
+
+## 8.4 Blade Components dan Slots
+
+### 8.4.1 Anonymous Components
+
+```blade
+{{-- resources/views/components/button.blade.php --}}
+
+@props([
+    'type' => 'button',
+    'variant' => 'primary',
+    'size' => 'md',
+    'disabled' => false,
+])
+
+@php
+$sizes = [
+    'sm' => 'px-3 py-1 text-sm',
+    'md' => 'px-4 py-2',
+    'lg' => 'px-6 py-3 text-lg',
+];
+
+$variants = [
+    'primary' => 'bg-blue-600 hover:bg-blue-700 text-white',
+    'secondary' => 'bg-gray-600 hover:bg-gray-700 text-white',
+    'danger' => 'bg-red-600 hover:bg-red-700 text-white',
+    'outline' => 'border-2 border-blue-600 text-blue-600 hover:bg-blue-50',
+];
+@endphp
+
+<button
+    type="{{ $type }}"
+    {{ $attributes->merge([
+        'class' => "rounded font-medium transition-colors {$sizes[$size]} {$variants[$variant]} " . ($disabled ? 'opacity-50 cursor-not-allowed' : ''),
+        'disabled' => $disabled,
+    ]) }}
+>
+    {{ $slot }}
+</button>
+```
+
+Penggunaan:
+
+```blade
+<x-button>Save Changes</x-button>
+
+<x-button variant="danger" size="sm" onclick="return confirm('Are you sure?')">
+    Delete
+</x-button>
+
+<x-button variant="outline" size="lg" disabled>
+    Loading...
+</x-button>
+
+<x-button type="submit" class="w-full" id="submit-btn">
+    Submit
+</x-button>
+```
+
+### 8.4.2 Class-based Components
+
+```php
+<?php
+
+// app/View/Components/Card.php
+
+namespace App\View\Components;
+
+use Illuminate\View\Component;
+
+class Card extends Component
+{
+    public string $title;
+    public ?string $subtitle;
+    public ?string $image;
+    public bool $hover;
+
+    public function __construct(
+        string $title,
+        ?string $subtitle = null,
+        ?string $image = null,
+        bool $hover = true
+    ) {
+        $this->title = $title;
+        $this->subtitle = $subtitle;
+        $this->image = $image;
+        $this->hover = $hover;
+    }
+
+    public function render()
+    {
+        return view('components.card');
+    }
+}
+```
+
+```blade
+{{-- resources/views/components/card.blade.php --}}
+
+<div class="bg-white rounded-lg shadow overflow-hidden {{ $hover ? 'hover:shadow-lg transition-shadow' : '' }}">
+    @if($image)
+        <img src="{{ $image }}" alt="{{ $title }}" class="w-full h-48 object-cover">
+    @endif
+    
+    <div class="p-6">
+        <h3 class="text-xl font-bold mb-2">{{ $title }}</h3>
+        
+        @if($subtitle)
+            <p class="text-gray-600 mb-4">{{ $subtitle }}</p>
+        @endif
+        
+        {{ $slot }}
+    </div>
+    
+    @if(isset($footer))
+        <div class="px-6 py-4 bg-gray-50 border-t">
+            {{ $footer }}
+        </div>
+    @endif
+</div>
+```
+
+Penggunaan:
+
+```blade
+<x-card title="Laravel 12" subtitle="Modern PHP Framework" image="/images/laravel.jpg">
+    <p>Laravel is a web application framework with expressive, elegant syntax.</p>
+    
+    <x-slot:footer>
+        <a href="https://laravel.com" class="text-blue-600">Learn more →</a>
+    </x-slot:footer>
+</x-card>
+```
+
+---
+
+## 8.5 View Composers & Creators
+
+### 8.5.1 View Composers
+
+> **tip**
+>
+  View composers menjalankan callback atau class method saat view dirender—sangat berguna untuk data yang selalu dibutuhkan view tertentu (misal: dropdown categories di sidebar).
+
+```php
+<?php
+
+// app/Providers/ViewServiceProvider.php
+
+namespace App\Providers;
+
+use Illuminate\Support\Facades\View;
+use Illuminate\Support\ServiceProvider;
+use App\Models\Category;
+use App\Models\Tag;
+
+class ViewServiceProvider extends ServiceProvider
+{
+    public function boot(): void
+    {
+        // Composer untuk view tertentu
+        View::composer('layouts.sidebar', function ($view) {
+            $view->with('categories', Category::orderBy('name')->get());
+        });
+        
+        // Composer untuk multiple views
+        View::composer(['posts.create', 'posts.edit'], function ($view) {
+            $view->with('tags', Tag::pluck('name', 'id'));
+        });
+        
+        // Composer dengan class
+        View::composer('profile.*', ProfileComposer::class);
+        
+        // Composer untuk semua view
+        View::composer('*', function ($view) {
+            $view->with('appName', config('app.name'));
+        });
+    }
+}
+```
+
+```php
+<?php
+
+// app/View/Composers/ProfileComposer.php
+
+namespace App\View\Composers;
+
+use App\Repositories\UserRepository;
+use Illuminate\View\View;
+
+class ProfileComposer
+{
+    protected $users;
+
+    public function __construct(UserRepository $users)
+    {
+        $this->users = $users;
+    }
+
+    public function compose(View $view): void
+    {
+        $view->with('count', $this->users->count());
+    }
+}
+```
+
+### 8.5.2 View Creators
+
+Berbeda dengan composers yang dijalankan saat view dirender, creators dijalankan saat view di-instantiate:
+
+```php
+<?php
+
+View::creator('layouts.app', function ($view) {
+    // Dijalankan lebih awal dari composer
+    $view->with('criticalData', fetchCriticalData());
+});
+```
+
+---
+
+## 8.6 Response Macros
+
+### 8.6.1 Membuat Response Macro
+
+```php
+<?php
+
+// app/Providers/AppServiceProvider.php atau ResponseServiceProvider
+
+namespace App\Providers;
+
+use Illuminate\Support\Facades\Response;
+use Illuminate\Support\ServiceProvider;
+
+class ResponseServiceProvider extends ServiceProvider
+{
+    public function boot(): void
+    {
+        // Macro untuk API success response
+        Response::macro('apiSuccess', function ($data, $message = 'Success', $code = 200) {
+            return Response::json([
+                'success' => true,
+                'message' => $message,
+                'data' => $data,
+                'timestamp' => now()->toIso8601String(),
+            ], $code);
+        });
+        
+        // Macro untuk API error response
+        Response::macro('apiError', function ($message, $code = 400, $errors = null) {
+            $response = [
+                'success' => false,
+                'message' => $message,
+                'timestamp' => now()->toIso8601String(),
+            ];
+            
+            if ($errors) {
+                $response['errors'] = $errors;
+            }
+            
+            return Response::json($response, $code);
+        });
+        
+        // Macro untuk CSV download
+        Response::macro('csv', function ($filename, $callback) {
+            $headers = [
+                'Content-Type' => 'text/csv',
+                'Content-Disposition' => "attachment; filename=\"{$filename}\"",
+            ];
+            
+            return Response::stream($callback, 200, $headers);
+        });
+    }
+}
+```
+
+### 8.6.2 Penggunaan Macro
+
+```php
+<?php
+
+class UserController extends Controller
+{
+    public function index()
+    {
+        $users = User::all();
+        
+        return response()->apiSuccess($users, 'Users retrieved successfully');
+    }
+    
+    public function show($id)
+    {
+        $user = User::find($id);
+        
+        if (!$user) {
+            return response()->apiError('User not found', 404);
+        }
+        
+        return response()->apiSuccess($user);
+    }
+    
+    public function export()
+    {
+        return response()->csv('users-' . now()->format('Y-m-d') . '.csv', function () {
+            $file = fopen('php://output', 'w');
+            fputcsv($file, ['ID', 'Name', 'Email']);
+            
+            User::chunk(1000, function ($users) use ($file) {
+                foreach ($users as $user) {
+                    fputcsv($file, [$user->id, $user->name, $user->email]);
+                }
+            });
+            
+            fclose($file);
+        });
+    }
+}
+```
+
+---
+
+## 8.7 Kesimpulan
+
+Response dan views adalah layer presentation aplikasi Laravel. Pilih format response yang sesuai kebutuhan:
+
+| Tipe Response | Gunakan Untuk |
+|--------------|---------------|
+| `view()` | Halaman web tradisional |
+| `json()` | API response |
+| `redirect()` | Setelah form submission |
+| `download()` | File download |
+| `file()` | Display file inline |
+| `stream()` | Large files, real-time data |
+
+**Best Practices Blade:**
+- Gunakan **component** untuk reusable UI elements
+- Manfaatkan **layout inheritance** untuk konsistensi
+- Terapkan **view composers** untuk data yang sering digunakan
+- Gunakan **stacks** untuk push styles/scripts dari child views
+- Hindari **logic kompleks** di view—pindahkan ke controller atau View Composer
+```

@@ -1,0 +1,669 @@
+---
+title: "Sesi 30: Eloquent Relationships (Many-to-Many & Polymorphic)"
+description: "Memahami dan mengimplementasikan relasi many-to-many yang kompleks dengan pivot data, serta polymorphic relations untuk fleksibilitas maksimal dalam d..."
+category: "laravel"
+tags: ["laravel", "eloquent"]
+order: 30
+---
+
+## Tujuan Pembelajaran
+
+Memahami dan mengimplementasikan relasi many-to-many yang kompleks dengan pivot data, serta polymorphic relations untuk fleksibilitas maksimal dalam desain database.
+
+## 1. Many-to-Many Relationships
+
+### 1.1 belongsToMany() Basics
+
+Relasi many-to-many memerlukan tabel pivot (junction table) untuk menghubungkan dua entitas.
+
+```php
+<?php
+
+namespace App\Models;
+
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+
+class User extends Model
+{
+    protected $fillable = ['name', 'email'];
+
+    /**
+     * User memiliki banyak roles
+     */
+    public function roles(): BelongsToMany
+    {
+        return $this->belongsToMany(Role::class);
+    }
+
+    /**
+     * Dengan table name eksplisit
+     */
+    public function permissions(): BelongsToMany
+    {
+        return $this->belongsToMany(Permission::class, 'user_permissions');
+    }
+
+    /**
+     * Dengan foreign key custom
+     */
+    public function managedProjects(): BelongsToMany
+    {
+        return $this->belongsToMany(
+            Project::class,
+            'project_managers',    // Pivot table
+            'manager_id',          // Foreign key user di pivot
+            'project_id'           // Foreign key project di pivot
+        );
+    }
+}
+```
+
+```php
+<?php
+
+class Role extends Model
+{
+    protected $fillable = ['name', 'slug'];
+
+    public function users(): BelongsToMany
+    {
+        return $this->belongsToMany(User::class);
+    }
+}
+```
+
+Migration untuk pivot table:
+
+```php
+<?php
+
+Schema::create('role_user', function (Blueprint $table) {
+    $table->id();
+    $table->foreignId('user_id')->constrained()->cascadeOnDelete();
+    $table->foreignId('role_id')->constrained()->cascadeOnDelete();
+    $table->timestamps();
+    
+    // Prevent duplicate entries
+    $table->unique(['user_id', 'role_id']);
+});
+```
+
+### 1.2 Pivot Attributes & Timestamps
+
+```php
+<?php
+
+// Migration dengan additional pivot data
+Schema::create('project_user', function (Blueprint $table) {
+    $table->id();
+    $table->foreignId('project_id')->constrained()->cascadeOnDelete();
+    $table->foreignId('user_id')->constrained()->cascadeOnDelete();
+    
+    // Pivot attributes
+    $table->string('role_on_project')->default('member'); // admin, member, viewer
+    $table->timestamp('joined_at');
+    $table->integer('contribution_hours')->default(0);
+    $table->boolean('is_active')->default(true);
+    
+    $table->timestamps();
+});
+```
+
+```php
+<?php
+
+class User extends Model
+{
+    /**
+     * Access pivot data dengan withPivot()
+     */
+    public function projects(): BelongsToMany
+    {
+        return $this->belongsToMany(Project::class)
+            ->withPivot('role_on_project', 'joined_at', 'contribution_hours', 'is_active')
+            ->withTimestamps(); // Auto-manage created_at & updated_at pada pivot
+    }
+
+    /**
+     * Order by pivot data
+     */
+    public function activeProjects(): BelongsToMany
+    {
+        return $this->belongsToMany(Project::class)
+            ->withPivot('role_on_project', 'joined_at')
+            ->wherePivot('is_active', true)
+            ->orderByPivot('joined_at', 'desc');
+    }
+}
+```
+
+Accessing pivot data:
+
+```php
+<?php
+
+$user = User::find(1);
+
+foreach ($user->projects as $project) {
+    echo $project->pivot->role_on_project;
+    echo $project->pivot->joined_at->format('Y-m-d');
+}
+
+// Update pivot data
+$user->projects()->updateExistingPivot($projectId, [
+    'role_on_project' => 'admin',
+    'contribution_hours' => 100
+]);
+
+// Attach dengan pivot data
+$user->projects()->attach($projectId, [
+    'role_on_project' => 'member',
+    'joined_at' => now()
+]);
+
+// Sync dengan pivot data
+$user->projects()->sync([
+    $projectId1 => ['role_on_project' => 'admin'],
+    $projectId2 => ['role_on_project' => 'member']
+]);
+```
+
+### 1.3 Custom Pivot Models
+
+```php
+<?php
+
+namespace App\Models\Pivots;
+
+use Illuminate\Database\Eloquent\Relations\Pivot;
+
+class ProjectUser extends Pivot
+{
+    protected $table = 'project_user';
+    
+    protected $casts = [
+        'joined_at' => 'datetime',
+        'is_active' => 'boolean',
+    ];
+
+    /**
+     * Accessor pada pivot model
+     */
+    public function getTenureAttribute(): string
+    {
+        return $this->joined_at->diffForHumans();
+    }
+}
+```
+
+```php
+<?php
+
+class User extends Model
+{
+    public function projects(): BelongsToMany
+    {
+        return $this->belongsToMany(Project::class)
+            ->using(ProjectUser::class) // Custom pivot model
+            ->withPivot('role_on_project', 'joined_at');
+    }
+}
+
+// Penggunaan
+$project = $user->projects->first();
+echo $project->pivot->tenure; // "2 years ago"
+```
+
+> **tip**
+>
+**Pivot vs Intermediate Model:**
+- **Pivot**: extends `Pivot` class, untuk simple junction table
+- **Intermediate Model**: extends `Model` class, jika pivot table memiliki primary key sendiri dan relasi lain
+
+### 1.4 Intermediate Model dengan Relasi
+
+```php
+<?php
+
+namespace App\Models;
+
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
+
+class Subscription extends Model // Bukan Pivot, tapi Model biasa
+{
+    protected $fillable = ['user_id', 'plan_id', 'starts_at', 'ends_at', 'status'];
+
+    protected $casts = [
+        'starts_at' => 'datetime',
+        'ends_at' => 'datetime',
+    ];
+
+    public function user(): BelongsTo
+    {
+        return $this->belongsTo(User::class);
+    }
+
+    public function plan(): BelongsTo
+    {
+        return $this->belongsTo(Plan::class);
+    }
+
+    public function payments(): HasMany
+    {
+        return $this->hasMany(Payment::class);
+    }
+}
+```
+
+```php
+<?php
+
+class User extends Model
+{
+    /**
+     * Has Many Through intermediate model
+     */
+    public function subscriptions(): HasMany
+    {
+        return $this->hasMany(Subscription::class);
+    }
+
+    public function activeSubscription(): HasOne
+    {
+        return $this->hasOne(Subscription::class)
+            ->where('status', 'active')
+            ->where('ends_at', '>', now())
+            ->latest('starts_at');
+    }
+}
+```
+
+## 2. Polymorphic Relationships
+
+### 2.1 One-to-Many Polymorphic
+
+Satu tabel dapat dimiliki oleh multiple model types.
+
+```php
+<?php
+
+// Struktur tabel: comments (id, content, commentable_id, commentable_type)
+
+class Comment extends Model
+{
+    protected $fillable = ['content', 'commentable_id', 'commentable_type'];
+
+    /**
+     * Get the parent commentable model (post or video).
+     */
+    public function commentable(): MorphTo
+    {
+        return $this->morphTo();
+    }
+}
+```
+
+```php
+<?php
+
+class Post extends Model
+{
+    protected $fillable = ['title', 'content'];
+
+    /**
+     * Get all comments for the post.
+     */
+    public function comments(): MorphMany
+    {
+        return $this->morphMany(Comment::class, 'commentable');
+    }
+}
+
+class Video extends Model
+{
+    protected $fillable = ['title', 'url'];
+
+    /**
+     * Get all comments for the video.
+     */
+    public function comments(): MorphMany
+    {
+        return $this->morphMany(Comment::class, 'commentable');
+    }
+}
+```
+
+Migration:
+
+```php
+<?php
+
+Schema::create('comments', function (Blueprint $table) {
+    $table->id();
+    $table->text('content');
+    $table->morphs('commentable'); // Buat commentable_id & commentable_type
+    // atau manual:
+    // $table->unsignedBigInteger('commentable_id');
+    // $table->string('commentable_type');
+    $table->foreignId('user_id')->constrained();
+    $table->timestamps();
+    
+    $table->index(['commentable_type', 'commentable_id']);
+});
+```
+
+### 2.2 Custom Polymorphic Types
+
+```php
+<?php
+
+// AppServiceProvider
+use Illuminate\Database\Eloquent\Relations\Relation;
+
+public function boot(): void
+{
+    Relation::enforceMorphMap([
+        'post' => Post::class,
+        'video' => Video::class,
+        'podcast' => Podcast::class,
+    ]);
+}
+
+// Sekarang commentable_type menyimpan 'post' bukan 'App\Models\Post'
+```
+
+> **caution**
+>
+**Always use morph map** untuk menghindari refactoring nightmare jika namespace berubah!
+
+### 2.3 One-of-Many Polymorphic (Latest Comment)
+
+```php
+<?php
+
+class Post extends Model
+{
+    /**
+     * Get the latest comment.
+     */
+    public function latestComment(): MorphOne
+    {
+        return $this->morphOne(Comment::class, 'commentable')
+            ->latestOfMany();
+    }
+
+    /**
+     * Get the oldest comment.
+     */
+    public function oldestComment(): MorphOne
+    {
+        return $this->morphOne(Comment::class, 'commentable')
+            ->oldestOfMany();
+    }
+}
+```
+
+### 2.4 Many-to-Many Polymorphic
+
+```php
+<?php
+
+// Struktur: taggables (tag_id, taggable_id, taggable_type)
+
+class Tag extends Model
+{
+    protected $fillable = ['name', 'slug'];
+
+    /**
+     * Get all posts that are assigned this tag.
+     */
+    public function posts(): MorphToMany
+    {
+        return $this->morphedByMany(Post::class, 'taggable');
+    }
+
+    /**
+     * Get all videos that are assigned this tag.
+     */
+    public function videos(): MorphToMany
+    {
+        return $this->morphedByMany(Video::class, 'taggable');
+    }
+}
+```
+
+```php
+<?php
+
+class Post extends Model
+{
+    /**
+     * Get all tags for the post.
+     */
+    public function tags(): MorphToMany
+    {
+        return $this->morphToMany(Tag::class, 'taggable');
+    }
+}
+
+class Video extends Model
+{
+    public function tags(): MorphToMany
+    {
+        return $this->morphToMany(Tag::class, 'taggable');
+    }
+}
+```
+
+Migration:
+
+```php
+<?php
+
+Schema::create('taggables', function (Blueprint $table) {
+    $table->foreignId('tag_id')->constrained()->cascadeOnDelete();
+    $table->morphs('taggable');
+    $table->timestamps();
+    
+    $table->unique(['tag_id', 'taggable_id', 'taggable_type']);
+});
+```
+
+Dengan pivot data:
+
+```php
+<?php
+
+class Post extends Model
+{
+    public function tags(): MorphToMany
+    {
+        return $this->morphToMany(Tag::class, 'taggable')
+            ->withPivot('tagged_by_user_id', 'is_primary')
+            ->withTimestamps();
+    }
+}
+
+// Usage
+$post->tags()->attach($tagId, [
+    'tagged_by_user_id' => auth()->id(),
+    'is_primary' => true
+]);
+```
+
+## 3. Advanced Polymorphic Patterns
+
+### 3.1 Polymorphic with Specific Types
+
+```php
+<?php
+
+// Query hanya specific type
+$comments = Comment::whereHasMorph(
+    'commentable',
+    [Post::class, Video::class],
+    function (Builder $query) {
+        $query->where('status', 'published');
+    }
+)->get();
+
+// Exclude specific type
+$comments = Comment::whereNotHasMorph(
+    'commentable',
+    [PrivateDocument::class]
+)->get();
+
+// With wildcard
+$comments = Comment::whereHasMorph('commentable', '*', function ($query) {
+    $query->where('is_public', true);
+})->get();
+```
+
+### 3.2 Morph To Many dengan Conditions
+
+```php
+<?php
+
+class Post extends Model
+{
+    /**
+     * Primary tags only
+     */
+    public function primaryTags(): MorphToMany
+    {
+        return $this->morphToMany(Tag::class, 'taggable')
+            ->wherePivot('is_primary', true);
+    }
+
+    /**
+     * Tags dengan user info
+     */
+    public function tagsWithUser(): MorphToMany
+    {
+        return $this->morphToMany(Tag::class, 'taggable')
+            ->withPivot('tagged_by_user_id')
+            ->with(['tagger']); // Asumsi relasi tagger ada
+    }
+}
+```
+
+## 4. Relationship Counts
+
+### 4.1 withCount()
+
+```php
+<?php
+
+// Basic count
+$posts = Post::withCount('comments')->get();
+// Access: $post->comments_count
+
+// Count dengan alias
+$posts = Post::withCount(['comments', 'likes'])->get();
+// $post->comments_count, $post->likes_count
+
+// Count dengan constraints
+$posts = Post::withCount(['comments as approved_comments_count' => function ($query) {
+    $query->where('is_approved', true);
+}])->get();
+
+// Multiple counts
+$posts = Post::withCount([
+    'comments',
+    'comments as pending_comments_count' => function ($query) {
+        $query->where('is_approved', false);
+    },
+    'comments as recent_comments_count' => function ($query) {
+        $query->where('created_at', '>', now()->subWeek());
+    }
+])->get();
+```
+
+### 4.2 loadCount()
+
+```php
+<?php
+
+// Lazy count loading
+$posts = Post::all();
+$posts->loadCount('comments');
+
+// Dengan constraints
+$posts->loadCount(['comments' => function ($query) {
+    $query->where('rating', '>', 3);
+}]);
+```
+
+### 4.3 withExists()
+
+```php
+<?php
+
+// Boolean existence check (lebih efisien dari withCount untuk cek ada/tidak)
+$posts = Post::withExists('comments')->get();
+// Access: $post->comments_exists (boolean)
+
+// Dengan constraints
+$posts = Post::withExists(['comments as has_recent_comments' => function ($query) {
+    $query->where('created_at', '>', now()->subDay());
+}])->get();
+```
+
+### 4.4 withAvg(), withSum(), withMax(), withMin()
+
+```php
+<?php
+
+$posts = Post::withAvg('comments', 'rating')
+    ->withSum('comments', 'rating')
+    ->withMax('comments', 'created_at')
+    ->withMin('comments', 'created_at')
+    ->get();
+
+// Access: $post->comments_avg_rating, $post->comments_sum_rating, dll
+```
+
+## 5. Querying Complex Relationships
+
+### 5.1 Where Has dengan Nested
+
+```php
+<?php
+
+// Post yang punya comment dari user tertentu
+$posts = Post::whereHas('comments.author', function ($query) {
+    $query->where('role', 'moderator');
+})->get();
+
+// Many-to-many dengan pivot conditions
+$users = User::whereHas('projects', function ($query) {
+    $query->where('status', 'active');
+}, '>=', 3)->get(); // User dengan minimal 3 active projects
+```
+
+### 5.2 Eager Loading Polymorphic dengan Specific
+
+```php
+<?php
+
+// Eager load morph dengan constraints per type
+$comments = Comment::with(['commentable' => function (MorphTo $morphTo) {
+    $morphTo->morphWith([
+        Post::class => ['author', 'category'],
+        Video::class => ['uploader', 'channel'],
+    ]);
+}])->get();
+```
+
+## Kesimpulan
+
+Many-to-Many dan Polymorphic relationships memberikan fleksibilitas maksimal:
+- **Pivot tables** menyimpan metadata relasi dan timestamps
+- **Custom Pivot Models** untuk logic bisnis pada junction data
+- **Polymorphic** mengurangi duplikasi tabel untuk fitur reusable (comments, tags, likes)
+- **Morph Map** wajib digunakan untuk maintainability
+- **Relationship counts** (`withCount`, `withExists`) untuk aggregasi efisien tanpa N+1
+
+Selanjutnya di **Sesi 31**, kita akan mendalami Eloquent Query Builder & Collections untuk manipulasi data yang powerful.
+```

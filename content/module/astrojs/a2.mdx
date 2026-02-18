@@ -1,0 +1,802 @@
+---
+title: "Sesi 2: Instalasi & Setup Project"
+description: "Sebelum memulai perjalanan dengan Astro, pastikan peralatan kamu sudah siap. Ini seperti memastikan kamu punya sepatu yang nyaman sebelum hiking."
+category: "astrojs"
+tags: ["astrojs", "setup"]
+order: 2
+---
+
+# Sesi 2: Instalasi & Setup Project
+
+## 2.1 Prerequisites & Requirements (Persyaratan Awal)
+
+Sebelum memulai perjalanan dengan Astro, pastikan peralatan kamu sudah siap. Ini seperti memastikan kamu punya sepatu yang nyaman sebelum hiking.
+
+### Persyaratan Minimum:
+
+| Kebutuhan | Versi Minimum | Fungsi | Cara Cek |
+|-----------|---------------|--------|----------|
+| **Node.js** | v18.14.1 atau v20+ | Runtime JavaScript | `node --version` |
+| **Package Manager** | npm (sudah include), yarn, atau pnpm | Mengelola dependensi | `npm --version` |
+| **Text Editor** | VS Code (direkomendasikan) | Menulis kode | - |
+| **Browser** | Chrome, Firefox, Safari, Edge terbaru | Testing | - |
+
+### Analogi Sederhana:
+
+> **Node.js** itu seperti mesin mobil. Astro adalah mobilnya. Tanpa mesin yang cukup kuat (Node.js versi lama), mobil Astro tidak bisa jalan dengan optimal. Versi Node.js yang direkomendasikan adalah "mesin" yang sudah diuji dan paling efisien untuk Astro.
+
+### Instalasi Node.js (Jika Belum Punya):
+
+**Windows/Mac:**
+1. Kunjungi [nodejs.org](https://nodejs.org)
+2. Download versi **LTS** (Long Term Support) - biasanya v20.x atau v22.x
+3. Install seperti aplikasi biasa
+
+**Linux (Ubuntu/Debian):**
+```bash
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+sudo apt-get install -y nodejs
+```
+
+**Verifikasi Instalasi:**
+```bash
+node --version    # Harus keluar: v20.x.x atau lebih tinggi
+npm --version     # Harus keluar: 10.x.x atau lebih tinggi
+```
+
+---
+
+## 2.2 Membuat Project Baru dengan Create Astro
+
+Astro menyediakan CLI (Command Line Interface) yang sangat mudah digunakan. Ada dua cara utama: **Interactive Mode** (untuk pemula) dan **Direct Command** (untuk yang sudah familiar).
+
+### Metode 1: Interactive Mode (Direkomendasikan untuk Pemula)
+
+Buka terminal (Command Prompt, PowerShell, atau Terminal) dan jalankan:
+
+```bash
+# Membuat project baru
+npm create astro@latest
+
+# Atau dengan npx (tanpa install global)
+npx create-astro@latest
+```
+
+**Langkah-langkah yang akan kamu temui:**
+
+```
+? Where should we create your new project? 
+  > ./my-astro-project    ← Ketik nama folder atau tekan Enter
+
+? How would you like to start your new project?
+  > A few best practices (recommended)    ← Pilih ini untuk pemula
+    Include sample files
+    Empty
+
+? Do you plan to write TypeScript?
+  > Yes                           ← Direkomendasikan
+    No
+
+? How strict should TypeScript be?
+  > Strict (recommended)          ← Pilih Strict untuk type safety
+    Strictest
+    Relaxed
+
+? Install dependencies?
+  > Yes                           ← Astro akan auto-install
+
+? Initialize a new git repository?
+  > Yes                           ← Direkomendasikan untuk version control
+```
+
+### Metode 2: Direct Command (Cepat untuk yang sudah tahu)
+
+```bash
+# Template kosong
+npm create astro@latest my-astro-project -- --template minimal
+
+# Template dengan TypeScript strict
+npm create astro@latest my-astro-project -- --template minimal --typescript strict
+
+# Template blog (sudah ada setup Content Collections)
+npm create astro@latest my-astro-project -- --template blog
+
+# Template dokumentasi (Starlight)
+npm create astro@latest my-astro-project -- --template starlight
+```
+
+### Struktur Perintah:
+
+```bash
+npm create astro@latest [nama-folder] -- [flags]
+│      │         │            │           │
+│      │         │            │           └── Opsi tambahan (--template, --typescript, dll)
+│      │         │            └── Nama folder project kamu
+│      │         └── Versi terbaru Astro
+│      └── Package runner (menjalankan package tanpa install global)
+└── Node Package Manager
+```
+
+### Setelah Instalasi Selesai:
+
+```bash
+# Masuk ke folder project
+cd my-astro-project
+
+# Jalankan development server
+npm run dev
+
+# Buka browser ke http://localhost:4321
+```
+
+**Output yang akan kamu lihat:**
+```
+  astro  v5.x.x ready in 123 ms
+
+  ┃ Local    http://localhost:4321/
+  ┃ Network  use --host to expose
+
+  ▶ This is a development server. For production, run "npm run build".
+```
+
+---
+
+## 2.3 Struktur Project Astro
+
+Mari kita bedah setiap folder dan file seperti seorang detektif memeriksa TKP (Tempat Kejadian Project).
+
+### Struktur Folder Standar:
+
+```
+my-astro-project/
+├── .astro/                 # Folder internal Astro (jangan diubah manual)
+├── dist/                   # Hasil build (production-ready files)
+├── node_modules/           # Dependensi yang di-install
+├── public/                 # Asset statis (langsung di-copy ke dist)
+├── src/
+│   ├── assets/            # Gambar, font, file yang perlu di-optimasi
+│   ├── components/        # Komponen UI reusable (.astro, .jsx, .vue)
+│   ├── layouts/           # Template halaman (wrapper konten)
+│   ├── pages/             # Routing file-based (setiap file = satu route)
+│   ├── content/           # Content Collections (blog, docs, dll)
+│   ├── styles/            # CSS global atau shared styles
+│   └── env.d.ts           # TypeScript definitions
+├── astro.config.mjs       # Konfigurasi utama Astro
+├── package.json           # Metadata project & dependensi
+├── tsconfig.json          # Konfigurasi TypeScript
+└── README.md              # Dokumentasi project
+```
+
+### Penjelasan Detail Setiap Folder:
+
+#### 1. `public/` - Asset Statis
+
+Folder ini untuk file yang **tidak perlu diproses** oleh Astro. Dikopi langsung ke folder `dist/` saat build.
+
+```plaintext
+public/
+├── favicon.svg           # Icon browser
+├── robots.txt            # Instruksi untuk search engine crawler
+├── images/               # Gambar yang tidak perlu optimasi
+│   └── logo-old.png
+└── downloads/            # File untuk di-download user
+    └── ebook.pdf
+```
+
+**Contoh Penggunaan:**
+```astro
+<!-- src/pages/index.astro -->
+<img src="/images/logo-old.png" alt="Logo Lama" />
+<!-- URL: http://localhost:4321/images/logo-old.png -->
+```
+
+#### 2. `src/assets/` - Asset yang Dioptimasi
+
+Berbeda dengan `public/`, folder ini untuk asset yang **perlu diproses** Astro (optimasi gambar, bundling, dll).
+
+```plaintext
+src/assets/
+├── images/
+│   ├── hero.jpg          # Akan dioptimasi otomatis
+│   └── team/
+│       ├── alice.jpg
+│       └── bob.jpg
+└── fonts/
+    └── custom-font.woff2
+```
+
+**Contoh Penggunaan dengan Optimasi:**
+```astro
+---
+import { Image } from 'astro:assets';
+import heroImage from '../assets/images/hero.jpg';
+---
+
+<!-- Gambar dioptimasi: resize, format modern, lazy loading -->
+<Image src={heroImage} alt="Hero Image" width={800} height={400} />
+```
+
+#### 3. `src/pages/` - File-Based Routing
+
+Ini adalah sistem routing paling intuitif. Setiap file di sini menjadi sebuah halaman website.
+
+```plaintext
+src/pages/
+├── index.astro           # Route: / (homepage)
+├── about.astro           # Route: /about
+├── blog/
+│   ├── index.astro       # Route: /blog (list artikel)
+│   └── [slug].astro      # Route: /blog/:slug (dynamic route)
+└── api/
+    └── hello.js          # Route: /api/hello (API endpoint)
+```
+
+**Contoh File Halaman:**
+```astro
+---
+// src/pages/about.astro
+const pageTitle = "Tentang Kami";
+const team = ["Alice", "Bob", "Charlie"];
+---
+
+<html lang="id">
+  <head>
+    <title>{pageTitle}</title>
+  </head>
+  <body>
+    <h1>{pageTitle}</h1>
+    <p>Ini adalah halaman tentang kami.</p>
+    
+    <h2>Tim Kami:</h2>
+    <ul>
+      {team.map(member => <li>{member}</li>)}
+    </ul>
+  </body>
+</html>
+```
+
+#### 4. `src/components/` - Komponen Reusable
+
+Komponen adalah blok bangunan UI yang bisa digunakan berulang kali.
+
+```plaintext
+src/components/
+├── Header.astro          # Komponen header situs
+├── Footer.astro          # Komponen footer situs
+├── Button.astro          # Komponen button reusable
+├── Card/
+│   ├── Card.astro        # Komponen card utama
+│   └── CardHeader.astro  # Sub-komponen
+└── react/               # Bisa mix framework!
+    ├── SearchWidget.jsx
+    └── ShoppingCart.jsx
+```
+
+**Contoh Komponen Button:**
+```astro
+---
+// src/components/Button.astro
+interface Props {
+  variant?: 'primary' | 'secondary';
+  size?: 'small' | 'medium' | 'large';
+  href?: string;
+}
+
+const { variant = 'primary', size = 'medium', href } = Astro.props;
+---
+
+<a href={href} class:list={['btn', `btn-${variant}`, `btn-${size}`]}>
+  <slot /> <!-- Slot untuk konten dinamis -->
+</a>
+
+<style>
+  .btn {
+    display: inline-block;
+    padding: 0.5rem 1rem;
+    border-radius: 0.375rem;
+    text-decoration: none;
+    font-weight: 600;
+  }
+  .btn-primary { background: #3b82f6; color: white; }
+  .btn-secondary { background: #e5e7eb; color: #1f2937; }
+  .btn-small { font-size: 0.875rem; }
+  .btn-large { font-size: 1.125rem; padding: 0.75rem 1.5rem; }
+</style>
+```
+
+**Penggunaan Komponen:**
+```astro
+---
+import Button from '../components/Button.astro';
+---
+
+<Button variant="primary" size="large" href="/start">
+  Mulai Sekarang
+</Button>
+
+<Button variant="secondary" size="small" href="/learn">
+  Pelajari Lebih Lanjut
+</Button>
+```
+
+#### 5. `src/layouts/` - Template Halaman
+
+Layout adalah kerangka/wrapper yang membungkus konten halaman. Berguna untuk konsistensi (header, footer, meta tags).
+
+```plaintext
+src/layouts/
+├── BaseLayout.astro      # Layout dasar untuk semua halaman
+├── BlogLayout.astro      # Layout khusus artikel blog
+└── DocsLayout.astro      # Layout untuk dokumentasi
+```
+
+**Contoh BaseLayout:**
+```astro
+---
+// src/layouts/BaseLayout.astro
+interface Props {
+  description?: string;
+}
+
+const { title, description = "Default description" } = Astro.props;
+---
+
+<!DOCTYPE html>
+<html lang="id">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width" />
+    <meta name="description" content={description} />
+    <title>{title} | Situs Saya</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  </head>
+  <body>
+    <header>
+      <nav>
+        <a href="/">Home</a>
+        <a href="/about">About</a>
+        <a href="/blog">Blog</a>
+      </nav>
+    </header>
+    
+    <main>
+      <slot /> <!-- Konten halaman akan masuk di sini -->
+    </main>
+    
+    <footer>
+      <p>&copy; 2026 Situs Saya. All rights reserved.</p>
+    </footer>
+  </body>
+</html>
+```
+
+**Penggunaan Layout:**
+```astro
+---
+// src/pages/index.astro
+import BaseLayout from '../layouts/BaseLayout.astro';
+---
+
+<BaseLayout title="Beranda" description="Selamat datang di situs kami">
+  <h1>Halo Dunia!</h1>
+  <p>Ini adalah konten halaman beranda.</p>
+  <!-- Semua ini akan masuk ke <slot /> di BaseLayout -->
+</BaseLayout>
+```
+
+#### 6. `src/content/` - Content Collections (Astro 2.0+)
+
+Folder spesial untuk mengelola konten seperti blog, dokumentasi, atau data terstruktur.
+
+```plaintext
+src/content/
+├── config.ts            # Schema dan konfigurasi collections
+├── blog/                # Collection: blog
+│   ├── first-post.md
+│   ├── second-post.mdx  # Bisa pakai MDX untuk komponen React/Vue
+│   └── third-post.md
+└── authors/             # Collection: authors
+    ├── alice.yml
+    └── bob.json
+```
+
+**Contoh Konfigurasi Content Collections:**
+```typescript
+// src/content/config.ts
+import { defineCollection, z } from 'astro:content';
+
+const blogCollection = defineCollection({
+  type: 'content', // 'content' untuk .md/.mdx, 'data' untuk .json/.yml
+  schema: z.object({
+    pubDate: z.date(),
+    author: z.string(),
+    tags: z.array(z.string()),
+    draft: z.boolean().default(false),
+  }),
+});
+
+export const collections = {
+  'blog': blogCollection,
+};
+```
+
+---
+
+## 2.4 File Konfigurasi (astro.config.mjs)
+
+Ini adalah "otak" konfigurasi Astro. File ini menggunakan format ES Modules (ESM) dengan ekstensi `.mjs` atau `.ts`.
+
+### Struktur Dasar:
+
+```javascript
+// astro.config.mjs
+import { defineConfig } from 'astro/config';
+
+export default defineConfig({
+  // Konfigurasi dasar
+  site: 'https://www.example.com',
+  base: '/',                    // Subpath jika deploy di subfolder
+  trailingSlash: 'ignore',      // 'always' | 'never' | 'ignore'
+  
+  // Build configuration
+  output: 'static',             // 'static' | 'server' | 'hybrid'
+  outDir: './dist',             // Folder output build
+  publicDir: './public',        // Folder asset statis
+  
+  // Server configuration
+  server: {
+    port: 4321,
+    host: false,                // true untuk expose ke network
+  },
+  
+  // Integrations (plugin)
+  integrations: [
+    // @astrojs/tailwind, @astrojs/react, dll
+  ],
+  
+  // Vite configuration (underlying build tool)
+  vite: {
+    plugins: [],
+    css: {
+      preprocessorOptions: {
+        scss: {
+          additionalData: `@import "src/styles/vars.scss";`
+        }
+      }
+    }
+  },
+  
+  // Markdown configuration
+  markdown: {
+    syntaxHighlight: 'shiki',   // 'shiki' | 'prism' | false
+    shikiConfig: {
+      theme: 'dracula',
+    },
+    remarkPlugins: [],
+    rehypePlugins: [],
+  },
+  
+  // Image configuration
+  image: {
+    service: {
+      entrypoint: 'astro/assets/services/sharp',
+    },
+  },
+});
+```
+
+### Penjelasan Properti Penting:
+
+#### `site` dan `base`
+
+```javascript
+export default defineConfig({
+  site: 'https://docs.example.com',  // URL production
+  base: '/docs',                      // Jika deploy di subfolder /docs
+});
+```
+
+**Use Case:**
+- `site`: Penting untuk SEO (sitemap, canonical URLs) dan fitur seperti View Transitions
+- `base`: Digunakan jika deploy di GitHub Pages (username.github.io/repo-name/)
+
+#### `output` Mode (Sangat Penting!)
+
+| Mode | Deskripsi | Use Case |
+|------|-----------|----------|
+| `'static'` | Pre-render semua halaman saat build | Blog, landing page, docs |
+| `'server'` | SSR (Server-Side Rendering) untuk semua halaman | Aplikasi dengan data real-time |
+| `'hybrid'` | Campuran: default static, tapi bisa opt-in ke SSR | Most flexible, recommended |
+
+**Contoh Hybrid Mode:**
+```javascript
+export default defineConfig({
+  output: 'hybrid',
+});
+
+// Di halaman yang butuh SSR:
+---
+export const prerender = false; // Force SSR untuk halaman ini
+
+const data = await fetch('https://api.realtime.com/data');
+---
+```
+
+#### `integrations`
+
+Integrasi adalah plugin yang menambahkan fitur ke Astro.
+
+```javascript
+import { defineConfig } from 'astro/config';
+import tailwind from '@astrojs/tailwind';
+import react from '@astrojs/react';
+import sitemap from '@astrojs/sitemap';
+
+export default defineConfig({
+  integrations: [
+    tailwind({
+      config: { path: './tailwind.config.mjs' }
+    }),
+    react({
+      include: ['**/react-components/**'],
+    }),
+    sitemap({
+      filter: (page) => !page.includes('/admin/'),
+    }),
+  ],
+});
+```
+
+---
+
+## 2.5 Development Server
+
+Astro menggunakan Vite sebagai underlying development server, yang terkenal sangat cepat (Hot Module Replacement/HMR).
+
+### Perintah NPM Scripts:
+
+Setelah `npm create astro`, file `package.json` akan berisi:
+
+```json
+{
+  "scripts": {
+    "dev": "astro dev",           // Development server
+    "start": "astro dev",         // Alias untuk dev
+    "build": "astro build",       // Build untuk production
+    "preview": "astro preview",   // Preview build production secara lokal
+    "astro": "astro"              // CLI Astro langsung
+  }
+}
+```
+
+### Mode Development (`npm run dev`):
+
+```bash
+# Jalankan dev server
+npm run dev
+
+# Dengan host (bisa diakses dari device lain di network)
+npm run dev -- --host
+
+# Dengan port custom
+npm run dev -- --port 3000
+
+# Dengan host dan port
+npm run dev -- --host --port 3000
+```
+
+**Fitur Development Server:**
+- **HMR (Hot Module Replacement)**: Perubahan kode langsung terlihat di browser tanpa refresh
+- **Error Overlay**: Error ditampilkan langsung di browser dengan stack trace yang jelas
+- **Source Maps**: Debugging mudah karena mapping ke source code asli
+
+### Mode Build (`npm run build`):
+
+```bash
+# Build untuk production
+npm run build
+
+# Build dengan verbose logging (debug)
+npm run build -- --verbose
+```
+
+**Output Build:**
+```
+dist/
+├── _astro/                 # Asset yang di-bundle (CSS, JS)
+│   ├── assets.b8f23c1a.css
+│   └── client.9a2b1c3d.js
+├── blog/
+│   ├── first-post/
+│   │   └── index.html
+│   └── index.html
+├── about/
+│   └── index.html
+├── index.html              # Homepage
+└── sitemap-index.xml       # Auto-generated jika pakai @astrojs/sitemap
+```
+
+### Mode Preview (`npm run preview`):
+
+```bash
+# Preview build production secara lokal
+npm run preview
+
+# Dengan custom port
+npm run preview -- --port 4000
+```
+
+**Gunakan ini untuk:**
+- Testing build production sebelum deploy
+- Memastikan tidak ada error 404
+- Mengecek performa (Lighthouse audit)
+
+---
+
+## Setup untuk Starlight (Dokumentasi)
+
+Karena kamu menyebutkan Starlight, berikut setup khusus untuk project dokumentasi:
+
+### Membuat Project Starlight:
+
+```bash
+# Cara 1: Template langsung
+npm create astro@latest -- --template starlight
+
+# Cara 2: Integrasi ke project existing
+npm install @astrojs/starlight
+```
+
+### Struktur Project Starlight:
+
+```
+my-docs/
+├── astro.config.mjs        # Konfigurasi Starlight di sini
+├── src/
+│   ├── assets/            # Logo, favicon, gambar
+│   ├── content/
+│   │   └── docs/          # Semua konten dokumentasi di sini!
+│   │       ├── index.mdx  # Homepage docs
+│   │       ├── guides/
+│   │       │   ├── getting-started.mdx
+│   │       │   └── advanced.mdx
+│   │       └── reference/
+│   │           └── api.mdx
+│   └── env.d.ts
+└── package.json
+```
+
+### Konfigurasi Starlight (astro.config.mjs):
+
+```javascript
+import { defineConfig } from 'astro/config';
+import starlight from '@astrojs/starlight';
+
+export default defineConfig({
+  integrations: [
+    starlight({
+      
+      // Logo dan branding
+      logo: {
+        src: './src/assets/logo.svg',
+        alt: 'Logo Produk',
+      },
+      
+      // Bahasa default
+      defaultLocale: 'id',
+      locales: {
+        id: { label: 'Bahasa Indonesia', lang: 'id' },
+        en: { label: 'English', lang: 'en' },
+      },
+      
+      // Navigasi sidebar
+      sidebar: [
+        {
+          label: 'Panduan',
+          items: [
+            { label: 'Memulai', link: '/guides/getting-started/' },
+            { label: 'Advanced', link: '/guides/advanced/' },
+          ],
+        },
+        {
+          label: 'Referensi',
+          autogenerate: { directory: 'reference' },
+        },
+      ],
+      
+      // Social links
+      social: {
+        github: 'https://github.com/username/repo',
+        twitter: 'https://twitter.com/username',
+      },
+      
+      // Search
+      pagefind: true, // Search built-in
+      
+      // Custom CSS
+      customCss: ['./src/styles/custom.css'],
+    }),
+  ],
+});
+```
+
+### Format Konten Starlight (MDX):
+
+Starlight menggunakan **MDX** yang memungkinkan kamu menggunakan komponen React/Vue di dalam Markdown.
+
+```mdx
+---
+---
+
+import CustomComponent from '../../components/CustomComponent.jsx';
+
+## Instalasi
+
+Pilih metode instalasi yang sesuai:
+
+<div class="tabs-container">
+  
+### npm
+
+    ```bash
+    npm install produk-kami
+    ```
+  
+
+  
+### yarn
+
+    ```bash
+    yarn add produk-kami
+    ```
+  
+
+  
+### pnpm
+
+    ```bash
+    pnpm add produk-kami
+    ```
+  
+
+</div>
+
+## Komponen Kustom
+
+Kamu juga bisa menggunakan komponen Astro/React:
+
+<CustomComponent client:load />
+
+## Frontmatter Khusus Starlight
+
+Starlight mendukung frontmatter yang kaya:
+
+```mdx
+---
+  label: Label di Sidebar
+  hidden: false     # Sembunyikan dari sidebar?
+  badge:
+    text: Baru
+    variant: tip    # tip | caution | danger | success | default
+pagefind: true      # Masukkan ke search index?
+draft: false        # Draft? (tidak dipublish)
+template: splash    # splash | doc (default)
+---
+```
+
+---
+
+## Ringkasan Sesi 2
+
+| Topik | Poin Kunci |
+|-------|-----------|
+| **Prerequisites** | Node.js v18.14.1+, text editor, browser |
+| **Instalasi** | `npm create astro@latest` atau template spesifik |
+| **Struktur Folder** | `public/` (statis), `src/` (kode), `src/pages/` (routing) |
+| **File Penting** | `astro.config.mjs` (konfigurasi pusat) |
+| **Perintah** | `dev` (development), `build` (production), `preview` (test build) |
+| **Starlight** | Template `starlight`, konten di `src/content/docs/`, format MDX |
+
+---
+
+**Selanjutnya:** Di Sesi 3, kita akan mendalami **Sintaks Dasar Astro Components** - memahami cara kerja template expressions, props, slots, dan frontmatter/backmatter.

@@ -1,0 +1,441 @@
+---
+title: "Sesi 4: Request Lifecycle & Kernel"
+description: "Bayangkan Laravel seperti restoran. **HTTP Request** adalah pesanan pelanggan, dan **Response** adalah hidangan yang disajikan. Mari kita ikuti perjal..."
+category: "laravel"
+tags: ["laravel", "request"]
+order: 4
+---
+## 4.1 HTTP Request Flow: Entry Point hingga Response
+
+Bayangkan Laravel seperti restoran. **HTTP Request** adalah pesanan pelanggan, dan **Response** adalah hidangan yang disajikan. Mari kita ikuti perjalanan pesanan ini dari pintu masuk hingga meja pelanggan.
+
+> **tip**
+>
+  - `public/index.php` = Pintu masuk restoran
+  - `Kernel` = Manajer restoran yang mengatur alur kerja
+  - `Service Container` = Dapur dengan bahan-bahan siap pakai
+  - `Middleware` = Pelayan yang memeriksa reservasi dan kebersihan
+  - `Controller` = Koki yang memasak pesanan
+
+### 4.1.1 Entry Point: `public/index.php`
+
+Semua request Laravel masuk melalui satu pintu—file ini.
+
+```php
+<?php
+
+use Illuminate\Contracts\Http\Kernel;
+use Illuminate\Http\Request;
+
+define('LARAVEL_START', microtime(true));
+
+// 1. Autoload dependencies
+require __DIR__.'/../vendor/autoload.php';
+
+// 2. Load application
+$app = require_once __DIR__.'/../bootstrap/app.php';
+
+// 3. Get Kernel from Container
+$kernel = $app->make(Kernel::class);
+
+// 4. Capture HTTP Request
+$request = Request::capture();
+
+// 5. Handle Request → Get Response
+$response = $kernel->handle($request);
+
+// 6. Send Response to browser
+$response->send();
+
+// 7. Terminate (cleanup)
+$kernel->terminate($request, $response);
+```
+
+1. **Autoload** — Composer memuat semua classes
+2. **Bootstrap** — Aplikasi diinisialisasi dari `bootstrap/app.php`
+3. **Kernel Resolution** — Service Container membuat instance Kernel
+4. **Request Capture** — Data HTTP (URL, headers, body) di-capture
+5. **Handle** — Request diproses melalui pipeline
+6. **Send** — Response dikirim ke browser
+7. **Terminate** — Cleanup (logging, session write, dll)
+
+### 4.1.2 Alur Request dalam Diagram
+
+```
+┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
+│   Browser       │────▶│  public/index.php │────▶│  Bootstrap App  │
+│   (User)        │     │  (Entry Point)    │     │  (Load Config)  │
+└─────────────────┘     └──────────────────┘     └─────────────────┘
+                                                           │
+                                                           ▼
+┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
+│   Send Response │◀────│  Controller      │◀────│  Kernel Handle  │
+│   (HTML/JSON)   │     │  (Business Logic)│     │  (Middleware)   │
+└─────────────────┘     └──────────────────┘     └─────────────────┘
+         │                                                    │
+         │              ┌──────────────────┐                  │
+         └─────────────│  Terminate       │◀─────────────────┘
+                        │  (Cleanup)       │
+                        └──────────────────┘
+```
+
+---
+
+## 4.2 HTTP Kernel vs Console Kernel
+
+Laravel memiliki dua "manajer" untuk dua konteks berbeda.
+
+<div class="tabs-container">
+  
+### HTTP Kernel
+
+    Menangani request dari web (browser, API client, mobile apps).
+    
+    ```php
+    // vendor/laravel/framework/src/Illuminate/Foundation/Http/Kernel.php
+    
+    class Kernel implements KernelContract
+    {
+        protected $bootstrappers = [
+            \Illuminate\Foundation\Bootstrap\LoadEnvironmentVariables::class,
+            \Illuminate\Foundation\Bootstrap\LoadConfiguration::class,
+            \Illuminate\Foundation\Bootstrap\HandleExceptions::class,
+            \Illuminate\Foundation\Bootstrap\RegisterFacades::class,
+            \Illuminate\Foundation\Bootstrap\RegisterProviders::class,
+            \Illuminate\Foundation\Bootstrap\BootProviders::class,
+        ];
+        
+        protected $middleware = [
+            \Illuminate\Foundation\Http\Middleware\CheckForMaintenanceMode::class,
+            \Illuminate\Http\Middleware\ValidatePostSize::class,
+            // ... more global middleware
+        ];
+        
+        protected $middlewareGroups = [
+            'web' => [
+                \Illuminate\Cookie\Middleware\EncryptCookies::class,
+                \Illuminate\Cookie\Middleware\AddQueuedCookiesToResponse::class,
+                \Illuminate\Session\Middleware\StartSession::class,
+                // ...
+            ],
+            'api' => [
+                'throttle:api',
+                \Illuminate\Routing\Middleware\SubstituteBindings::class,
+            ],
+        ];
+    }
+    ```
+  
+
+  
+  
+### Console Kernel
+
+    Menangani perintah dari command line (Artisan commands, scheduled tasks).
+    
+    ```php
+    // app/Console/Kernel.php (jika di-publish)
+    // atau bootstrap/app.php untuk Laravel 12
+    
+    ->withSchedule(function (Schedule $schedule) {
+        $schedule->command('inspire')->hourly();
+    })
+    
+    ->withCommands(function (Commands $commands) {
+        $commands->add(app_path('Console/Commands'));
+    })
+    ```
+  
+
+</div>
+
+> **note**
+>
+  Di Laravel 12, konfigurasi Console Kernel seringkali langsung di `bootstrap/app.php` tanpa perlu file terpisah.
+
+---
+
+## 4.3 Service Providers Lifecycle: Register vs Boot
+
+Service Providers adalah "juru masak" yang menyiapkan berbagai komponen aplikasi.
+
+### 4.3.1 Dua Fase Lifecycle
+
+1. **Register Phase** — Binding ke Service Container (tapi belum digunakan)
+   ```php
+   public function register(): void
+   {
+       $this->app->singleton(PaymentGateway::class, function ($app) {
+           return new StripePayment(config('services.stripe.key'));
+       });
+   }
+   ```
+
+2. **Boot Phase** — Semua providers sudah terdaftar, siap digunakan
+   ```php
+   public function boot(): void
+   {
+       // Bisa menggunakan service yang sudah diregister
+       $payment = app(PaymentGateway::class);
+       
+       View::share('paymentMethods', $payment->getMethods());
+   }
+   ```
+
+### 4.3.2 Urutan Eksekusi
+
+```php
+// 1. Semua providers di-register (register method)
+foreach ($providers as $provider) {
+    $provider->register();
+}
+
+// 2. Semua providers di-boot (boot method)
+foreach ($providers as $provider) {
+    $provider->boot();
+}
+```
+
+> **caution**
+>
+  **Jangan** gunakan service lain di `register()` karena belum tentu tersedia. Gunakan `boot()` untuk dependensi antar-service.
+
+---
+
+## 4.4 Middleware Pipeline dan Request Handling
+
+Middleware adalah "filter" yang memproses request sebelum dan sesudah controller.
+
+### 4.4.1 Konsep Pipeline
+
+```
+Request Masuk
+    │
+    ▼
+┌─────────────────┐
+│ Global Middleware│ (CORS, Maintenance Mode, dll)
+└─────────────────┘
+    │
+    ▼
+┌─────────────────┐
+│ Route Middleware │ (Auth, Verified, dll)
+└─────────────────┘
+    │
+    ▼
+┌─────────────────┐
+│   Controller    │ (Business Logic)
+└─────────────────┘
+    │
+    ▼
+┌─────────────────┐
+│ Middleware      │ (After middleware - modify response)
+│ (onion layers   │
+│  peeling back)  │
+└─────────────────┘
+    │
+    ▼
+Response Keluar
+```
+
+### 4.4.2 Membuat Middleware
+
+```bash
+php artisan make:middleware EnsureTokenIsValid
+```
+
+```php
+<?php
+
+namespace App\Http\Middleware;
+
+use Closure;
+use Illuminate\Http\Request;
+use Symfony\Component\HttpFoundation\Response;
+
+class EnsureTokenIsValid
+{
+    /**
+     * Handle an incoming request.
+     *
+     * @param  \Closure(\Illuminate\Http\Request): (\Symfony\Component\HttpFoundation\Response)  $next
+     */
+    public function handle(Request $request, Closure $next): Response
+    {
+        // BEFORE Controller (check request)
+        if ($request->input('token') !== 'my-secret-token') {
+            return redirect('home');
+        }
+        
+        // Pass to next middleware/controller
+        $response = $next($request);
+        
+        // AFTER Controller (modify response)
+        $response->header('X-Custom-Header', 'MyValue');
+        
+        return $response;
+    }
+}
+```
+
+### 4.4.3 Mendaftarkan Middleware
+
+```php
+// bootstrap/app.php
+->withMiddleware(function (Middleware $middleware) {
+    // Global middleware (semua request)
+    $middleware->use([
+        \Illuminate\Foundation\Http\Middleware\CheckForMaintenanceMode::class,
+        \App\Http\Middleware\EnsureTokenIsValid::class,
+    ]);
+    
+    // Alias untuk route-specific
+    $middleware->alias([
+        'auth' => \App\Http\Middleware\Authenticate::class,
+        'verified' => \Illuminate\Auth\Middleware\EnsureEmailIsVerified::class,
+        'token' => \App\Http\Middleware\EnsureTokenIsValid::class,
+    ]);
+    
+    // Priority (urutan eksekusi)
+    $middleware->priority([
+        \Illuminate\Foundation\Http\Middleware\HandlePrecognitiveRequests::class,
+        \Illuminate\Cookie\Middleware\EncryptCookies::class,
+        \Illuminate\Session\Middleware\StartSession::class,
+    ]);
+})
+```
+
+### 4.4.4 Penggunaan di Routes
+
+```php
+// Single middleware
+Route::get('/profile', function () {
+    // ...
+})->middleware('auth');
+
+// Multiple middleware
+Route::get('/admin', function () {
+    // ...
+})->middleware(['auth', 'verified', 'admin']);
+
+// Middleware group
+Route::middleware(['auth'])->group(function () {
+    Route::get('/dashboard', [DashboardController::class, 'index']);
+    Route::get('/settings', [SettingsController::class, 'index']);
+});
+```
+
+---
+
+## 4.5 Service Container sebagai Fondasi
+
+Service Container adalah "kotak penyimpanan ajaib" Laravel—dia tahu cara membuat objek dan dependensinya.
+
+### 4.5.1 Dependency Injection Dasar
+
+```php
+// Tanpa Container (manual, ribet)
+$mailer = new Mailer(new SmtpTransport());
+$logger = new Logger();
+$userService = new UserService($mailer, $logger);
+
+// Dengan Container (otomatis)
+class UserController extends Controller
+{
+    public function __construct(
+        private UserService $userService  // Auto-injected!
+    ) {}
+}
+```
+
+### 4.5.2 Binding ke Container
+
+```php
+// app/Providers/AppServiceProvider.php
+
+public function register(): void
+{
+    // Simple binding (new instance setiap kali)
+    $this->app->bind(PaymentInterface::class, StripePayment::class);
+    
+    // Singleton (satu instance untuk seluruh app)
+    $this->app->singleton(CacheManager::class, function ($app) {
+        return new CacheManager(config('cache'));
+    });
+    
+    // Scoped (satu instance per request)
+    $this->app->scoped(RequestContext::class, function ($app) {
+        return new RequestContext(request());
+    });
+    
+    // Instance binding (object yang sudah dibuat)
+    $this->app->instance('config', new Config($configArray));
+}
+```
+
+### 4.5.3 Resolving dari Container
+
+```php
+// Method 1: Helper function app()
+$payment = app(PaymentInterface::class);
+
+// Method 2: Dependency Injection (constructor)
+class OrderController extends Controller
+{
+    public function __construct(
+        private PaymentInterface $payment
+    ) {}
+}
+
+// Method 3: Method Injection
+public function store(Request $request, PaymentInterface $payment)
+{
+    $payment->process($request->amount);
+}
+
+// Method 4: Resolve dengan parameter
+$payment = app()->makeWith(PaymentInterface::class, [
+    'currency' => 'IDR'
+]);
+```
+
+### 4.5.4 Auto-Wiring (Magic)
+
+Laravel bisa otomatis menyelesaikan dependensi tanpa konfigurasi!
+
+```php
+class ReportGenerator
+{
+    public function __construct(
+        private DatabaseConnection $db,
+        private LoggerInterface $logger,
+        private CacheManager $cache
+    ) {}
+}
+
+// Laravel otomatis inject semua dependensi!
+$generator = app(ReportGenerator::class);
+```
+
+> **tip**
+>
+  Container menggunakan PHP type hints untuk menentukan dependensi. Pastikan menggunakan interface atau concrete class yang jelas.
+
+---
+
+## 4.6 Kesimpulan
+
+Memahami Request Lifecycle memungkinkan Anda:
+
+| Konsep | Manfaat |
+|--------|---------|
+| **Entry Point** | Debug masalah awal aplikasi |
+| **Kernel** | Paham perbedaan web vs console context |
+| **Providers** | Optimasi boot time, urutan inisialisasi |
+| **Middleware** | Implementasi cross-cutting concerns (auth, logging, dll) |
+| **Container** | Loose coupling, testability, maintainability |
+
+> **note**
+>
+  Di **Sesi 5**, kita akan mendalami **Routing System**—bagaimana Laravel memetakan URL ke logic aplikasi.
+
+```

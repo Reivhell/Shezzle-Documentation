@@ -1,0 +1,823 @@
+---
+title: "Sesi 3: Sintaks Dasar Astro Components"
+description: "Astro components adalah file dengan ekstensi `.astro`. Mereka dirancang sebagai **superset dari HTML**, artinya setiap file HTML valid adalah juga fil..."
+category: "astrojs"
+tags: ["astrojs", "components"]
+order: 3
+---
+
+# Sesi 3: Sintaks Dasar Astro Components
+
+## 3.1 Astro Component Syntax (Superset HTML)
+
+Astro components adalah file dengan ekstensi `.astro`. Mereka dirancang sebagai **superset dari HTML**, artinya setiap file HTML valid adalah juga file Astro yang valid. Ini membuat transisi dari HTML statis ke Astro sangat mudah.
+
+### Struktur Dasar File `.astro`:
+
+```astro
+---
+// Bagian 1: Frontmatter (JavaScript/TypeScript - Server-side)
+// Kode di sini berjalan di server, tidak dikirim ke browser
+const title = "Halo Dunia";
+const items = ["Apel", "Jeruk", "Mangga"];
+---
+
+<!-- Bagian 2: Template (HTML + Expressions) -->
+<!-- Ini yang dirender ke browser -->
+<h1>{title}</h1>
+<ul>
+  {items.map(item => <li>{item}</li>)}
+</ul>
+
+<!-- Bagian 3: Styles (Scoped by default) -->
+<style>
+  h1 { color: #3b82f6; }
+  li { font-size: 1.1rem; }
+</style>
+
+<!-- Bagian 4: Scripts (Client-side, hanya jika diperlukan) -->
+<script>
+  console.log("Halo dari browser!");
+</script>
+```
+
+### Analogi Sederhana:
+
+> Bayangkan file `.astro` seperti **sandwich tiga lapis**:
+> - **Lapis atas (Frontmatter)**: Dapur tempat kamu menyiapkan bahan (data, logic, import)
+> - **Lapis tengah (Template)**: Meja saji tempat bahan disusun jadi hidangan (HTML)
+> - **Lapis bawah (Style/Script)**: Bumbu dan peralatan tambahan yang membuat hidangan lebih menarik
+
+---
+
+## 3.2 Template Expressions & JavaScript
+
+Template expressions memungkinkan kamu menyisipkan JavaScript dinamis ke dalam HTML menggunakan kurung kurawal `{ }`.
+
+### Aturan Dasar Expressions:
+
+| Sintaks | Fungsi | Contoh |
+|---------|--------|--------|
+| `{variable}` | Menampilkan nilai variabel | `{title}` |
+| `{expression}` | Evaluasi ekspresi JavaScript | `{2 + 2}` → `4` |
+| `{condition ? 'A' : 'B'}` | Ternary operator | `{isAdmin ? 'Admin' : 'User'}` |
+| `{items.map(...)}` | Render list | `{items.map(i => <li>{i}</li>)}` |
+| `{condition && <p>}</p>` | Conditional rendering | `{showAlert && <Alert />}` |
+
+### Contoh Lengkap Expressions:
+
+```astro
+---
+const nama = "Budi";
+const umur = 25;
+const hobi = ["Coding", "Membaca", "Gaming"];
+const isOnline = true;
+const user = {
+  nama: "Ana",
+  role: "admin",
+  lastLogin: new Date("2026-01-15")
+};
+---
+
+<!-- 1. Variabel Sederhana -->
+<h1>Halo, {nama}!</h1>
+<p>Umur kamu {umur} tahun.</p>
+
+<!-- 2. Ekspresi Matematika/Logika -->
+<p>Tahun lahir: {new Date().getFullYear() - umur}</p>
+<p>Status: {isOnline ? "🟢 Online" : "🔴 Offline"}</p>
+
+<!-- 3. Render List/Array -->
+<h2>Hobi Saya:</h2>
+<ul>
+  {hobi.map((item, index) => (
+    <li>{index + 1}. {item.toUpperCase()}</li>
+  ))}
+</ul>
+
+<!-- 4. Conditional Rendering -->
+{isOnline ? (
+  <p>Selamat datang kembali, {user.nama}!</p>
+) : (
+  <p>Silakan login terlebih dahulu.</p>
+)}
+
+<!-- 5. Short-circuit Evaluation (&&) -->
+{user.role === 'admin' && (
+  <div class="admin-panel">
+    <button>Kelola User</button>
+    <button>Lihat Statistik</button>
+  </div>
+)}
+
+<!-- 6. Optional Chaining dan Nullish Coalescing -->
+<p>Login terakhir: {user?.lastLogin?.toLocaleDateString('id-ID') ?? 'Tidak diketahui'}</p>
+```
+
+### Spread Props:
+
+Kamu bisa menyebarkan (spread) object sebagai atribut HTML:
+
+```astro
+---
+const linkProps = {
+  href: "https://example.com",
+  target: "_blank",
+  rel: "noopener noreferrer",
+  class: "btn btn-primary"
+};
+---
+
+<!-- Menjadi: <a href="..." target="_blank" rel="..." class="..."> -->
+<a {...linkProps}>Kunjungi Website</a>
+```
+
+### Dynamic Tags (Tag HTML Dinamis):
+
+```astro
+---
+const Element = 'h1'; // Bisa 'h1', 'h2', 'p', dll
+const size = 'large'; // Bisa 'small', 'medium', 'large'
+---
+
+<!-- Render sebagai <h1> -->
+<Element>Judul Dinamis</Element>
+
+<!-- Dengan class dinamis -->
+<p class:list={['btn', { 'btn-large': size === 'large', 'btn-small': size === 'small' }]}>
+  Tombol
+</p>
+<!-- Output: <p class="btn btn-large">Tombol</p> -->
+```
+
+---
+
+## 3.3 Component Props & Data Passing
+
+Props adalah cara komponen Astro menerima data dari komponen lain. Ini seperti parameter fungsi, tapi untuk UI components.
+
+### Mendefinisikan Props dengan TypeScript:
+
+```astro
+---
+// src/components/Card.astro
+interface Props {
+  description?: string;             // Opsional (optional)
+  image?: string;
+  tags?: string[];                  // Array dengan default
+  featured?: boolean;               // Boolean dengan default
+  publishDate?: Date;
+}
+
+// Destructuring dengan default values
+const {
+  title,
+  description = "Tidak ada deskripsi",  // Default value
+  image = "/images/placeholder.jpg",
+  tags = [],
+  featured = false,
+  publishDate = new Date()
+} = Astro.props;
+
+// Format tanggal
+const formattedDate = publishDate.toLocaleDateString('id-ID', {
+  year: 'numeric',
+  month: 'long',
+  day: 'numeric'
+});
+---
+
+<article class:list={['card', { 'card-featured': featured }]}>
+  {featured && <span class="badge">Featured</span>}
+  
+  <img src={image} alt={title} loading="lazy" />
+  
+  <div class="content">
+    <h2>{title}</h2>
+    <time>{formattedDate}</time>
+    <p>{description}</p>
+    
+    {tags.length > 0 && (
+      <div class="tags">
+        {tags.map(tag => <span class="tag">#{tag}</span>)}
+      </div>
+    )}
+  </div>
+</article>
+
+<style>
+  .card {
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  .card-featured {
+    border-color: #3b82f6;
+    box-shadow: 0 4px 6px -1px rgba(59, 130, 246, 0.1);
+  }
+  .badge {
+    position: absolute;
+    background: #3b82f6;
+    color: white;
+    padding: 0.25rem 0.75rem;
+    border-radius: 0 0 8px 0;
+  }
+</style>
+```
+
+### Menggunakan Component dengan Props:
+
+```astro
+---
+// src/pages/index.astro
+import Card from '../components/Card.astro';
+---
+
+<!-- Semua props diisi -->
+<Card
+  title="Panduan Astro Lengkap"
+  description="Belajar Astro dari nol hingga mahir"
+  image="/images/astro-guide.jpg"
+  tags={["astro", "web", "tutorial"]}
+  featured={true}
+  publishDate={new Date("2026-01-20")}
+/>
+
+<!-- Hanya props wajib, lainnya pakai default -->
+<Card title="Artikel Singkat" />
+
+<!-- Mix props -->
+<Card
+  title="Tips Performa"
+  description="Optimalkan website Astro kamu"
+  tags={["performance", "tips"]}
+/>
+```
+
+### Props dengan Rest Parameters:
+
+```astro
+---
+// src/components/Button.astro
+interface Props {
+  variant?: 'primary' | 'secondary' | 'danger';
+  size?: 'sm' | 'md' | 'lg';
+  // Menerima atribut HTML tambahan apa pun
+  [key: string]: any;
+}
+
+const { variant = 'primary', size = 'md', ...attrs } = Astro.props;
+---
+
+<button 
+  class:list={['btn', `btn-${variant}`, `btn-${size}`]}
+  {...attrs}  <!-- Spread semua atribut tambahan -->
+>
+  <slot />
+</button>
+```
+
+**Penggunaan:**
+```astro
+<Button 
+  variant="danger" 
+  size="lg" 
+  onclick="handleClick()" 
+  disabled={false}
+  data-tracking-id="btn-123"
+>
+  Hapus Data
+</Button>
+<!-- Output: <button class="btn btn-danger btn-lg" onclick="..." disabled="false" data-tracking-id="...">Hapus Data</button> -->
+```
+
+---
+
+## 3.4 Slots & Named Slots
+
+Slots adalah cara meneruskan **konten HTML** ke komponen child. Ini seperti template yang bisa diisi dari luar.
+
+### Slot Default (Tunggal):
+
+```astro
+---
+// src/components/Wrapper.astro
+---
+
+<div class="wrapper">
+  <header>
+    <h2>Konten Wrapper</h2>
+  </header>
+  
+  <main>
+    <slot />  <!-- Konten dari parent masuk di sini -->
+  </main>
+  
+  <footer>
+    <p>© 2026</p>
+  </footer>
+</div>
+```
+
+**Penggunaan:**
+```astro
+---
+import Wrapper from '../components/Wrapper.astro';
+---
+
+<Wrapper>
+  <!-- Semua ini masuk ke <slot /> -->
+  <p>Ini konten custom dari parent.</p>
+  <button>Klik Saya</button>
+  <img src="/foto.jpg" alt="Foto" />
+</Wrapper>
+```
+
+### Named Slots (Slot Bernama):
+
+Kamu bisa memiliki multiple slots dengan nama berbeda.
+
+```astro
+---
+// src/components/Layout.astro
+interface Props {
+}
+const { title } = Astro.props;
+---
+
+<!DOCTYPE html>
+<html lang="id">
+  <head>
+    <meta charset="UTF-8" />
+    <title>{title}</title>
+    <slot name="head" />  <!-- Slot khusus untuk head -->
+  </head>
+  <body>
+    <header>
+      <slot name="header" />  <!-- Slot untuk header -->
+    </header>
+    
+    <aside>
+      <slot name="sidebar" />  <!-- Slot untuk sidebar -->
+    </aside>
+    
+    <main>
+      <slot />  <!-- Slot default untuk konten utama -->
+    </main>
+    
+    <footer>
+      <slot name="footer" />  <!-- Slot untuk footer -->
+    </footer>
+  </body>
+</html>
+```
+
+**Penggunaan Named Slots:**
+```astro
+---
+import Layout from '../components/Layout.astro';
+---
+
+<Layout title="Halaman Saya">
+  <!-- slot default (tanpa atribut slot) -->
+  <h1>Selamat Datang</h1>
+  <p>Ini konten utama.</p>
+  
+  <!-- slot="head" -->
+  <Fragment slot="head">
+    <meta name="description" content="Deskripsi halaman" />
+    <link rel="stylesheet" href="/custom.css" />
+  </Fragment>
+  
+  <!-- slot="header" -->
+  <nav slot="header">
+    <a href="/">Home</a>
+    <a href="/about">About</a>
+  </nav>
+  
+  <!-- slot="sidebar" -->
+  <ul slot="sidebar">
+    <li>Menu 1</li>
+    <li>Menu 2</li>
+  </ul>
+  
+  <!-- slot="footer" -->
+  <p slot="footer">Custom footer text</p>
+</Layout>
+```
+
+### Slot Fallback (Default Content):
+
+Jika slot tidak diisi, kamu bisa menyediakan konten default.
+
+```astro
+---
+// src/components/Card.astro
+interface Props {
+}
+const { title } = Astro.props;
+---
+
+<div class="card">
+  <h3>{title}</h3>
+  
+  <div class="body">
+    <slot>
+      <!-- Fallback jika slot tidak diisi -->
+      <p>Konten belum tersedia.</p>
+    </slot>
+  </div>
+  
+  <div class="footer">
+    <slot name="footer">
+      <!-- Fallback untuk named slot -->
+      <button>Baca Selengkapnya</button>
+    </slot>
+  </div>
+</div>
+```
+
+### Mengakses Slot dari Script:
+
+Kamu bisa memeriksa apakah slot diisi atau tidak:
+
+```astro
+---
+// src/components/Tabs.astro
+const hasIcon = Astro.slots.has('icon');
+const iconContent = await Astro.slots.render('icon');
+---
+
+<div class="tab">
+  {hasIcon && (
+    <div class="tab-icon">
+      <slot name="icon" />
+    </div>
+  )}
+  <div class="tab-content">
+    <slot />
+  </div>
+</div>
+```
+
+---
+
+## 3.5 Fragments
+
+`<Fragment>` adalah wrapper tak terlihat (invisible) yang tidak menambahkan elemen DOM tambahan. Berguna untuk mengelompokkan elemen tanpa div yang tidak perlu.
+
+### Masalah yang Dipecahkan Fragment:
+
+```astro
+---
+// ❌ Tanpa Fragment - menambah div yang tidak perlu
+const items = ['A', 'B', 'C'];
+---
+
+<!-- Ini menambah <div> ekstra ke DOM -->
+{items.map(item => (
+  <div>  <!-- Div ini mungkin merusak styling/layout -->
+    <span>{item}</span>
+    <button>Hapus</button>
+  </div>
+))}
+```
+
+### Solusi dengan Fragment:
+
+```astro
+---
+// ✅ Dengan Fragment - tidak menambah elemen wrapper
+const items = ['A', 'B', 'C'];
+---
+
+<!-- Fragment tidak dirender ke DOM, hanya children-nya -->
+{items.map(item => (
+  <Fragment>
+    <span>{item}</span>
+    <button>Hapus</button>
+  </Fragment>
+))}
+```
+
+### Fragment dengan Slot:
+
+```astro
+---
+// Mengisi named slot tanpa wrapper tambahan
+---
+
+<Layout>
+  <Fragment slot="head">
+    <meta property="og:title" content="Judul Sosial" />
+    <meta property="og:image" content="/image.jpg" />
+  </Fragment>
+  
+  <h1>Konten Utama</h1>
+</Layout>
+```
+
+### Shorthand: `<></>`
+
+Astro juga mendukung sintaks Fragment shorthand seperti React:
+
+```astro
+---
+const list = [1, 2, 3];
+---
+
+<>
+  <h1>Judul</h1>
+  {list.map(num => (
+    <>
+      <span>{num}</span>
+      <span>, </span>
+    </>
+  ))}
+</>
+```
+
+---
+
+## 3.6 Special Elements (`<head>`, `<body>`)
+
+Astro memiliki perilaku khusus untuk elemen `<head>` dan `<body>` yang perlu dipahami.
+
+### Elemen `<head>`:
+
+```astro
+---
+// src/pages/index.astro
+import Seo from '../components/Seo.astro';
+---
+
+<html lang="id">
+  <head>
+    <!-- Meta dasar (wajib) -->
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    
+    <!-- Title dinamis -->
+    <title>Judul Halaman</title>
+    
+    <!-- Meta description untuk SEO -->
+    <meta name="description" content="Deskripsi halaman ini" />
+    
+    <!-- Favicon -->
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    
+    <!-- Canonical URL -->
+    <link rel="canonical" href="https://example.com/halaman" />
+    
+    <!-- Open Graph (untuk sharing sosial media) -->
+    <meta property="og:title" content="Judul untuk Facebook/Twitter" />
+    <meta property="og:description" content="Deskripsi sosial" />
+    <meta property="og:image" content="https://example.com/image.jpg" />
+    
+    <!-- Komponen SEO reusable -->
+    <Seo 
+      title="Judul"
+      description="Deskripsi"
+      image="/og-image.jpg"
+    />
+  </head>
+  <body>
+    <h1>Konten</h1>
+  </body>
+</html>
+```
+
+### De-duplikasi Otomatis:
+
+Astro secara cerdas menangani duplikasi di `<head>`. Jika ada tag yang sama (misalnya title), yang terakhir akan menang:
+
+```astro
+---
+// src/layouts/BaseLayout.astro
+---
+
+<html>
+  <head>
+    <title>Default Title</title>  <!-- Akan di-override -->
+    <slot name="head" />
+  </head>
+  <body>
+    <slot />
+  </body>
+</html>
+```
+
+```astro
+---
+// src/pages/blog.astro
+import BaseLayout from '../layouts/BaseLayout.astro';
+---
+
+<BaseLayout>
+  <title slot="head">Judul Artikel Spesifik</title>  <!-- Ini yang akan muncul -->
+  <h1>Artikel</h1>
+</BaseLayout>
+```
+
+---
+
+## 3.7 Frontmatter Section
+
+Frontmatter adalah bagian paling atas file Astro yang diawali dan diakhiri tiga tanda strip (`---`). Ini adalah **server-side JavaScript** yang dieksekusi saat build time.
+
+### Apa yang Bisa Dilakukan di Frontmatter:
+
+```astro
+---
+// 1. Import Statements
+import Layout from '../layouts/Layout.astro';
+import Card from '../components/Card.astro';
+import { getCollection } from 'astro:content';
+import { Image } from 'astro:assets';
+
+// 2. Fetch Data (API, Database, File System)
+const response = await fetch('https://api.example.com/posts');
+const posts = await response.json();
+
+// 3. Query Content Collections
+const blogPosts = await getCollection('blog', (post) => !post.data.draft);
+
+// 4. Access Global Objects
+const currentPath = Astro.url.pathname;
+const siteUrl = Astro.site;
+const params = Astro.params;  // Untuk dynamic routes
+
+// 5. Define Variables & Constants
+const title = "Daftar Artikel";
+const description = "Kumpulan artikel terbaru dari blog kami";
+const itemsPerPage = 10;
+
+// 6. Computed Values
+const totalPages = Math.ceil(blogPosts.length / itemsPerPage);
+const currentPage = Number(Astro.url.searchParams.get('page')) || 1;
+const paginatedPosts = blogPosts.slice(
+  (currentPage - 1) * itemsPerPage,
+  currentPage * itemsPerPage
+);
+
+// 7. Type Definitions (TypeScript)
+interface Post {
+  id: string;
+  date: Date;
+}
+
+// 8. Conditional Logic
+const isProduction = import.meta.env.PROD;
+const analyticsId = isProduction ? 'UA-XXXXX-1' : 'UA-DEV-1';
+
+// 9. Formatting Functions
+function formatDate(date: Date): string {
+  return new Intl.DateTimeFormat('id-ID', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric'
+  }).format(date);
+}
+---
+
+<Layout title={title} description={description}>
+  <h1>{title}</h1>
+  <p>Halaman {currentPage} dari {totalPages}</p>
+  
+  <div class="grid">
+    {paginatedPosts.map(post => (
+      <Card
+        title={post.data.title}
+        date={formatDate(post.data.pubDate)}
+        href={`/blog/${post.slug}`}
+      />
+    ))}
+  </div>
+</Layout>
+```
+
+### Scope Frontmatter:
+
+**Penting:** Variabel di frontmatter hanya tersedia dalam file tersebut. Tidak otomatis tersedia di layout atau komponen child.
+
+```astro
+---
+// src/pages/index.astro
+const pageTitle = "Homepage";  // Hanya tersedia di file ini
+---
+
+<Layout>
+  <!-- Layout tidak otomatis tahu tentang pageTitle -->
+  <!-- Harus pass via props: <Layout title={pageTitle}> -->
+</Layout>
+```
+
+---
+
+## 3.8 Backmatter Section
+
+**Backmatter** adalah istilah yang kadang digunakan untuk menyebut bagian bawah file Astro, terutama untuk:
+
+1. **Client-side Scripts** (`<script>` tags)
+2. **Scoped Styles** (`<style>` tags)
+3. **Metadata tambahan**
+
+### Client Scripts:
+
+```astro
+---
+// Frontmatter (server-side)
+const buttonId = "cta-button";
+---
+
+<button id={buttonId}>Klik Saya</button>
+
+<!-- Backmatter: Client-side script -->
+<script define:vars={{ buttonId }}>
+  // Variabel dari frontmatter tersedia di sini via define:vars
+  const button = document.getElementById(buttonId);
+  
+  button.addEventListener('click', () => {
+    alert('Tombol diklik!');
+    console.log('Button ID:', buttonId);
+  });
+</script>
+```
+
+### Scoped Styles:
+
+```astro
+---
+// Frontmatter
+const isActive = true;
+---
+
+<div class:list={['box', { active: isActive }]}>
+  Konten dengan styling khusus
+</div>
+
+<!-- Backmatter: Scoped CSS -->
+<style>
+  .box {
+    padding: 1rem;
+    border: 2px solid #e5e7eb;
+    border-radius: 8px;
+    transition: all 0.2s;
+  }
+  
+  .box.active {
+    border-color: #3b82f6;
+    background: #eff6ff;
+  }
+  
+  /* Scoped: hanya berlaku untuk elemen di komponen ini */
+</style>
+```
+
+### Script dengan TypeScript:
+
+```astro
+---
+// Frontmatter
+interface User {
+  name: string;
+  id: number;
+}
+
+const user: User = { name: "Budi", id: 123 };
+---
+
+<button id="user-btn">Show User</button>
+
+<script>
+  // TypeScript juga berfungsi di script tag!
+  interface User {
+    name: string;
+    id: number;
+  }
+  
+  const userData: User = { name: "Budi", id: 123 };
+  
+  document.getElementById('user-btn')?.addEventListener('click', () => {
+    console.log(`User: ${userData.name} (ID: ${userData.id})`);
+  });
+</script>
+```
+
+---
+
+## Ringkasan Sesi 3
+
+| Konsep | Deskripsi | Contoh Kunci |
+|--------|-----------|--------------|
+| **Superset HTML** | File `.astro` = HTML + JS | Setiap HTML valid adalah Astro valid |
+| **Template Expressions** | `{variable}`, `{expression}` | `{title}`, `{items.map(...)}` |
+| **Props** | Data masuk ke komponen | `interface Props { title: string }` |
+| **Slots** | Konten HTML masuk ke komponen | `<slot />`, `<slot name="header" />` |
+| **Fragments** | Wrapper tak terlihat | `<Fragment>` atau `<></>` |
+| **Frontmatter** | JavaScript server-side | `--- const data = ... ---` |
+| **Backmatter** | Script & style di akhir file | `<script>`, `<style>` |
+
+---
+
+**Selanjutnya:** Di Sesi 4, kita akan membahas **Routing & Halaman** - memahami file-based routing, dynamic routes, nested routes, dan API routes. Kita akan melihat bagaimana struktur folder `src/pages/` secara otomatis menjadi URL website kamu.

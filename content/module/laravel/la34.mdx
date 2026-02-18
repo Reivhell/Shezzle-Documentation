@@ -1,0 +1,707 @@
+---
+title: "Sesi 34: Seeding & Model Factories"
+description: "Menguasai teknik seeding dan factory untuk generate data realistic, mengelola complex relationships, dan membangun test suite yang robust dengan data ..."
+category: "laravel"
+tags: ["laravel", "eloquent"]
+order: 34
+---
+
+## Tujuan Pembelajaran
+
+Menguasai teknik seeding dan factory untuk generate data realistic, mengelola complex relationships, dan membangun test suite yang robust dengan data factory.
+
+## 1. Database Seeders
+
+### 1.1 DatabaseSeeder Organization
+
+Struktur seeding yang scalable untuk aplikasi besar.
+
+```php
+<?php
+
+namespace Database\Seeders;
+
+use Illuminate\Database\Seeder;
+
+class DatabaseSeeder extends Seeder
+{
+    public function run(): void
+    {
+        $this->call([
+            PermissionSeeder::class,
+            RoleSeeder::class,
+            AdminUserSeeder::class,
+            CategorySeeder::class,
+            TagSeeder::class,
+            UserSeeder::class,
+            PostSeeder::class,
+            CommentSeeder::class,
+            OrderSeeder::class,
+        ]);
+    }
+}
+```
+
+```php
+<?php
+
+namespace Database\Seeders;
+
+use App\Models\Category;
+use Illuminate\Database\Seeder;
+
+class CategorySeeder extends Seeder
+{
+    public function run(): void
+    {
+        $categories = [
+            ['name' => 'Technology', 'slug' => 'tech', 'description' => 'Tech articles'],
+            ['name' => 'Business', 'slug' => 'business', 'description' => 'Business news'],
+            ['name' => 'Lifestyle', 'slug' => 'lifestyle', 'description' => 'Lifestyle tips'],
+        ];
+
+        foreach ($categories as $category) {
+            Category::create($category);
+        }
+    }
+}
+```
+
+### 1.2 Conditional Seeding
+
+```php
+<?php
+
+class DatabaseSeeder extends Seeder
+{
+    public function run(): void
+    {
+        // Environment-specific seeding
+        if (app()->environment('local', 'staging')) {
+            $this->call(DevDataSeeder::class);
+        }
+
+        if (app()->environment('production')) {
+            $this->call(ProductionSeeder::class);
+        }
+
+        // Seeding dengan command option
+        if ($this->command->option('fresh')) {
+            // Hapus storage files
+            Storage::deleteDirectory('public/uploads');
+        }
+    }
+}
+```
+
+### 1.3 Idempotent Seeding
+
+```php
+<?php
+
+class PermissionSeeder extends Seeder
+{
+    public function run(): void
+    {
+        $permissions = [
+            'users.view',
+            'users.create',
+            'users.edit',
+            'users.delete',
+        ];
+
+        foreach ($permissions as $permission) {
+            Permission::firstOrCreate(
+                ['name' => $permission],
+                ['guard_name' => 'web', 'description' => "Can {$permission}"]
+            );
+        }
+    }
+}
+```
+
+## 2. Model Factories
+
+### 2.1 Factory Definition
+
+```php
+<?php
+
+namespace Database\Factories;
+
+use Illuminate\Database\Eloquent\Factories\Factory;
+
+class UserFactory extends Factory
+{
+    protected $model = User::class;
+
+    public function definition(): array
+    {
+        return [
+            'name' => fake()->name(),
+            'email' => fake()->unique()->safeEmail(),
+            'email_verified_at' => now(),
+            'password' => bcrypt('password'), // atau Hash::make('password')
+            'remember_token' => Str::random(10),
+            'avatar' => fake()->imageUrl(200, 200, 'people'),
+            'bio' => fake()->optional()->paragraph(),
+            'country' => fake()->countryCode(),
+            'is_active' => true,
+            'created_at' => fake()->dateTimeBetween('-2 years', 'now'),
+        ];
+    }
+}
+```
+
+### 2.2 Factory States
+
+```php
+<?php
+
+class UserFactory extends Factory
+{
+    // ... definition()
+
+    /**
+     * Indicate that the user is suspended.
+     */
+    public function suspended(): static
+    {
+        return $this->state(fn (array $attributes) => [
+            'is_active' => false,
+            'suspended_at' => now(),
+            'suspension_reason' => fake()->sentence(),
+        ]);
+    }
+
+    /**
+     * Indicate that the user is an admin.
+     */
+    public function admin(): static
+    {
+        return $this->state(fn (array $attributes) => [
+            'email' => 'admin@' . parse_url(config('app.url'), PHP_URL_HOST),
+            'is_admin' => true,
+        ]);
+    }
+
+    /**
+     * User dengan profile lengkap.
+     */
+    public function completeProfile(): static
+    {
+        return $this->state(fn (array $attributes) => [
+            'email_verified_at' => now(),
+            'phone' => fake()->phoneNumber(),
+            'address' => fake()->address(),
+            'birth_date' => fake()->dateTimeBetween('-60 years', '-18 years'),
+        ]);
+    }
+
+    /**
+     * Unverified user.
+     */
+    public function unverified(): static
+    {
+        return $this->state(fn (array $attributes) => [
+            'email_verified_at' => null,
+        ]);
+    }
+}
+```
+
+Penggunaan states:
+
+```php
+<?php
+
+// Single state
+$user = User::factory()->suspended()->create();
+
+// Multiple states (chaining)
+$user = User::factory()
+    ->suspended()
+    ->completeProfile()
+    ->create();
+
+// State dengan override
+$user = User::factory()->state([
+    'name' => 'Custom Name',
+])->create();
+```
+
+### 2.3 Factory Relationships
+
+```php
+<?php
+
+class PostFactory extends Factory
+{
+    public function definition(): array
+    {
+        return [
+            'title' => fake()->sentence(),
+            'slug' => fake()->unique()->slug(),
+            'excerpt' => fake()->paragraph(),
+            'content' => fake()->paragraphs(5, true),
+            'status' => fake()->randomElement(['draft', 'published', 'archived']),
+            'published_at' => fake()->optional(0.7)->dateTimeBetween('-1 year', 'now'),
+            'featured' => fake()->boolean(10),
+        ];
+    }
+
+    /**
+     * Configure the model factory.
+     */
+    public function configure(): static
+    {
+        return $this->afterMaking(function (Post $post) {
+            // Setelah making, sebelum create
+        })->afterCreating(function (Post $post) {
+            // Setelah create, buat relasi
+            $post->tags()->attach(Tag::inRandomOrder()->limit(3)->pluck('id'));
+        });
+    }
+
+    /**
+     * Post dengan author specific.
+     */
+    public function forAuthor(User $user): static
+    {
+        return $this->state(fn (array $attributes) => [
+            'user_id' => $user->id,
+        ]);
+    }
+
+    /**
+     * Post dengan category.
+     */
+    public function withCategory(): static
+    {
+        return $this->state(fn (array $attributes) => [
+            'category_id' => Category::inRandomOrder()->first()?->id ?? Category::factory(),
+        ]);
+    }
+
+    /**
+     * Post dengan comments.
+     */
+    public function withComments(int $count = 5): static
+    {
+        return $this->has(
+            Comment::factory()->count($count)->state(function (array $attributes, Post $post) {
+                return ['user_id' => User::inRandomOrder()->first()->id];
+            }),
+            'comments'
+        );
+    }
+}
+```
+
+### 2.4 Complex Relationships
+
+```php
+<?php
+
+class OrderFactory extends Factory
+{
+    public function definition(): array
+    {
+        return [
+            'order_number' => 'ORD-' . fake()->unique()->numerify('########'),
+            'status' => fake()->randomElement(['pending', 'processing', 'completed', 'cancelled']),
+            'total' => 0, // Akan dihitung dari items
+            'user_id' => User::factory(),
+            'shipping_address' => fake()->address(),
+            'created_at' => fake()->dateTimeBetween('-6 months', 'now'),
+        ];
+    }
+
+    /**
+     * Order dengan items dan hitung total otomatis.
+     */
+    public function withItems(int $count = 3): static
+    {
+        return $this->has(
+            OrderItem::factory()->count($count),
+            'items'
+        )->afterCreating(function (Order $order) {
+            $total = $order->items->sum(function ($item) {
+                return $item->price * $item->quantity;
+            });
+            
+            $order->update(['total' => $total]);
+        });
+    }
+
+    /**
+     * Order completed dengan payment.
+     */
+    public function completed(): static
+    {
+        return $this->state([
+            'status' => 'completed',
+            'completed_at' => now(),
+        ])->afterCreating(function (Order $order) {
+            Payment::factory()->create([
+                'order_id' => $order->id,
+                'amount' => $order->total,
+                'status' => 'paid',
+            ]);
+        });
+    }
+}
+```
+
+```php
+<?php
+
+class OrderItemFactory extends Factory
+{
+    public function definition(): array
+    {
+        $price = fake()->numberBetween(10000, 1000000);
+        $quantity = fake()->numberBetween(1, 5);
+        
+        return [
+            'product_name' => fake()->productName(),
+            'product_sku' => fake()->unique()->ean8(),
+            'price' => $price,
+            'quantity' => $quantity,
+            'subtotal' => $price * $quantity,
+        ];
+    }
+}
+```
+
+### 2.5 Factory Callbacks
+
+```php
+<?php
+
+class UserFactory extends Factory
+{
+    public function configure(): static
+    {
+        return $this
+            ->afterMaking(function (User $user) {
+                // Modifikasi sebelum disimpan ke database
+                if (empty($user->username)) {
+                    $user->username = Str::slug($user->name);
+                }
+            })
+            ->afterCreating(function (User $user) {
+                // Buat relasi setelah user tersimpan
+                $user->profile()->create([
+                    'bio' => fake()->optional()->paragraph(),
+                ]);
+                
+                $user->wallet()->create([
+                    'balance' => fake()->numberBetween(0, 1000000),
+                ]);
+                
+                // Assign random roles
+                $roles = Role::inRandomOrder()->limit(rand(1, 3))->pluck('id');
+                $user->roles()->attach($roles);
+            });
+    }
+}
+```
+
+### 2.6 Factory Sequences
+
+```php
+<?php
+
+use Illuminate\Database\Eloquent\Factories\Sequence;
+
+// Sequence untuk pola data
+$users = User::factory()
+    ->count(10)
+    ->state(new Sequence(
+        ['country' => 'ID', 'timezone' => 'Asia/Jakarta'],
+        ['country' => 'SG', 'timezone' => 'Asia/Singapore'],
+        ['country' => 'MY', 'timezone' => 'Asia/Kuala_Lumpur'],
+        ['country' => 'TH', 'timezone' => 'Asia/Bangkok'],
+    ))
+    ->create();
+
+// Sequence dengan closure
+$posts = Post::factory()
+    ->count(20)
+    ->state(new Sequence(
+        fn (Sequence $sequence) => ['status' => $sequence->index % 2 === 0 ? 'published' : 'draft'],
+    ))
+    ->create();
+
+// Cycle through values
+$products = Product::factory()
+    ->count(100)
+    ->state(new Sequence(
+        ['category_id' => 1],
+        ['category_id' => 2],
+        ['category_id' => 3],
+    ))
+    ->create();
+```
+
+## 3. Production Seeding Safety
+
+### 3.1 Safe Production Seeder
+
+```php
+<?php
+
+class ProductionSeeder extends Seeder
+{
+    public function run(): void
+    {
+        if (!app()->environment('production')) {
+            $this->command->error('This seeder is only for production!');
+            return;
+        }
+
+        // Konfirmasi manual
+        if (!$this->command->confirm('This will modify production data. Continue?', false)) {
+            return;
+        }
+
+        // Admin user dengan password secure
+        User::firstOrCreate(
+            ['email' => 'admin@company.com'],
+            [
+                'name' => 'System Administrator',
+                'password' => Hash::make($this->command->secret('Enter admin password:')),
+                'is_admin' => true,
+                'email_verified_at' => now(),
+            ]
+        );
+
+        // Settings default
+        Setting::firstOrCreate(
+            ['key' => 'app_name'],
+            ['value' => config('app.name'), 'type' => 'string']
+        );
+    }
+}
+```
+
+### 3.2 Factory forModel()
+
+```php
+<?php
+
+// Dapatkan factory untuk model dynamic
+$factory = Factory::factoryForModel(User::class);
+
+// Berguna untuk polymorphic atau generic services
+class DataGenerator
+{
+    public function generate(string $modelClass, int $count = 1)
+    {
+        $factory = Factory::factoryForModel($modelClass);
+        
+        return $factory->count($count)->create();
+    }
+}
+```
+
+## 4. Testing dengan Factories
+
+### 4.1 Basic Testing
+
+```php
+<?php
+
+class PostTest extends TestCase
+{
+    use RefreshDatabase;
+
+    public function test_user_can_create_post()
+    {
+        $user = User::factory()->create();
+        $category = Category::factory()->create();
+
+        $response = $this->actingAs($user)->postJson('/api/posts', [
+            'title' => 'Test Post',
+            'content' => 'Content here',
+            'category_id' => $category->id,
+        ]);
+
+        $response->assertCreated()
+            ->assertJsonPath('data.title', 'Test Post');
+    }
+
+    public function test_post_listing_with_relations()
+    {
+        // Buat 5 post dengan author dan category
+        Post::factory()
+            ->count(5)
+            ->for(User::factory()->state(['name' => 'John Doe']), 'author')
+            ->for(Category::factory())
+            ->has(Comment::factory()->count(3))
+            ->create();
+
+        $response = $this->getJson('/api/posts');
+
+        $response->assertOk()
+            ->assertJsonCount(5, 'data')
+            ->assertJsonPath('data.0.author.name', 'John Doe');
+    }
+}
+```
+
+### 4.2 Testing Edge Cases
+
+```php
+<?php
+
+class OrderTest extends TestCase
+{
+    use RefreshDatabase;
+
+    public function test_cannot_order_out_of_stock_item()
+    {
+        $product = Product::factory()->create(['stock' => 0]);
+        $user = User::factory()->create();
+
+        $response = $this->actingAs($user)->postJson('/api/orders', [
+            'items' => [
+                ['product_id' => $product->id, 'quantity' => 1],
+            ],
+        ]);
+
+        $response->assertUnprocessable()
+            ->assertJsonValidationErrors(['items.0.quantity']);
+    }
+
+    public function test_order_calculates_total_correctly()
+    {
+        $order = Order::factory()
+            ->withItems(3)
+            ->create();
+
+        $expectedTotal = $order->items->sum(function ($item) {
+            return $item->price * $item->quantity;
+        });
+
+        $this->assertEquals($expectedTotal, $order->total);
+    }
+
+    public function test_suspended_user_cannot_order()
+    {
+        $user = User::factory()->suspended()->create();
+        $product = Product::factory()->create();
+
+        $response = $this->actingAs($user)->postJson('/api/orders', [
+            'items' => [
+                ['product_id' => $product->id, 'quantity' => 1],
+            ],
+        ]);
+
+        $response->assertForbidden();
+    }
+}
+```
+
+### 4.3 Shared Test Data
+
+```php
+<?php
+
+trait HasTestData
+{
+    protected function createAdmin(): User
+    {
+        return User::factory()->admin()->create();
+    }
+
+    protected function createPublishedPost(array $overrides = []): Post
+    {
+        return Post::factory()
+            ->state(['status' => 'published', ...$overrides])
+            ->create();
+    }
+
+    protected function createOrderWithStatus(string $status): Order
+    {
+        return Order::factory()->state(['status' => $status])->create();
+    }
+}
+
+class AdminTest extends TestCase
+{
+    use RefreshDatabase, HasTestData;
+
+    public function test_admin_can_view_all_orders()
+    {
+        $admin = $this->createAdmin();
+        Order::factory()->count(5)->create();
+
+        $response = $this->actingAs($admin)->getJson('/api/admin/orders');
+
+        $response->assertOk()->assertJsonCount(5, 'data');
+    }
+}
+```
+
+## 5. Advanced Factory Patterns
+
+### 5.1 Factory untuk Performance Testing
+
+```php
+<?php
+
+// DatabaseSeeder untuk load testing
+class LoadTestSeeder extends Seeder
+{
+    public function run(): void
+    {
+        // 1 juta users
+        User::factory()->count(1000000)->create();
+
+        // 10 juta posts
+        Post::factory()->count(10000000)->create();
+
+        // Indexing setelah bulk insert
+        $this->command->info('Optimizing indexes...');
+        DB::statement('ANALYZE TABLE users');
+        DB::statement('ANALYZE TABLE posts');
+    }
+}
+```
+
+### 5.2 Factory dengan External Data
+
+```php
+<?php
+
+class ProductFactory extends Factory
+{
+    public function definition(): array
+    {
+        // Gunakan real product data dari API atau file
+        $products = json_decode(file_get_contents(database_path('seeders/data/products.json')), true);
+        $product = fake()->randomElement($products);
+
+        return [
+            'name' => $product['name'],
+            'description' => $product['description'],
+            'price' => $product['price'],
+            'sku' => $product['sku'],
+        ];
+    }
+}
+```
+
+## Kesimpulan
+
+Seeding & Factories menyediakan foundation untuk development dan testing:
+- **Organized seeders** dengan pemisahan logic per domain
+- **Factory states** untuk variasi data scenario
+- **Relationships** dengan has(), for(), dan afterCreating hooks
+- **Production safety** dengan konfirmasi dan idempotent operations
+- **Testing integration** dengan RefreshDatabase dan state-specific factories
+
+Selanjutnya di **Sesi 35**, kita akan mempelajari Database Optimization untuk aplikasi high-performance.
+```

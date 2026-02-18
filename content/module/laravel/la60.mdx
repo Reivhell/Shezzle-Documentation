@@ -1,0 +1,452 @@
+---
+title: "Sesi 60: Laravel Sail (Docker Development)"
+description: "Menguasai Laravel Sail untuk development environment yang konsisten, mengkonfigurasi services, dan customizing Docker environment untuk tim developmen..."
+category: "laravel"
+tags: ["laravel"]
+order: 60
+---
+
+## Tujuan Pembelajaran
+
+Menguasai Laravel Sail untuk development environment yang konsisten, mengkonfigurasi services, dan customizing Docker environment untuk tim development.
+
+## 1. Instalasi & Setup
+
+### 1.1 Instalasi Sail
+
+```bash
+# Install Sail pada project existing
+composer require laravel/sail --dev
+
+# Atau install Laravel dengan Sail
+curl -s "https://laravel.build/example-app?with=mysql,redis" | bash
+
+# Setup Sail
+php artisan sail:install
+
+# Pilih services:
+# - mysql
+# - pgsql
+# - mariadb
+# - redis
+# - memcached
+# - meilisearch
+# - typesense
+# - minio (S3)
+# - mailpit
+# - selenium
+# - soketi
+```
+
+### 1.2 Struktur File
+
+```bash
+# File yang di-generate
+├── docker-compose.yml          # Services definition
+├── .env.sail                   # Environment untuk Sail
+└── vendor/laravel/sail/runtimes/
+    ├── 8.3/Dockerfile          # PHP 8.3 runtime
+    ├── 8.2/Dockerfile
+    └── 8.1/Dockerfile
+```
+
+```yaml
+# docker-compose.yml (simplified)
+version: '3'
+services:
+    laravel.test:
+        build:
+            context: ./vendor/laravel/sail/runtimes/8.3
+            dockerfile: Dockerfile
+            args:
+                WWWGROUP: '${WWWGROUP}'
+        image: sail-8.3/app
+        extra_hosts:
+            - 'host.docker.internal:host-gateway'
+        ports:
+            - '${APP_PORT:-80}:80'
+            - '${VITE_PORT:-5173}:${VITE_PORT:-5173}'
+        environment:
+            WWWUSER: '${WWWUSER}'
+            LARAVEL_SAIL: 1
+            XDEBUG_MODE: '${SAIL_XDEBUG_MODE:-off}'
+            XDEBUG_CONFIG: '${SAIL_XDEBUG_CONFIG:-client_host=host.docker.internal}'
+            IGNITION_LOCAL_SITES_PATH: '${PWD}'
+        volumes:
+            - '.:/var/www/html'
+        networks:
+            - sail
+        depends_on:
+            - mysql
+            - redis
+
+    mysql:
+        image: 'mysql/mysql-server:8.0'
+        ports:
+            - '${FORWARD_DB_PORT:-3306}:3306'
+        environment:
+            MYSQL_ROOT_PASSWORD: '${DB_PASSWORD}'
+            MYSQL_ROOT_HOST: '%'
+            MYSQL_DATABASE: '${DB_DATABASE}'
+            MYSQL_USER: '${DB_USERNAME}'
+            MYSQL_PASSWORD: '${DB_PASSWORD}'
+            MYSQL_ALLOW_EMPTY_PASSWORD: 1
+        volumes:
+            - 'sail-mysql:/var/lib/mysql'
+        networks:
+            - sail
+        healthcheck:
+            test: ["CMD", "mysqladmin", "ping", "-p${DB_PASSWORD}"]
+            retries: 3
+            timeout: 5s
+
+    redis:
+        image: 'redis:alpine'
+        ports:
+            - '${FORWARD_REDIS_PORT:-6379}:6379'
+        volumes:
+            - 'sail-redis:/data'
+        networks:
+            - sail
+        healthcheck:
+            test: ["CMD", "redis-cli", "ping"]
+            retries: 3
+            timeout: 5s
+
+    mailpit:
+        image: 'axllent/mailpit:latest'
+        ports:
+            - '${FORWARD_MAILPIT_PORT:-1025}:1025'
+            - '${FORWARD_MAILPIT_DASHBOARD_PORT:-8025}:8025'
+        networks:
+            - sail
+
+    selenium:
+        image: selenium/standalone-chrome
+        extra_hosts:
+            - 'host.docker.internal:host-gateway'
+        volumes:
+            - '/dev/shm:/dev/shm'
+        networks:
+            - sail
+
+networks:
+    sail:
+        driver: bridge
+
+volumes:
+    sail-mysql:
+        driver: local
+    sail-redis:
+        driver: local
+```
+
+## 2. Perintah Sail
+
+### 2.1 Basic Commands
+
+```bash
+# Start Sail (detached)
+./vendor/bin/sail up -d
+
+# Start dengan build ulang
+./vendor/bin/sail up -d --build
+
+# Stop Sail
+./vendor/bin/sail down
+
+# Stop dan hapus volumes
+./vendor/bin/sail down -v
+
+# Restart
+./vendor/bin/sail restart
+
+# View logs
+./vendor/bin/sail logs
+./vendor/bin/sail logs mysql
+./vendor/bin/sail logs -f  # follow
+
+# Shell ke container
+./vendor/bin/sail shell
+./vendor/bin/sail root-shell  # sebagai root
+
+# Execute command
+./vendor/bin/sail php --version
+./vendor/bin/sail composer install
+./vendor/bin/sail artisan migrate
+./vendor/bin/sail npm install
+./vendor/bin/sail npm run dev
+
+# Tinker
+./vendor/bin/sail tinker
+
+# Test
+./vendor/bin/sail test
+./vendor/bin/sail test --filter=UserTest
+
+# Dusk
+./vendor/bin/sail dusk
+
+# Share site (via ngrok)
+./vendor/bin/sail share
+```
+
+### 2.2 Alias (Shortcut)
+
+```bash
+# Tambah ke ~/.bashrc atau ~/.zshrc
+alias sail='[ -f sail ] && sh sail || sh vendor/bin/sail'
+
+# Sekarang bisa:
+sail up -d
+sail artisan migrate
+sail npm run dev
+```
+
+## 3. Environment Configuration
+
+### 3.1 Environment Variables
+
+```env
+# .env
+APP_PORT=8080              # Laravel akan accessible di localhost:8080
+VITE_PORT=5173             # Vite dev server
+
+FORWARD_DB_PORT=3307       # MySQL accessible di localhost:3307
+FORWARD_REDIS_PORT=6380    # Redis accessible di localhost:6380
+FORWARD_MAILPIT_PORT=1025  # SMTP server
+FORWARD_MAILPIT_DASHBOARD_PORT=8025  # Mailpit UI
+
+DB_HOST=mysql              # Service name, bukan localhost
+REDIS_HOST=redis           # Service name
+
+MAIL_MAILER=smtp
+MAIL_HOST=mailpit
+MAIL_PORT=1025
+```
+
+### 3.2 Xdebug Configuration
+
+```env
+# .env
+SAIL_XDEBUG_MODE=develop,debug,coverage
+SAIL_XDEBUG_CONFIG="client_host=host.docker.internal idekey=VSCODE"
+```
+
+```json
+// .vscode/launch.json
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Listen for Xdebug",
+            "type": "php",
+            "request": "launch",
+            "port": 9003,
+            "pathMappings": {
+                "/var/www/html": "${workspaceFolder}"
+            }
+        }
+    ]
+}
+```
+
+## 4. Customizing Sail
+
+### 4.1 Custom Dockerfile
+
+```dockerfile
+# Dockerfile (di root project)
+FROM sail-8.3/app
+
+# Tambah extensions
+RUN apt-get update && apt-get install -y \
+    libpng-dev \
+    libjpeg-dev \
+    libfreetype6-dev \
+    && docker-php-ext-configure gd --with-freetype --with-jpeg \
+    && docker-php-ext-install gd
+
+# Install custom tools
+RUN apt-get install -y ffmpeg
+
+# Custom PHP settings
+COPY ./docker/php/custom.ini /usr/local/etc/php/conf.d/custom.ini
+```
+
+```yaml
+# docker-compose.yml
+services:
+    laravel.test:
+        build:
+            context: .
+            dockerfile: Dockerfile  # Use custom Dockerfile
+        # ... rest of config
+```
+
+### 4.2 Additional Services
+
+```yaml
+# docker-compose.yml
+services:
+    # ... existing services
+    
+    meilisearch:
+        image: 'getmeili/meilisearch:latest'
+        ports:
+            - '${FORWARD_MEILISEARCH_PORT:-7700}:7700'
+        volumes:
+            - 'sail-meilisearch:/meili_data'
+        networks:
+            - sail
+
+    minio:
+        image: 'minio/minio:latest'
+        ports:
+            - '${FORWARD_MINIO_PORT:-9000}:9000'
+            - '${FORWARD_MINIO_CONSOLE_PORT:-8900}:8900'
+        environment:
+            MINIO_ROOT_USER: sail
+            MINIO_ROOT_PASSWORD: password
+        volumes:
+            - 'sail-minio:/data/minio'
+        networks:
+            - sail
+        command: minio server /data/minio --console-address ":8900"
+
+    soketi:
+        image: 'quay.io/soketi/soketi:latest-16-alpine'
+        ports:
+            - '${FORWARD_SOKETI_PORT:-6001}:6001'
+            - '${FORWARD_SOKETI_METRICS_SERVER_PORT:-9601}:9601'
+        environment:
+            SOKETI_DEBUG: '${SOKETI_DEBUG:-1}'
+            SOKETI_METRICS_SERVER_PORT: '9601'
+        networks:
+            - sail
+
+volumes:
+    sail-meilisearch:
+        driver: local
+    sail-minio:
+        driver: local
+```
+
+## 5. Database Management
+
+### 5.1 MySQL/PostgreSQL
+
+```bash
+# MySQL shell
+sail mysql
+
+# Atau
+sail exec mysql mysql -u root -p
+
+# PostgreSQL
+sail psql
+
+# Backup database
+sail exec mysql mysqldump -u root -p$DB_PASSWORD $DB_DATABASE > backup.sql
+
+# Restore database
+cat backup.sql | sail exec -T mysql mysql -u root -p$DB_PASSWORD $DB_DATABASE
+```
+
+### 5.2 Redis
+
+```bash
+# Redis CLI
+sail redis
+
+# Flush Redis
+sail redis FLUSHALL
+
+# Monitor Redis
+sail redis MONITOR
+```
+
+## 6. Testing dengan Sail
+
+### 6.1 PHPUnit
+
+```bash
+# Run tests
+sail test
+
+# Dengan coverage
+sail test --coverage
+
+# Parallel testing
+sail test --parallel
+```
+
+### 6.2 Dusk
+
+```bash
+# Run Dusk tests
+sail dusk
+
+# Specific file
+sail dusk tests/Browser/LoginTest.php
+
+# Dengan screenshot pada failure
+sail dusk --filter=LoginTest
+```
+
+### 6.3 Mailpit untuk Email Testing
+
+```bash
+# Akses Mailpit dashboard
+open http://localhost:8025
+
+# Atau
+sail open mailpit
+```
+
+## 7. CI/CD dengan Sail
+
+```yaml
+# .github/workflows/tests.yml
+name: Tests
+
+on: [push, pull_request]
+
+jobs:
+  sail:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Setup Docker
+      run: |
+        cp .env.example .env
+        ./vendor/bin/sail up -d
+        ./vendor/bin/sail artisan key:generate
+
+    - name: Wait for services
+      run: sleep 10
+
+    - name: Run migrations
+      run: ./vendor/bin/sail artisan migrate --force
+
+    - name: Run tests
+      run: ./vendor/bin/sail test
+
+    - name: Run Dusk tests
+      run: ./vendor/bin/sail dusk
+```
+
+## Kesimpulan
+
+Laravel Sail menyediakan development environment yang konsisten:
+- **Docker-based**: Isolated, reproducible environment
+- **Pre-configured services**: MySQL, Redis, Mailpit, Selenium, dll
+- **Simple CLI**: `./vendor/bin/sail` commands
+- **Customizable**: Dockerfile dan docker-compose modifications
+- **CI/CD ready**: GitHub Actions integration
+
+Dengan selesainya **Sesi 60**, kita telah menyelesaikan **Bagian V: First-Party Packages Ekosistem**. Selanjutnya dapat dilanjutkan ke **Bagian VI: Package Ekosistem & Tools (Sesi 61-75)** sesuai daftar yang telah Anda berikan, dimulai dari **Sesi 61: Filament (Admin Panel)**.
+
+Apakah Anda ingin saya melanjutkan ke **Sesi 61**?

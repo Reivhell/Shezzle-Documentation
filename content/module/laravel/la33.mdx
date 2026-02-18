@@ -1,0 +1,563 @@
+---
+title: "Sesi 33: Database Transactions"
+description: "Memahami dan mengimplementasikan database transactions untuk menjamin data integrity, menangani concurrency, dan mengelola complex business operations..."
+category: "laravel"
+tags: ["laravel", "database"]
+order: 33
+---
+
+## Tujuan Pembelajaran
+
+Memahami dan mengimplementasikan database transactions untuk menjamin data integrity, menangani concurrency, dan mengelola complex business operations secara atomic.
+
+## 1. Transaction Basics
+
+### 1.1 Automatic Transaction Closure
+
+Cara paling umum dan aman untuk menggunakan transactions di Laravel.
+
+```php
+<?php
+
+use Illuminate\Support\Facades\DB;
+
+DB::transaction(function () {
+    // Semua operasi dalam block ini akan di-commit bersamaan
+    // atau di-rollback jika terjadi exception
+    
+    $user = User::create([
+        'name' => 'John Doe',
+        'email' => 'john@example.com',
+    ]);
+    
+    $user->profile()->create([
+        'bio' => 'Software Developer',
+        'phone' => '+1234567890',
+    ]);
+    
+    $user->wallet()->create([
+        'balance' => 0,
+        'currency' => 'IDR',
+    ]);
+    
+    // Jika semua berhasil, otomatis commit
+    // Jika ada exception, otomatis rollback
+});
+```
+
+### 1.2 Manual Transaction Control
+
+Untuk kontrol lebih granular terhadap transaction lifecycle.
+
+```php
+<?php
+
+use Illuminate\Support\Facades\DB;
+
+try {
+    DB::beginTransaction();
+    
+    // Kurangi saldo pengirim
+    $sender = Wallet::lockForUpdate()->find(1);
+    $sender->decrement('balance', 100000);
+    
+    // Tambah saldo penerima
+    $receiver = Wallet::lockForUpdate()->find(2);
+    $receiver->increment('balance', 100000);
+    
+    // Catat transaksi
+    Transaction::create([
+        'sender_id' => 1,
+        'receiver_id' => 2,
+        'amount' => 100000,
+        'status' => 'completed',
+    ]);
+    
+    DB::commit();
+    
+} catch (\Exception $e) {
+    DB::rollBack();
+    
+    Log::error('Transfer failed: ' . $e->getMessage());
+    throw $e;
+}
+```
+
+> **tip**
+>
+**Locking dengan Transactions:**
+Gunakan `lockForUpdate()` atau `sharedLock()` dalam transaction untuk mencegah race condition pada data yang sedang dimodifikasi.
+
+## 2. Transaction Options
+
+### 2.1 Retry Attempts
+
+```php
+<?php
+
+// Retry otomatis jika terjadi deadlock
+DB::transaction(function () {
+    // Operasi yang berpotensi deadlock
+    Order::create([...]);
+    Inventory::decrement([...]);
+    Payment::process([...]);
+}, 5); // Retry maksimal 5 kali
+
+// Dengan delay antar retry
+DB::transaction(function () {
+    // ...
+}, 5, function ($attempt) {
+    // Delay exponential backoff
+    usleep($attempt * 100000); // 0.1s, 0.2s, 0.3s, dst
+});
+```
+
+### 2.2 Transaction Level Callbacks
+
+```php
+<?php
+
+DB::beforeExecuting(function ($query, $bindings, $connection) {
+    Log::debug('Executing: ' . $query);
+});
+
+// Atau dalam transaction
+DB::transaction(function () {
+    DB::afterCommit(function () {
+        // Dieksekusi setelah commit berhasil
+        // Cocok untuk queue dispatch, notifications, dll
+        SendWelcomeEmail::dispatch($this->user);
+        Cache::forget('user.stats.' . $this->user->id);
+    });
+    
+    // ... database operations
+});
+```
+
+## 3. Nested Transactions (Savepoints)
+
+### 3.1 Savepoints Basics
+
+Laravel mendukung nested transactions melalui database savepoints.
+
+```php
+<?php
+
+DB::transaction(function () {
+    // Transaction Level 1
+    $user = User::create([...]);
+    
+    DB::transaction(function () use ($user) {
+        // Transaction Level 2 (Savepoint 1)
+        $user->profile()->create([...]);
+        
+        try {
+            DB::transaction(function () use ($user) {
+                // Transaction Level 3 (Savepoint 2)
+                $user->wallet()->create([...]);
+                
+                // Ini akan rollback hanya savepoint 2
+                throw new \Exception('Wallet creation failed');
+            });
+        } catch (\Exception $e) {
+            // Level 2 masih aktif, bisa handle error
+            Log::warning('Wallet skipped: ' . $e->getMessage());
+        }
+        
+        // Level 2 tetap bisa commit
+        $user->preferences()->create([...]);
+    });
+    
+    // Level 1 commit
+});
+```
+
+### 3.2 Conditional Nested Transactions
+
+```php
+<?php
+
+class OrderService
+{
+    public function createOrder($data)
+    {
+        return DB::transaction(function () use ($data) {
+            $order = Order::create($data);
+            
+            // Nested: Process payment
+            $this->processPayment($order, $data['payment']);
+            
+            // Nested: Update inventory
+            $this->updateInventory($order->items);
+            
+            // Nested: Create shipment (bisa fail tanpa affect order)
+            try {
+                $this->createShipment($order);
+            } catch (\Exception $e) {
+                // Shipment gagal tidak menggagalkan order
+                $order->update(['shipment_status' => 'pending_manual']);
+            }
+            
+            return $order;
+        });
+    }
+    
+    private function processPayment($order, $paymentData)
+    {
+        return DB::transaction(function () use ($order, $paymentData) {
+            $payment = Payment::create([
+                'order_id' => $order->id,
+                ...$paymentData,
+            ]);
+            
+            if (!$payment->process()) {
+                throw new PaymentFailedException();
+            }
+            
+            return $payment;
+        });
+    }
+    
+    private function updateInventory($items)
+    {
+        return DB::transaction(function () use ($items) {
+            foreach ($items as $item) {
+                Inventory::where('product_id', $item->product_id)
+                    ->lockForUpdate()
+                    ->decrement('quantity', $item->quantity);
+            }
+        });
+    }
+}
+```
+
+## 4. Transaction Isolation Levels
+
+### 4.1 Setting Isolation Level
+
+```php
+<?php
+
+// MySQL/MariaDB
+DB::statement('SET TRANSACTION ISOLATION LEVEL READ COMMITTED');
+
+DB::transaction(function () {
+    // Transaction dengan isolation READ COMMITTED
+});
+
+// PostgreSQL
+DB::statement('SET TRANSACTION ISOLATION LEVEL SERIALIZABLE');
+
+// SQL Server
+DB::statement('SET TRANSACTION ISOLATION LEVEL SNAPSHOT');
+```
+
+### 4.2 Isolation Levels Comparison
+
+| Level | Dirty Read | Non-Repeatable Read | Phantom Read | Use Case |
+|-------|-----------|---------------------|--------------|----------|
+| **READ UNCOMMITTED** | ✅ Allowed | ✅ Allowed | ✅ Allowed | Reporting, analytics (fast, dirty) |
+| **READ COMMITTED** | ❌ Prevented | ✅ Allowed | ✅ Allowed | Default MySQL/PostgreSQL, general use |
+| **REPEATABLE READ** | ❌ Prevented | ❌ Prevented | ✅ Allowed | Default MySQL InnoDB, banking |
+| **SERIALIZABLE** | ❌ Prevented | ❌ Prevented | ❌ Prevented | Critical financial, strict consistency |
+
+```php
+<?php
+
+// Banking: Gunakan REPEATABLE READ atau SERIALIZABLE
+DB::statement('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
+
+DB::transaction(function () {
+    $balance = Account::where('id', 1)->value('balance');
+    
+    // Pastikan balance tidak berubah selama transaction
+    if ($balance >= $amount) {
+        Account::where('id', 1)->decrement('balance', $amount);
+    }
+});
+
+// Reporting: Bisa gunakan READ UNCOMMITTED untuk performance
+DB::statement('SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED');
+
+$report = DB::transaction(function () {
+    return Order::selectRaw('DATE(created_at) as date, SUM(total) as revenue')
+        ->groupBy('date')
+        ->get();
+});
+```
+
+## 5. Deadlock Handling
+
+### 5.1 Deadlock Detection & Retry
+
+```php
+<?php
+
+use Illuminate\Database\QueryException;
+use Illuminate\Database\DeadlockException;
+
+class TransferService
+{
+    public function transfer($fromId, $toId, $amount, $maxRetries = 3)
+    {
+        $attempt = 0;
+        
+        beginning:
+        $attempt++;
+        
+        try {
+            return DB::transaction(function () use ($fromId, $toId, $amount) {
+                // Consistent ordering untuk mencegah deadlock
+                $ids = [$fromId, $toId];
+                sort($ids); // Selalu lock dalam urutan sama
+                
+                $fromAccount = Account::lockForUpdate()->find($ids[0]);
+                $toAccount = Account::lockForUpdate()->find($ids[1]);
+                
+                // Pastikan $from adalah yang benar
+                if ($fromAccount->id != $fromId) {
+                    [$fromAccount, $toAccount] = [$toAccount, $fromAccount];
+                }
+                
+                if ($fromAccount->balance < $amount) {
+                    throw new InsufficientBalanceException();
+                }
+                
+                $fromAccount->decrement('balance', $amount);
+                $toAccount->increment('balance', $amount);
+                
+                TransactionLog::create([
+                    'from_account' => $fromId,
+                    'to_account' => $toId,
+                    'amount' => $amount,
+                ]);
+                
+                return true;
+            });
+            
+        } catch (QueryException $e) {
+            // Cek apakah deadlock
+            if ($this->isDeadlock($e) && $attempt < $maxRetries) {
+                usleep(rand(100000, 500000)); // Random delay 0.1-0.5s
+                goto beginning; // Retry
+            }
+            
+            throw $e;
+        }
+    }
+    
+    private function isDeadlock(QueryException $e): bool
+    {
+        $code = $e->getCode();
+        
+        // MySQL: 1213, PostgreSQL: 40P01, SQL Server: 1205
+        return in_array($code, ['1213', '40P01', '1205']);
+    }
+}
+```
+
+### 5.2 Deadlock Prevention Strategies
+
+```php
+<?php
+
+// 1. Consistent Ordering (paling efektif)
+DB::transaction(function () {
+    $items = Item::whereIn('id', $ids)
+        ->lockForUpdate()
+        ->orderBy('id') // Selalu sama
+        ->get();
+});
+
+// 2. Short Transactions
+DB::transaction(function () {
+    // Lakukan validasi sebelum transaction jika memungkinkan
+    // Minimize work dalam transaction
+    $order->update(['status' => 'processing']);
+});
+
+// 3. Pessimistic Locking
+DB::transaction(function () {
+    // Lock lebih awal, lebih lama
+    $inventory = Inventory::lockForUpdate()->find($productId);
+    
+    // Do work...
+    
+    $inventory->decrement('stock', $quantity);
+});
+
+// 4. Optimistic Locking (alternatif)
+class Product extends Model
+{
+    protected $fillable = ['name', 'stock', 'version'];
+    
+    public function decrementStock($amount)
+    {
+        $affected = static::where('id', $this->id)
+            ->where('version', $this->version)
+            ->update([
+                'stock' => DB::raw("stock - {$amount}"),
+                'version' => DB::raw('version + 1'),
+            ]);
+        
+        if (!$affected) {
+            throw new StaleModelException('Product was modified');
+        }
+    }
+}
+```
+
+## 6. Distributed Transactions
+
+### 6.1 Queue dalam Transaction
+
+```php
+<?php
+
+// ❌ Jangan: Dispatch queue dalam transaction
+DB::transaction(function () {
+    $order = Order::create([...]);
+    
+    // Job mungkin dieksekusi sebelum commit!
+    ProcessOrder::dispatch($order);
+});
+
+// ✅ Lakukan: Dispatch after commit
+DB::transaction(function () {
+    $order = Order::create([...]);
+    
+    DB::afterCommit(function () use ($order) {
+        ProcessOrder::dispatch($order);
+    });
+});
+
+// Atau gunakan trait DispatchesAfterCommit
+class ProcessOrder implements ShouldQueue
+{
+    use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
+    
+    public $afterCommit = true; // Laravel 8+
+    
+    // ...
+}
+```
+
+### 6.2 Multiple Database Connections
+
+```php
+<?php
+
+// Transaction pada connection berbeda
+DB::connection('mysql')->transaction(function () {
+    $user = User::create([...]);
+    
+    DB::connection('pgsql')->transaction(function () use ($user) {
+        Analytics::create(['user_id' => $user->id]);
+    });
+    
+    // Jika pgsql gagal, mysql tetap commit
+    // Untuk atomic across connections, gunakan pattern Saga atau 2PC
+});
+
+// Two-Phase Commit (2PC) sederhana
+class DistributedTransaction
+{
+    private $participants = [];
+    
+    public function addParticipant($connection)
+    {
+        $this->participants[] = $connection;
+        DB::connection($connection)->beginTransaction();
+    }
+    
+    public function commit()
+    {
+        try {
+            foreach ($this->participants as $connection) {
+                DB::connection($connection)->commit();
+            }
+        } catch (\Exception $e) {
+            $this->rollback();
+            throw $e;
+        }
+    }
+    
+    public function rollback()
+    {
+        foreach ($this->participants as $connection) {
+            DB::connection($connection)->rollBack();
+        }
+    }
+}
+```
+
+## 7. Testing Transactions
+
+```php
+<?php
+
+use Illuminate\Foundation\Testing\RefreshDatabase;
+
+class TransactionTest extends TestCase
+{
+    use RefreshDatabase;
+    
+    public function test_transfer_rollback_on_error()
+    {
+        $sender = Account::factory()->create(['balance' => 1000]);
+        $receiver = Account::factory()->create(['balance' => 500]);
+        
+        try {
+            DB::transaction(function () use ($sender, $receiver) {
+                $sender->decrement('balance', 100);
+                $receiver->increment('balance', 100);
+                
+                throw new \Exception('Simulated error');
+            });
+        } catch (\Exception $e) {
+            // Expected
+        }
+        
+        // Assert rollback
+        $this->assertEquals(1000, $sender->fresh()->balance);
+        $this->assertEquals(500, $receiver->fresh()->balance);
+    }
+    
+    public function test_deadlock_retry()
+    {
+        $service = new TransferService();
+        
+        // Simulate deadlock dengan mocking atau parallel execution
+        // ...
+        
+        $this->assertTrue($service->transfer(1, 2, 100));
+    }
+    
+    public function test_isolation_level()
+    {
+        DB::statement('SET TRANSACTION ISOLATION LEVEL SERIALIZABLE');
+        
+        DB::transaction(function () {
+            $count1 = Order::count();
+            
+            // Simulasi: transaction lain insert order
+            // Di SERIALIZABLE, ini akan error atau wait
+            
+            $count2 = Order::count();
+            $this->assertEquals($count1, $count2); // Repeatable read
+        });
+    }
+}
+```
+
+## Kesimpulan
+
+Database transactions adalah fondasi data integrity:
+- **Automatic closures** untuk simplicity, **manual control** untuk granularitas
+- **Nested transactions** via savepoints untuk complex operations
+- **Isolation levels** untuk trade-off consistency vs concurrency
+- **Deadlock handling** dengan retry logic dan consistent ordering
+- **After commit hooks** untuk queue dispatch dan side effects
+
+Selanjutnya di **Sesi 34**, kita akan mempelajari Seeding & Model Factories untuk testing dan development data.
+```

@@ -1,0 +1,976 @@
+---
+title: "Sesi 25: Build dan Optimization"
+description: "Astro menggunakan Vite sebagai foundation build tool-nya, yang memberikan beberapa karakteristik fundamental:"
+category: "astrojs"
+tags: ["astrojs", "performance", "build"]
+order: 25
+---
+
+## Sesi 25: Build dan Optimization
+
+### Pendahuluan: Arsitektur Build Astro
+
+Astro menggunakan Vite sebagai foundation build tool-nya, yang memberikan beberapa karakteristik fundamental:
+
+1. **ESM-First**: Native ES Modules tanpa bundling saat development
+2. **Rollup untuk Production**: Bundling dan optimization menggunakan Rollup
+3. **Code Splitting Otomatis**: Berbasis route dan dynamic imports
+4. **Tree Shaking Agresif**: Menghapus dead code secara efektif
+
+**Alur Build Astro:**
+
+```
+Source (.astro, .md, .ts)
+    ↓
+Astro Compiler (transform ke JS/TS)
+    ↓
+Vite Plugin Pipeline
+    ↓
+Rollup Bundling (untuk production)
+    ↓
+Output (static | server | hybrid)
+```
+
+### Konfigurasi Build Dasar
+
+File konfigurasi utama build berada di `astro.config.mjs`:
+
+```javascript
+// astro.config.mjs
+import { defineConfig } from 'astro/config';
+
+export default defineConfig({
+  // Mode output: static | server | hybrid
+  output: 'static',
+  
+  // Directory build output
+  outDir: './dist',
+  
+  // Directory untuk aset statis
+  publicDir: './public',
+  
+  build: {
+    // Format file JavaScript output
+    format: 'directory', // 'directory' | 'file'
+    
+    // Nama folder untuk aset (JS, CSS, gambar)
+    assets: '_astro',
+    
+    // Prefix path untuk aset (berguna untuk CDN)
+    assetsPrefix: 'https://cdn.example.com',
+    
+    // Inline stylesheet jika ukuran di bawah threshold (bytes)
+    inlineStylesheets: 'auto', // 'always' | 'never' | 'auto'
+    
+    // Split CSS per page atau bundle tunggal
+    split: false,
+    
+    // Source maps untuk debugging production
+    sourcemap: false,
+    
+    // Minifikasi (default true di production)
+    minify: true,
+  },
+  
+  // Konfigurasi server (untuk SSR)
+  server: {
+    host: true,
+    port: 4321,
+  },
+});
+```
+
+### Mode Output: Static vs Server vs Hybrid
+
+Astro 5+ mendukung tiga mode output yang berbeda, masing-masing dengan strategi build yang unik:
+
+#### 1. Static Site Generation (SSG)
+
+**Konsep**: Semua halaman dirender saat build time menjadi file HTML statis.
+
+**Use Case**: Blog, marketing site, dokumentasi, portfolio.
+
+**Konfigurasi:**
+
+```javascript
+// astro.config.mjs
+export default defineConfig({
+  output: 'static',
+  
+  // Prerender semua halaman (default true untuk static)
+  prerender: true,
+});
+```
+
+**Proses Build SSG:**
+
+```astro
+---
+// src/pages/blog/[slug].astro
+export async function getStaticPaths() {
+  const posts = await getCollection('blog');
+  
+  return posts.map(post => ({
+    params: { slug: post.slug },
+    props: { post },
+  }));
+}
+
+const { post } = Astro.props;
+const { Content } = await post.render();
+---
+
+<h1>{post.data.title}</h1>
+<Content />
+```
+
+**Output File Structure:**
+
+```
+dist/
+├── index.html
+├── blog/
+│   ├── post-1/
+│   │   └── index.html    # HTML lengkap dengan konten
+│   ├── post-2/
+│   │   └── index.html
+│   └── index.html        # List page
+└── _astro/
+    ├── assets/
+    │   ├── index.abc123.css
+    │   └── index.def456.js  # Hanya untuk islands
+    └── images/
+        └── optimized/
+```
+
+#### 2. Server-Side Rendering (SSR)
+
+**Konsep**: Halaman dirender on-demand di server untuk setiap request.
+
+**Use Case**: Dashboard user, halaman dengan data real-time, autentikasi.
+
+**Konfigurasi dengan Adapter:**
+
+```javascript
+// astro.config.mjs
+import node from '@astrojs/node';
+
+export default defineConfig({
+  output: 'server',
+  
+  adapter: node({
+    mode: 'standalone', // 'standalone' | 'middleware'
+  }),
+});
+```
+
+**Server-Only Pages:**
+
+```astro
+---
+// src/pages/dashboard.astro
+// Tidak ada getStaticPaths = SSR by default di mode server
+export const prerender = false; // Eksplisit SSR
+
+const user = await getUserFromSession(Astro.cookies);
+if (!user) {
+  return Astro.redirect('/login');
+}
+
+const data = await fetchUserData(user.id);
+---
+
+<h1>Dashboard {user.name}</h1>
+<p>Data real-time: {data.lastUpdated}</p>
+```
+
+**Output Structure (SSR):**
+
+```
+dist/
+├── server/
+│   ├── entry.mjs          # Entry point Node.js
+│   ├── pages/
+│   │   ├── dashboard.astro.mjs  # Server bundle per route
+│   │   └── api/
+│   │       └── user.mjs
+│   └── chunks/            # Shared chunks
+├── client/
+│   └── _astro/            # Aset client (JS/CSS untuk islands)
+└── prerendered/           # Halaman yang tetap static
+    └── index.html
+```
+
+#### 3. Hybrid Rendering
+
+**Konsep**: Kombinasi SSG untuk performa dan SSR untuk dinamisme.
+
+**Use Case**: E-commerce (product pages static, cart SSR), blog dengan komentar real-time.
+
+**Konfigurasi:**
+
+```javascript
+// astro.config.mjs
+export default defineConfig({
+  output: 'hybrid',
+  
+  // Default: static, kecuali ditandai prerender = false
+  prerender: true,
+});
+```
+
+**Selective SSR:**
+
+```astro
+---
+// src/pages/products/[id].astro
+// Default: static (prerender = true di hybrid)
+
+export async function getStaticPaths() {
+  // Pre-render 100 produk populer
+  const products = await getTopProducts(100);
+  return products.map(p => ({ params: { id: p.id } }));
+}
+
+const { id } = Astro.params;
+const product = await getProduct(id);
+---
+
+<ProductDetails {product} />
+```
+
+```astro
+---
+// src/pages/cart.astro
+// SSR untuk data real-time
+export const prerender = false;
+
+const cart = await getCart(Astro.cookies);
+---
+
+<CartItems items={cart.items} total={cart.total} />
+```
+
+### Bundle Analysis dan Optimization
+
+#### Analisis Ukuran Bundle
+
+Menggunakan `@astrojs-bundle-analyzer` atau plugin Rollup:
+
+```javascript
+// astro.config.mjs
+import { defineConfig } from 'astro/config';
+import { visualizer } from 'rollup-plugin-visualizer';
+
+export default defineConfig({
+  vite: {
+    plugins: [
+      visualizer({
+        emitFile: true,
+        filename: 'stats.html',
+        open: true,
+        gzipSize: true,
+        brotliSize: true,
+        template: 'treemap', // 'treemap' | 'sunburst' | 'network'
+      }),
+    ],
+  },
+});
+```
+
+**Interpretasi Hasil Analisis:**
+
+```html
+<!-- stats.html menampilkan: -->
+<!-- 1. Total bundle size (raw, gzip, brotli) -->
+<!-- 2. Dependency tree dengan ukuran per modul -->
+<!-- 3. Chunk splitting visualization -->
+<!-- 4. Unused code detection -->
+```
+
+**Contoh Output Analisis:**
+
+```
+Total Size: 245 KB (raw) | 78 KB (gzip) | 62 KB (brotli)
+
+Chunks:
+├── entry.abc123.js (45 KB)
+│   ├── vue.runtime.esm.js (32 KB) - 71%
+│   ├── lodash/debounce (4 KB) - 9%
+│   └── app components (9 KB) - 20%
+├── island.ComponentA.def456.js (12 KB)
+└── island.ComponentB.ghi789.js (8 KB)
+
+Recommendations:
+⚠️  lodash import suboptimal - use lodash-es instead
+✓  No duplicate dependencies detected
+⚠️  moment.js detected (66 KB) - consider date-fns (3 KB)
+```
+
+#### Code Splitting Strategies
+
+**Route-Based Splitting (Default):**
+
+Astro secara otomatis memisahkan code per route:
+
+```javascript
+// astro.config.mjs
+export default defineConfig({
+  build: {
+    // Jumlah maksimum chunk parallel load
+    assetsInlineLimit: 4096, // 4kb - inline ke HTML jika di bawah
+    
+    // Rollup output options
+    rollupOptions: {
+      output: {
+        // Manual chunk untuk vendor besar
+        manualChunks: {
+          'react-vendor': ['react', 'react-dom'],
+          'ui-components': ['@radix-ui/react-dialog', '@radix-ui/react-dropdown-menu'],
+          'animation': ['framer-motion'],
+        },
+        
+        // Naming convention
+        entryFileNames: 'js/[name]-[hash].js',
+        chunkFileNames: 'js/chunks/[name]-[hash].js',
+        assetFileNames: (assetInfo) => {
+          const info = assetInfo.name.split('.');
+          const ext = info[info.length - 1];
+          if (/\.(png|jpe?g|gif|svg|webp|avif)$/i.test(assetInfo.name)) {
+            return 'images/[name]-[hash][extname]';
+          }
+          if (ext === 'css') {
+            return 'css/[name]-[hash][extname]';
+          }
+          return 'assets/[name]-[hash][extname]';
+        },
+      },
+    },
+  },
+});
+```
+
+**Dynamic Imports untuk Lazy Loading:**
+
+```astro
+---
+// src/components/HeavyChart.astro
+// Component ini tidak di-load di initial bundle
+---
+
+<div id="chart-container"></div>
+
+<script>
+  // Lazy load library chart hanya saat diperlukan
+  const container = document.getElementById('chart-container');
+  
+  const observer = new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+      if (entry.isIntersecting) {
+        loadChart();
+        observer.disconnect();
+      }
+    });
+  });
+  
+  observer.observe(container);
+  
+  async function loadChart() {
+    // Dynamic import dengan webpack/vite magic comments
+    const { default: ChartLibrary } = await import(
+      /* webpackChunkName: "chart-lib" */
+      /* webpackPrefetch: true */
+      './chart-library'
+    );
+    
+    const data = await fetch('/api/chart-data').then(r => r.json());
+    new ChartLibrary(container, data);
+  }
+</script>
+```
+
+### Image Optimization
+
+Astro menyediakan `<Image />` component dan `getImage()` helper untuk optimasi gambar otomatis.
+
+#### Konfigurasi Image Service
+
+```javascript
+// astro.config.mjs
+import { defineConfig, sharpImageService } from 'astro/config';
+
+export default defineConfig({
+  image: {
+    // Service untuk transformasi gambar
+    service: sharpImageService({
+      // Opsi Sharp
+      quality: 80,
+      progressive: true,
+    }),
+    
+    // Domain yang diizinkan untuk remote images
+    domains: ['cdn.example.com', 'images.unsplash.com'],
+    
+    // Pattern untuk remote images
+    remotePatterns: [
+      {
+        protocol: 'https',
+        hostname: '**.example.com',
+        pathname: '/images/**',
+      },
+    ],
+    
+    // Default sizes untuk responsive images
+    sizes: [640, 750, 828, 1080, 1200, 1920],
+  },
+});
+```
+
+#### Penggunaan Image Component
+
+**Local Images:**
+
+```astro
+---
+// src/pages/gallery.astro
+import { Image, getImage } from 'astro:assets';
+import localImage from '../assets/photo.jpg';
+
+// Pre-process untuk metadata
+const optimizedImage = await getImage({
+  src: localImage,
+  width: 800,
+  height: 600,
+  format: 'webp',
+  quality: 85,
+});
+---
+
+<!-- Basic usage -->
+<Image 
+  src={localImage} 
+  alt="Deskripsi gambar"
+  width={800}
+  height={600}
+  format="webp"
+  quality={80}
+/>
+
+<!-- Responsive dengan srcset -->
+<Image 
+  src={localImage}
+  alt="Responsive image"
+  width={1200}
+  height={800}
+  sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 800px"
+  widths={[400, 800, 1200]}
+/>
+
+<!-- Art direction dengan picture -->
+<picture>
+  <source 
+    srcset={optimizedImage.srcSet} 
+    type="image/webp"
+    media="(min-width: 1024px)"
+  />
+  <Image 
+    src={localImage}
+    alt="Art directed"
+    width={800}
+    height={600}
+    fallbackFormat="jpg"
+  />
+</picture>
+```
+
+**Remote Images:**
+
+```astro
+---
+import { Image } from 'astro:assets';
+
+const remoteUrl = 'https://cdn.example.com/image.jpg';
+---
+
+<Image 
+  src={remoteUrl}
+  alt="Remote image"
+  width={800}
+  height={600}
+  inferSize={true}  // Auto-detect dimensions
+  loading="lazy"
+  decoding="async"
+/>
+```
+
+#### Image Loading Strategies
+
+```astro
+---
+// Prioritas loading berbeda
+---
+
+<!-- LCP (Largest Contentful Paint) image - preload -->
+<Image 
+  src={heroImage}
+  alt="Hero"
+  width={1920}
+  height={1080}
+  loading="eager"
+  fetchpriority="high"
+  decoding="sync"
+/>
+
+<!-- Below the fold - lazy load -->
+<Image 
+  src={galleryImage}
+  alt="Gallery"
+  width={800}
+  height={600}
+  loading="lazy"
+  decoding="async"
+/>
+
+<!-- Critical but not LCP - auto -->
+<Image 
+  src={featuredImage}
+  alt="Featured"
+  width={600}
+  height={400}
+  loading="auto"
+/>
+```
+
+### Font Optimization
+
+Astro 6+ menyediakan API font bawaan untuk optimasi loading.
+
+#### Konfigurasi Font
+
+```javascript
+// astro.config.mjs
+import { defineConfig, fontProviders } from 'astro/config';
+
+export default defineConfig({
+  experimental: {
+    fonts: [
+      {
+        provider: fontProviders.google(),
+        name: 'Inter',
+        cssVariable: '--font-inter',
+        weights: [400, 500, 600, 700],
+        subsets: ['latin', 'latin-ext'],
+        display: 'swap',
+        preload: true,
+        fallback: ['system-ui', 'sans-serif'],
+      },
+      {
+        provider: fontProviders.fontsource(),
+        name: 'Fira Code',
+        cssVariable: '--font-mono',
+        weights: [400, 500],
+      },
+    ],
+  },
+});
+```
+
+#### Penggunaan Font di CSS
+
+```css
+/* src/styles/global.css */
+:root {
+  /* Font families di-generate Astro */
+  font-family: var(--font-inter), system-ui, sans-serif;
+}
+
+code, pre {
+  font-family: var(--font-mono), monospace;
+}
+```
+
+#### Font Loading Strategy
+
+```astro
+---
+// src/layouts/Layout.astro
+// Font CSS di-inject otomatis di <head>
+---
+
+<html>
+  <head>
+    <!-- Astro inject: -->
+    <!-- <link rel="preconnect" href="https://fonts.googleapis.com"> -->
+    <!-- <link rel="preload" href="/fonts/inter-400.woff2" as="font" type="font/woff2" crossorigin> -->
+    <!-- <style>:root { --font-inter: 'Inter', ... }</style> -->
+  </head>
+  <body>
+    <slot />
+  </body>
+</html>
+```
+
+### Critical CSS Inlining
+
+Menggunakan `astro-critters` untuk inline critical CSS:
+
+```javascript
+// astro.config.mjs
+import { defineConfig } from 'astro/config';
+import critters from 'astro-critters';
+
+export default defineConfig({
+  integrations: [
+    critters({
+      // Opsi Critters
+      preload: 'swap',
+      inlineFonts: true,
+      pruneSource: true,
+      reduceInlineStyles: true,
+      
+      // Selector yang di-exclude dari critical CSS
+      excludedSelectors: ['.lazy-loaded', '[data-no-critical]'],
+    }),
+  ],
+});
+```
+
+### Prefetching dan Preloading
+
+#### Link Prefetching
+
+Astro menyediakan component `<Prefetch />` untuk mengoptimasi navigasi:
+
+```astro
+---
+// src/layouts/Layout.astro
+import { Prefetch } from 'astro:prefetch';
+---
+
+<html>
+  <head>
+    <!-- Prefetch strategi default -->
+    <Prefetch />
+  </head>
+  <body>
+    <slot />
+  </body>
+</html>
+```
+
+**Konfigurasi Prefetch:**
+
+```javascript
+// astro.config.mjs
+export default defineConfig({
+  prefetch: {
+    // Strategi prefetch
+    prefetchAll: true, // Prefetch semua link visible
+    
+    // Atau selective
+    prefetchAll: false,
+    defaultStrategy: 'hover', // 'tap' | 'hover' | 'viewport' | 'load'
+  },
+});
+```
+
+**Manual Prefetch:**
+
+```astro
+---
+// Prefetch specific link
+---
+
+<a href="/about" data-astro-prefetch>About</a>
+
+<!-- Dengan strategi spesifik -->
+<a href="/dashboard" data-astro-prefetch="viewport">Dashboard</a>
+```
+
+#### Resource Hints
+
+```astro
+---
+// src/layouts/Layout.astro
+---
+
+<html>
+  <head>
+    <!-- Preconnect ke domain eksternal -->
+    <link rel="preconnect" href="https://cdn.example.com" />
+    <link rel="dns-prefetch" href="https://api.example.com" />
+    
+    <!-- Preload critical resources -->
+    <link rel="preload" href="/fonts/inter-variable.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href="/styles/critical.css" as="style" />
+    
+    <!-- Prefetch halaman berikutnya -->
+    <link rel="prefetch" href="/about" />
+    
+    <!-- Prerender halaman (untuk navigasi instan) -->
+    <link rel="prerender" href="/dashboard" />
+  </head>
+</html>
+```
+
+### Build Hooks dan Automation
+
+#### Pre-build Scripts
+
+```javascript
+// scripts/fetch-remote-data.js
+import fs from 'node:fs/promises';
+import path from 'node:path';
+
+async function fetchRemoteData() {
+  console.log('Fetching remote data...');
+  
+  // Fetch data dari CMS/API
+  const response = await fetch('https://api.cms.com/content');
+  const data = await response.json();
+  
+  // Simpan ke src/data untuk digunakan saat build
+  await fs.mkdir('./src/data', { recursive: true });
+  await fs.writeFile(
+    './src/data/remote.json',
+    JSON.stringify(data, null, 2)
+  );
+  
+  console.log(`Fetched ${data.length} items`);
+}
+
+fetchRemoteData().catch(console.error);
+```
+
+```json
+// package.json
+{
+  "scripts": {
+    "prebuild": "node scripts/fetch-remote-data.js",
+    "build": "astro build",
+    "postbuild": "node scripts/post-build-optimize.js"
+  }
+}
+```
+
+#### Post-build Optimization
+
+```javascript
+// scripts/post-build-optimize.js
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import { execSync } from 'node:child_process';
+
+async function postBuild() {
+  const distDir = './dist';
+  
+  // 1. Generate sitemap manual jika perlu
+  await generateSitemap(distDir);
+  
+  // 2. Compress assets dengan brotli/gzip
+  await compressAssets(distDir);
+  
+  // 3. Generate service worker dengan Workbox
+  execSync('npx workbox generateSW workbox-config.js');
+  
+  // 4. Validasi build output
+  await validateBuild(distDir);
+  
+  console.log('Post-build optimization complete');
+}
+
+async function compressAssets(dir) {
+  const files = await fs.readdir(dir, { recursive: true });
+  
+  for (const file of files) {
+    if (file.match(/\.(js|css|html|svg)$/)) {
+      const filepath = path.join(dir, file);
+      const content = await fs.readFile(filepath);
+      
+      // Brotli compression
+      const { promisify } = await import('node:util');
+      const { brotliCompress } = await import('node:zlib');
+      const compress = promisify(brotliCompress);
+      
+      const compressed = await compress(content);
+      await fs.writeFile(`${filepath}.br`, compressed);
+    }
+  }
+}
+
+async function validateBuild(dir) {
+  // Cek semua HTML valid
+  // Cek tidak ada broken links
+  // Cek ukuran bundle dalam batas
+  const stats = await fs.stat(path.join(dir, '_astro'));
+  const sizeMB = stats.size / 1024 / 1024;
+  
+  if (sizeMB > 10) {
+    console.warn(`Warning: Bundle size ${sizeMB.toFixed(2)}MB exceeds 10MB threshold`);
+  }
+}
+
+postBuild().catch(console.error);
+```
+
+### Performance Budgets
+
+Mengimplementasikan performance budgets untuk mencegah regression:
+
+```javascript
+// astro.config.mjs
+import { defineConfig } from 'astro/config';
+
+export default defineConfig({
+  vite: {
+    build: {
+      // Warning jika chunk melebihi batas
+      chunkSizeWarningLimit: 100000, // 100kb
+      
+      rollupOptions: {
+        output: {
+          // Manual chunking untuk kontrol ukuran
+          manualChunks(id) {
+            // Pisahkan node_modules ke chunk terpisah
+            if (id.includes('node_modules')) {
+              // Group by package name
+              const match = id.match(/node_modules\/(@[^/]+\/[^/]+|[^/]+)/);
+              if (match) {
+                return `vendor-${match[1].replace('@', '').replace('/', '-')}`;
+              }
+            }
+            
+            // Pisahkan routes besar
+            if (id.includes('/src/pages/dashboard/')) {
+              return 'dashboard-chunk';
+            }
+          },
+        },
+      },
+    },
+    
+    // Bundle analysis
+    plugins: [
+      {
+        name: 'performance-budget',
+        generateBundle(options, bundle) {
+          const budgets = {
+            'index.html': 50 * 1024,      // 50kb
+            'vendor-*.js': 150 * 1024,     // 150kb
+            'dashboard-chunk.js': 200 * 1024, // 200kb
+          };
+          
+          for (const [fileName, content] of Object.entries(bundle)) {
+            for (const [pattern, limit] of Object.entries(budgets)) {
+              const regex = new RegExp(pattern.replace('*', '.*'));
+              if (regex.test(fileName) && content.code?.length > limit) {
+                this.warn(
+                  `Performance budget exceeded: ${fileName} ` +
+                  `(${Math.round(content.code.length / 1024)}kb > ${limit / 1024}kb)`
+                );
+              }
+            }
+          }
+        },
+      },
+    ],
+  },
+});
+```
+
+### Build Performance Optimization
+
+#### Parallel Processing
+
+```javascript
+// astro.config.mjs
+export default defineConfig({
+  build: {
+    // Jumlah page yang dibuild secara parallel
+    // Default: jumlah CPU cores
+    concurrency: 4,
+  },
+});
+```
+
+#### Caching Strategi
+
+```javascript
+// astro.config.mjs
+export default defineConfig({
+  vite: {
+    build: {
+      // Cache untuk rebuild lebih cepat
+      cacheDir: './node_modules/.vite',
+      
+      // Persist cache antara build (CI/CD)
+      emptyOutDir: false,
+    },
+  },
+});
+```
+
+#### Incremental Build (Experimental)
+
+```javascript
+// astro.config.mjs
+export default defineConfig({
+  experimental: {
+    incremental: true,
+    
+    // Cache build output
+    contentCollectionCache: true,
+  },
+});
+```
+
+### Analisis Core Web Vitals
+
+Mengintegrasikan Lighthouse CI untuk monitoring otomatis:
+
+```javascript
+// lighthouserc.js
+module.exports = {
+  ci: {
+    collect: {
+      startServerCommand: 'npm run preview',
+      url: ['http://localhost:4321/', 'http://localhost:4321/blog'],
+      numberOfRuns: 3,
+    },
+    assert: {
+      assertions: {
+        'categories:performance': ['warn', { minScore: 0.9 }],
+        'categories:accessibility': ['error', { minScore: 0.95 }],
+        'categories:best-practices': ['warn', { minScore: 0.9 }],
+        'categories:seo': ['error', { minScore: 0.9 }],
+        
+        // Core Web Vitals
+        'largest-contentful-paint': ['warn', { maxNumericValue: 2500 }],
+        'max-potential-fid': ['warn', { maxNumericValue: 100 }],
+        'cumulative-layout-shift': ['error', { maxNumericValue: 0.1 }],
+      },
+    },
+    upload: {
+      target: 'temporary-public-storage',
+    },
+  },
+};
+```
+
+```yaml
+# .github/workflows/lighthouse.yml
+name: Lighthouse CI
+on: [push]
+jobs:
+  lighthouse:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-node@v3
+      - run: npm ci
+      - run: npm run build
+      - name: Run Lighthouse CI
+        run: |
+          npm install -g @lhci/cli@0.12.x
+          lhci autorun
+```

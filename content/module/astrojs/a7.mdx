@@ -1,0 +1,1071 @@
+---
+title: "Sesi 7: Layout Components"
+description: "Layout adalah kerangka/wrapper yang membungkus konten halaman. Mereka menyediakan struktur konsisten (header, footer, navigation) dan metadata yang re..."
+category: "astrojs"
+tags: ["astrojs", "components"]
+order: 7
+---
+
+## 7.1 Layout Components
+
+Layout adalah kerangka/wrapper yang membungkus konten halaman. Mereka menyediakan struktur konsisten (header, footer, navigation) dan metadata yang reusable di seluruh website.
+
+### Analogi Sederhana:
+
+> Bayangkan layout seperti **template surat resmi perusahaan**. Setiap surat memiliki kop yang sama, alamat yang sama, dan footer yang sama. Hanya isi suratnya yang berbeda. Begitu juga layout Astro - struktur HTML yang sama, konten yang berbeda-beda.
+
+### Struktur Dasar Layout:
+
+```astro
+---
+// src/layouts/BaseLayout.astro
+interface Props {
+  description?: string;
+  image?: string;
+  type?: 'website' | 'article';
+  lang?: string;
+}
+
+const { 
+  title, 
+  description = 'Default description', 
+  image = '/default-og.jpg',
+  type = 'website',
+  lang = 'id'
+} = Astro.props;
+
+// Generate canonical URL
+const canonicalURL = new URL(Astro.url.pathname, Astro.site);
+---
+
+<!DOCTYPE html>
+<html lang={lang}>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    
+    <!-- Primary Meta Tags -->
+    <title>{title}</title>
+    <meta name="title" content={title} />
+    <meta name="description" content={description} />
+    
+    <!-- Canonical URL -->
+    <link rel="canonical" href={canonicalURL} />
+    
+    <!-- Open Graph / Facebook -->
+    <meta property="og:type" content={type} />
+    <meta property="og:url" content={canonicalURL} />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:image" content={new URL(image, Astro.site)} />
+    
+    <!-- Twitter -->
+    <meta property="twitter:card" content="summary_large_image" />
+    <meta property="twitter:url" content={canonicalURL} />
+    <meta property="twitter:title" content={title} />
+    <meta property="twitter:description" content={description} />
+    <meta property="twitter:image" content={new URL(image, Astro.site)} />
+    
+    <!-- Favicon -->
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    
+    <!-- Slot untuk head tambahan -->
+    <slot name="head" />
+  </head>
+  
+  <body>
+    <!-- Skip to content untuk accessibility -->
+    <a href="#main-content" class="skip-link">Skip to main content</a>
+    
+    <header class="site-header">
+      <nav aria-label="Main navigation">
+        <a href="/" class="logo">Brand</a>
+        <ul class="nav-links">
+          <li><a href="/about">About</a></li>
+          <li><a href="/blog">Blog</a></li>
+          <li><a href="/contact">Contact</a></li>
+        </ul>
+      </nav>
+    </header>
+    
+    <main id="main-content">
+      <slot /> <!-- Konten halaman masuk di sini -->
+    </main>
+    
+    <footer class="site-footer">
+      <p>&copy; {new Date().getFullYear()} Brand. All rights reserved.</p>
+    </footer>
+    
+    <slot name="scripts" />
+  </body>
+</html>
+
+<style is:global>
+  /* Reset dan base styles */
+  *, *::before, *::after {
+    box-sizing: border-box;
+  }
+  
+  body {
+    margin: 0;
+    font-family: system-ui, -apple-system, sans-serif;
+    line-height: 1.6;
+    color: #1f2937;
+  }
+  
+  .skip-link {
+    position: absolute;
+    top: -40px;
+    left: 0;
+    background: #000;
+    color: white;
+    padding: 8px;
+    text-decoration: none;
+    z-index: 100;
+  }
+  
+  .skip-link:focus {
+    top: 0;
+  }
+  
+  .site-header {
+    background: white;
+    border-bottom: 1px solid #e5e7eb;
+    padding: 1rem 2rem;
+  }
+  
+  nav {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    max-width: 1200px;
+    margin: 0 auto;
+  }
+  
+  .logo {
+    font-size: 1.5rem;
+    font-weight: bold;
+    color: #3b82f6;
+    text-decoration: none;
+  }
+  
+  .nav-links {
+    display: flex;
+    gap: 2rem;
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+  
+  .nav-links a {
+    color: #4b5563;
+    text-decoration: none;
+  }
+  
+  .nav-links a:hover {
+    color: #3b82f6;
+  }
+  
+  main {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 2rem;
+    min-height: calc(100vh - 200px);
+  }
+  
+  .site-footer {
+    background: #f9fafb;
+    padding: 2rem;
+    text-align: center;
+    color: #6b7280;
+  }
+</style>
+```
+
+### Penggunaan Layout:
+
+```astro
+---
+// src/pages/index.astro
+import BaseLayout from '../layouts/BaseLayout.astro';
+---
+
+<BaseLayout 
+  title="Selamat Datang di Website Kami"
+  description="Website terbaik untuk solusi digital Anda"
+  image="/images/home-og.jpg"
+>
+  <h1>Halo Dunia!</h1>
+  <p>Ini adalah halaman beranda dengan layout lengkap.</p>
+</BaseLayout>
+```
+
+```astro
+---
+// src/pages/blog/[slug].astro
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import { getCollection } from 'astro:content';
+
+export async function getStaticPaths() {
+  const posts = await getCollection('blog');
+  return posts.map(post => ({
+    params: { slug: post.slug },
+    props: { post },
+  }));
+}
+
+const { post } = Astro.props;
+const { Content } = await post.render();
+---
+
+<BaseLayout 
+  title={post.data.title}
+  description={post.data.excerpt}
+  image={post.data.coverImage}
+  type="article"
+>
+  <article>
+    <header>
+      <h1>{post.data.title}</h1>
+      <time>{post.data.pubDate.toLocaleDateString('id-ID')}</time>
+    </header>
+    
+    <div class="prose">
+      <Content />
+    </div>
+  </article>
+  
+  <!-- Tambahan di head -->
+  <Fragment slot="head">
+    <meta name="author" content={post.data.author} />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+  </Fragment>
+</BaseLayout>
+```
+
+---
+
+## 7.2 Nested Layouts
+
+Layout bisa bersarang (nested) - layout di dalam layout. Ini memungkinkan hierarki template yang kompleks.
+
+### Struktur Nested Layouts:
+
+```
+src/layouts/
+├── BaseLayout.astro       # Root layout (HTML, head, body)
+├── BlogLayout.astro       # Layout khusus blog (extends BaseLayout)
+├── ArticleLayout.astro    # Layout artikel (extends BlogLayout)
+└── DocsLayout.astro       # Layout dokumentasi (extends BaseLayout)
+```
+
+### Contoh Nested Layout:
+
+```astro
+---
+// src/layouts/BlogLayout.astro
+import BaseLayout from './BaseLayout.astro';
+
+interface Props {
+  description?: string;
+}
+
+const { title, description } = Astro.props;
+---
+
+<BaseLayout title={title} description={description}>
+  <!-- Slot head diteruskan ke BaseLayout -->
+  <slot name="head" slot="head" />
+  
+  <div class="blog-container">
+    <aside class="blog-sidebar">
+      <nav aria-label="Blog navigation">
+        <h3>Kategori</h3>
+        <ul>
+          <li><a href="/blog/category/tech">Teknologi</a></li>
+          <li><a href="/blog/category/tutorial">Tutorial</a></li>
+          <li><a href="/blog/category/news">Berita</a></li>
+        </ul>
+        
+        <h3>Tags Populer</h3>
+        <div class="tag-cloud">
+          <a href="/blog/tag/astro" class="tag">#astro</a>
+          <a href="/blog/tag/react" class="tag">#react</a>
+          <a href="/blog/tag/web" class="tag">#web</a>
+        </div>
+      </nav>
+    </aside>
+    
+    <div class="blog-content">
+      <slot /> <!-- Konten artikel -->
+    </div>
+  </div>
+  
+  <style>
+    .blog-container {
+      display: grid;
+      grid-template-columns: 250px 1fr;
+      gap: 3rem;
+    }
+    
+    .blog-sidebar {
+      position: sticky;
+      top: 2rem;
+      height: fit-content;
+    }
+    
+    .blog-sidebar h3 {
+      font-size: 0.875rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: #6b7280;
+      margin: 1.5rem 0 0.75rem;
+    }
+    
+    .blog-sidebar ul {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+    }
+    
+    .blog-sidebar li {
+      margin: 0.5rem 0;
+    }
+    
+    .blog-sidebar a {
+      color: #4b5563;
+      text-decoration: none;
+    }
+    
+    .blog-sidebar a:hover {
+      color: #3b82f6;
+    }
+    
+    .tag-cloud {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+    }
+    
+    .tag {
+      background: #f3f4f6;
+      padding: 0.25rem 0.75rem;
+      border-radius: 9999px;
+      font-size: 0.875rem;
+      color: #4b5563;
+      text-decoration: none;
+    }
+    
+    .tag:hover {
+      background: #e5e7eb;
+    }
+    
+    @media (max-width: 768px) {
+      .blog-container {
+        grid-template-columns: 1fr;
+      }
+      
+      .blog-sidebar {
+        position: static;
+      }
+    }
+  </style>
+</BaseLayout>
+```
+
+```astro
+---
+// src/layouts/ArticleLayout.astro
+import BlogLayout from './BlogLayout.astro';
+import TableOfContents from '../components/TableOfContents.astro';
+import AuthorCard from '../components/AuthorCard.astro';
+import RelatedPosts from '../components/RelatedPosts.astro';
+
+interface Props {
+  description?: string;
+  headings: { depth: number; slug: string; text: string }[];
+  author: {
+    name: string;
+    avatar: string;
+    bio: string;
+  };
+  relatedPosts: any[];
+}
+
+const { title, description, headings, author, relatedPosts } = Astro.props;
+---
+
+<BlogLayout title={title} description={description}>
+  <article class="article">
+    <header class="article-header">
+      <slot name="header" />
+    </header>
+    
+    <div class="article-body">
+      <div class="article-content">
+        <slot /> <!-- Konten utama artikel -->
+      </div>
+      
+      <aside class="article-meta">
+        <TableOfContents headings={headings} />
+        <AuthorCard author={author} />
+      </aside>
+    </div>
+    
+    <footer class="article-footer">
+      <RelatedPosts posts={relatedPosts} />
+      <slot name="footer" />
+    </footer>
+  </article>
+  
+  <style>
+    .article {
+      max-width: 100%;
+    }
+    
+    .article-header {
+      margin-bottom: 2rem;
+      padding-bottom: 2rem;
+      border-bottom: 1px solid #e5e7eb;
+    }
+    
+    .article-body {
+      display: grid;
+      grid-template-columns: 1fr 280px;
+      gap: 3rem;
+    }
+    
+    .article-content {
+      min-width: 0; /* Prevent overflow */
+    }
+    
+    .article-meta {
+      position: sticky;
+      top: 2rem;
+      height: fit-content;
+    }
+    
+    .article-footer {
+      margin-top: 4rem;
+      padding-top: 2rem;
+      border-top: 1px solid #e5e7eb;
+    }
+    
+    @media (max-width: 1024px) {
+      .article-body {
+        grid-template-columns: 1fr;
+      }
+      
+      .article-meta {
+        position: static;
+      }
+    }
+  </style>
+</BlogLayout>
+```
+
+### Penggunaan Triple Nested:
+
+```astro
+---
+// src/pages/blog/[category]/[slug].astro
+import ArticleLayout from '../../../layouts/ArticleLayout.astro';
+import { getCollection } from 'astro:content';
+
+export async function getStaticPaths() {
+  const posts = await getCollection('blog');
+  return posts.map(post => ({
+    params: { 
+      category: post.data.category,
+      slug: post.slug 
+    },
+    props: { post },
+  }));
+}
+
+const { post } = Astro.props;
+const { Content, headings } = await post.render();
+
+// Fetch related posts
+const allPosts = await getCollection('blog');
+const relatedPosts = allPosts
+  .filter(p => 
+    p.data.category === post.data.category && 
+    p.slug !== post.slug
+  )
+  .slice(0, 3);
+---
+
+<ArticleLayout 
+  title={post.data.title}
+  description={post.data.excerpt}
+  headings={headings}
+  author={post.data.author}
+  relatedPosts={relatedPosts}
+>
+  <!-- Slot header -->
+  <Fragment slot="header">
+    <span class="category-badge">{post.data.category}</span>
+    <h1>{post.data.title}</h1>
+    <div class="meta">
+      <time>{post.data.pubDate.toLocaleDateString('id-ID')}</time>
+      <span>{post.data.readingTime} menit baca</span>
+    </div>
+  </Fragment>
+  
+  <!-- Slot default (konten) -->
+  <div class="prose">
+    <Content />
+  </div>
+  
+  <!-- Slot footer -->
+  <Fragment slot="footer">
+    <div class="share-buttons">
+      <button>Share Twitter</button>
+      <button>Share Facebook</button>
+    </div>
+  </Fragment>
+</ArticleLayout>
+```
+
+---
+
+## 7.3 Default Layouts
+
+Menetapkan layout default untuk seluruh project atau folder tertentu.
+
+### Global Default Layout:
+
+```javascript
+// src/pages/_layout.astro (convention tertentu)
+// Atau gunakan pattern di astro.config.mjs (tidak native, perlu custom integration)
+
+// Alternatif: Import otomatis via middleware atau plugin
+```
+
+### Pattern Default Layout:
+
+```astro
+---
+// src/components/AutoLayout.astro
+import BaseLayout from '../layouts/BaseLayout.astro';
+import BlogLayout from '../layouts/BlogLayout.astro';
+import DocsLayout from '../layouts/DocsLayout.astro';
+
+const { pathname } = Astro.url;
+
+// Tentukan layout berdasarkan path
+const LayoutComponent = pathname.startsWith('/blog') 
+  ? BlogLayout 
+  : pathname.startsWith('/docs')
+    ? DocsLayout
+    : BaseLayout;
+
+const { title, description } = Astro.props;
+---
+
+<LayoutComponent title={title} description={description}>
+  <slot />
+</LayoutComponent>
+```
+
+### Markdown/MDX Default Layout:
+
+```javascript
+// astro.config.mjs
+import { defineConfig } from 'astro/config';
+
+export default defineConfig({
+  markdown: {
+    // Layout default untuk semua .md files
+    layout: './src/layouts/MarkdownLayout.astro',
+  },
+});
+```
+
+```astro
+---
+// src/layouts/MarkdownLayout.astro
+// Layout khusus untuk file .md dan .mdx
+
+interface Props {
+  frontmatter: {
+    description?: string;
+    pubDate?: Date;
+    author?: string;
+    tags?: string[];
+  };
+}
+
+const { frontmatter } = Astro.props;
+---
+
+<!DOCTYPE html>
+<html lang="id">
+  <head>
+    <title>{frontmatter.title}</title>
+    <meta name="description" content={frontmatter.description} />
+  </head>
+  <body>
+    <article class="markdown-body">
+      {frontmatter.pubDate && (
+        <header>
+          <time>{frontmatter.pubDate.toLocaleDateString('id-ID')}</time>
+          {frontmatter.author && <span>by {frontmatter.author}</span>}
+        </header>
+      )}
+      
+      <h1>{frontmatter.title}</h1>
+      
+      <slot /> <!-- Konten Markdown -->
+      
+      {frontmatter.tags && (
+        <footer>
+          <div class="tags">
+            {frontmatter.tags.map(tag => (
+              <span class="tag">#{tag}</span>
+            ))}
+          </div>
+        </footer>
+      )}
+    </article>
+    
+    <style>
+      .markdown-body {
+        max-width: 65ch;
+        margin: 0 auto;
+        padding: 2rem;
+      }
+      
+      .markdown-body :global(h1) {
+        font-size: 2.5rem;
+        margin-bottom: 1rem;
+      }
+      
+      .markdown-body :global(p) {
+        line-height: 1.8;
+        margin-bottom: 1.5rem;
+      }
+      
+      .markdown-body :global(pre) {
+        background: #1f2937;
+        color: #e5e7eb;
+        padding: 1.5rem;
+        border-radius: 8px;
+        overflow-x: auto;
+      }
+    </style>
+  </body>
+</html>
+```
+
+---
+
+## 7.4 Conditional Layouts
+
+Mengganti layout berdasarkan kondisi tertentu (user role, device, preferences).
+
+### Layout Berdasarkan User:
+
+```astro
+---
+// src/layouts/ConditionalLayout.astro
+import BaseLayout from './BaseLayout.astro';
+import AdminLayout from './AdminLayout.astro';
+import DashboardLayout from './DashboardLayout.astro';
+
+interface Props {
+  requiresAuth?: boolean;
+  requiredRole?: 'user' | 'admin';
+}
+
+const { title, requiresAuth = false, requiredRole = 'user' } = Astro.props;
+
+// Cek auth dari cookies atau session
+const authToken = Astro.cookies.get('auth')?.value;
+const userRole = Astro.cookies.get('role')?.value || 'guest';
+
+// Redirect jika tidak auth
+if (requiresAuth && !authToken) {
+  return Astro.redirect('/login?redirect=' + encodeURIComponent(Astro.url.pathname));
+}
+
+// Pilih layout berdasarkan role
+let LayoutComponent = BaseLayout;
+if (userRole === 'admin') {
+  LayoutComponent = AdminLayout;
+} else if (authToken) {
+  LayoutComponent = DashboardLayout;
+}
+---
+
+<LayoutComponent title={title} userRole={userRole}>
+  <slot />
+</LayoutComponent>
+```
+
+### Layout Berdasarkan Route Pattern:
+
+```astro
+---
+// src/layouts/RouteAwareLayout.astro
+import MarketingLayout from './MarketingLayout.astro';
+import AppLayout from './AppLayout.astro';
+import PlainLayout from './PlainLayout.astro';
+
+const { pathname } = Astro.url;
+
+// Marketing pages: landing, about, pricing
+const isMarketing = ['/', '/about', '/pricing', '/contact'].includes(pathname) ||
+  pathname.startsWith('/blog');
+
+// App pages: dashboard, settings, profile
+const isApp = pathname.startsWith('/app') || pathname.startsWith('/dashboard');
+
+const LayoutComponent = isMarketing 
+  ? MarketingLayout 
+  : isApp 
+    ? AppLayout 
+    : PlainLayout;
+---
+
+<LayoutComponent {...Astro.props}>
+  <slot />
+  <slot name="head" slot="head" />
+</LayoutComponent>
+```
+
+---
+
+## 7.5 Layout Props & Slots
+
+Mengelola props dan slots secara advanced untuk layout yang fleksibel.
+
+### Typed Layout Props:
+
+```typescript
+// src/types/layout.ts
+export interface BaseLayoutProps {
+  description?: string;
+  image?: string;
+  type?: 'website' | 'article' | 'profile';
+  lang?: 'id' | 'en';
+  noindex?: boolean;
+  breadcrumbs?: Array<{ label: string; href: string }>;
+}
+
+export interface AppLayoutProps extends BaseLayoutProps {
+  sidebar?: boolean;
+  sidebarItems?: Array<{ icon: string; label: string; href: string }>;
+  user: {
+    name: string;
+    email: string;
+    avatar: string;
+  };
+}
+```
+
+```astro
+---
+// src/layouts/AppLayout.astro
+import type { AppLayoutProps } from '../types/layout';
+
+interface Props extends AppLayoutProps {}
+
+const { 
+  title, 
+  description, 
+  sidebar = true,
+  sidebarItems = [],
+  user,
+  breadcrumbs = []
+} = Astro.props;
+---
+
+<!DOCTYPE html>
+<html lang="id">
+  <head>
+    <title>{title}</title>
+    <meta name="description" content={description} />
+  </head>
+  <body>
+    <div class="app-shell">
+      {sidebar && (
+        <aside class="app-sidebar">
+          <div class="user-profile">
+            <img src={user.avatar} alt={user.name} />
+            <div>
+              <strong>{user.name}</strong>
+              <span>{user.email}</span>
+            </div>
+          </div>
+          
+          <nav>
+            {sidebarItems.map(item => (
+              <a href={item.href} class="nav-item">
+                <span class="icon">{item.icon}</span>
+                <span>{item.label}</span>
+              </a>
+            ))}
+          </nav>
+        </aside>
+      )}
+      
+      <div class="app-main">
+        {breadcrumbs.length > 0 && (
+          <nav aria-label="Breadcrumb" class="breadcrumbs">
+            {breadcrumbs.map((crumb, index) => (
+              <span>
+                {index > 0 && ' / '}
+                <a href={crumb.href}>{crumb.label}</a>
+              </span>
+            ))}
+          </nav>
+        )}
+        
+        <header class="page-header">
+          <slot name="header" />
+        </header>
+        
+        <main>
+          <slot />
+        </main>
+      </div>
+    </div>
+    
+    <slot name="modals" />
+    <slot name="scripts" />
+  </body>
+</html>
+
+<style>
+  .app-shell {
+    display: grid;
+    grid-template-columns: 260px 1fr;
+    min-height: 100vh;
+  }
+  
+  .app-sidebar {
+    background: #1f2937;
+    color: white;
+    padding: 1.5rem;
+  }
+  
+  .user-profile {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    padding-bottom: 1.5rem;
+    margin-bottom: 1.5rem;
+    border-bottom: 1px solid #374151;
+  }
+  
+  .user-profile img {
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+  }
+  
+  .user-profile strong {
+    display: block;
+    font-size: 0.875rem;
+  }
+  
+  .user-profile span {
+    font-size: 0.75rem;
+    color: #9ca3af;
+  }
+  
+  .nav-item {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.75rem;
+    color: #d1d5db;
+    text-decoration: none;
+    border-radius: 6px;
+    margin: 0.25rem 0;
+  }
+  
+  .nav-item:hover {
+    background: #374151;
+    color: white;
+  }
+  
+  .app-main {
+    background: #f9fafb;
+    padding: 2rem;
+  }
+  
+  .breadcrumbs {
+    margin-bottom: 1rem;
+    font-size: 0.875rem;
+    color: #6b7280;
+  }
+  
+  .breadcrumbs a {
+    color: #3b82f6;
+    text-decoration: none;
+  }
+</style>
+```
+
+### Multiple Named Slots:
+
+```astro
+---
+// src/layouts/ComplexLayout.astro
+interface Props {
+}
+
+const { title } = Astro.props;
+---
+
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>{title}</title>
+    <slot name="head-meta" />
+    <slot name="head-styles" />
+    <slot name="head-scripts" />
+  </head>
+  <body>
+    <slot name="announcement" />
+    
+    <header>
+      <slot name="header-top" />
+      <nav><slot name="navigation" /></nav>
+      <slot name="header-bottom" />
+    </header>
+    
+    <aside class="left-sidebar">
+      <slot name="left-sidebar" />
+    </aside>
+    
+    <main>
+      <slot name="page-header" />
+      <slot /> <!-- Default content -->
+      <slot name="page-footer" />
+    </main>
+    
+    <aside class="right-sidebar">
+      <slot name="right-sidebar" />
+    </aside>
+    
+    <footer>
+      <slot name="footer-content" />
+    </footer>
+    
+    <slot name="bottom-scripts" />
+    <slot name="analytics" />
+  </body>
+</html>
+```
+
+```astro
+---
+// src/pages/complex-page.astro
+import ComplexLayout from '../layouts/ComplexLayout.astro';
+import Announcement from '../components/Announcement.astro';
+import MainNav from '../components/MainNav.astro';
+import TableOfContents from '../components/TableOfContents.astro';
+import RelatedArticles from '../components/RelatedArticles.astro';
+---
+
+<ComplexLayout title="Halaman Kompleks">
+  <!-- Slot: announcement -->
+  <Announcement slot="announcement">
+    Promo besar-besaran! Diskon 50% hari ini.
+  </Announcement>
+  
+  <!-- Slot: navigation -->
+  <MainNav slot="navigation" />
+  
+  <!-- Slot: left-sidebar -->
+  <TableOfContents slot="left-sidebar" headings={headings} />
+  
+  <!-- Slot: right-sidebar -->
+  <RelatedArticles slot="right-sidebar" posts={relatedPosts} />
+  
+  <!-- Slot: page-header (default slot) -->
+  <h1 slot="page-header">Judul Artikel</h1>
+  
+  <!-- Default slot -->
+  <p>Konten utama artikel di sini...</p>
+  
+  <!-- Slot: page-footer -->
+  <div slot="page-footer" class="author-bio">
+    <img src="/author.jpg" alt="Author" />
+    <p>Ditulis oleh John Doe</p>
+  </div>
+  
+  <!-- Slot: head-meta -->
+  <meta slot="head-meta" property="og:type" content="article" />
+  
+  <!-- Slot: bottom-scripts -->
+  <script slot="bottom-scripts" src="/analytics.js"></script>
+</ComplexLayout>
+```
+
+### Slot Fallbacks:
+
+```astro
+---
+// src/layouts/SmartLayout.astro
+const hasSidebar = Astro.slots.has('sidebar');
+const hasToc = Astro.slots.has('toc');
+---
+
+<div class="layout" class:list={['has-sidebar', { 'has-toc': hasToc }]}>
+  {hasSidebar ? (
+    <aside class="sidebar">
+      <slot name="sidebar" />
+    </aside>
+  ) : (
+    <aside class="sidebar sidebar-default">
+      <h3>Menu Default</h3>
+      <ul>
+        <li><a href="/">Home</a></li>
+        <li><a href="/about">About</a></li>
+      </ul>
+    </aside>
+  )}
+  
+  <main>
+    {hasToc && (
+      <nav class="toc">
+        <slot name="toc" />
+      </nav>
+    )}
+    
+    <article>
+      <slot />
+    </article>
+  </main>
+</div>
+```
+
+---
+
+## Ringkasan Sesi 7
+
+| Konsep | Deskripsi | Use Case |
+|--------|-----------|----------|
+| **Base Layout** | Wrapper HTML dasar | Semua halaman |
+| **Nested Layouts** | Layout di dalam layout | Hierarki kompleks (Blog → Article) |
+| **Default Layouts** | Layout otomatis | Markdown/MDX files |
+| **Conditional Layouts** | Layout berdasarkan kondisi | Auth, role, route pattern |
+| **Named Slots** | Multiple content areas | Sidebar, header, footer terpisah |
+| **Slot Fallbacks** | Default content jika slot kosong | Navigation default, empty states |
+
+### Best Practices:
+
+1. **DRY Principle**: Jangan duplikat HTML di setiap halaman
+2. **Composition**: Gunakan nested layouts untuk fleksibilitas
+3. **Type Safety**: Definisikan interface untuk layout props
+4. **Performance**: Layout Astro = zero JS, gunakan framework components hanya jika perlu
+5. **Accessibility**: Pastikan skip links, landmarks, dan heading hierarchy konsisten
+
+---
+
+**Selanjutnya:** Di Sesi 8, kita akan membahas **Content Management** - Content Collections, Markdown/MDX, schema validation, dan querying content.

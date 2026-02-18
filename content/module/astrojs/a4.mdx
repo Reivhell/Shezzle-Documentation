@@ -1,0 +1,852 @@
+---
+title: "Sesi 4: Routing & Halaman"
+description: "Astro menggunakan sistem **File-Based Routing**, yang berarti struktur folder `src/pages/` secara otomatis menentukan URL website kamu. Tidak perlu ko..."
+category: "astrojs"
+tags: ["astrojs", "routing"]
+order: 4
+---
+
+# Sesi 4: Routing & Halaman
+
+## 4.1 File-Based Routing
+
+Astro menggunakan sistem **File-Based Routing**, yang berarti struktur folder `src/pages/` secara otomatis menentukan URL website kamu. Tidak perlu konfigurasi routing manual seperti di React Router atau Vue Router.
+
+### Analogi Sederhana:
+
+> Bayangkan `src/pages/` seperti **peta kota**. Setiap file adalah sebuah alamat bangunan. Jika kamu membuat file di `src/pages/toko/buku.astro`, maka alamatnya adalah `website.com/toko/buku`. Sederhana dan intuitif!
+
+### Aturan Dasar Routing:
+
+| Lokasi File | URL Path | Keterangan |
+|-------------|----------|------------|
+| `src/pages/index.astro` | `/` | Homepage (root) |
+| `src/pages/about.astro` | `/about` | Halaman statis |
+| `src/pages/blog/index.astro` | `/blog` | Index folder |
+| `src/pages/blog/post-1.astro` | `/blog/post-1` | Nested route |
+| `src/pages/blog/[slug].astro` | `/blog/:slug` | Dynamic route |
+
+### Contoh Struktur Lengkap:
+
+```
+src/pages/
+├── index.astro                 →  /
+├── about.astro                 →  /about
+├── contact.astro               →  /contact
+├── blog/
+│   ├── index.astro             →  /blog
+│   ├── getting-started.astro   →  /blog/getting-started
+│   ├── category/
+│   │   └── index.astro         →  /blog/category
+│   └── [slug].astro            →  /blog/:slug
+├── products/
+│   ├── index.astro             →  /products
+│   └── [category]/
+│       ├── index.astro         →  /products/:category
+│       └── [id].astro          →  /products/:category/:id
+├── api/
+│   ├── users.ts                →  /api/users
+│   └── users/
+│       └── [id].ts             →  /api/users/:id
+└── 404.astro                   →  404 page (fallback)
+```
+
+---
+
+## 4.2 Static Routes
+
+Static routes adalah halaman dengan URL yang tetap dan tidak berubah. Ini adalah tipe route paling sederhana di Astro.
+
+### Contoh Static Route:
+
+```astro
+---
+// src/pages/about.astro
+// URL: /about
+import Layout from '../layouts/Layout.astro';
+
+const team = [
+  { name: 'Budi', role: 'Developer' },
+  { name: 'Ana', role: 'Designer' },
+  { name: 'Citra', role: 'Manager' }
+];
+---
+
+<Layout title="Tentang Kami">
+  <h1>Tentang Perusahaan Kami</h1>
+  <p>Kami adalah tim yang passionate dalam membangun web.</p>
+  
+  <h2>Tim Kami</h2>
+  <ul>
+    {team.map(member => (
+      <li>
+        <strong>{member.name}</strong> - {member.role}
+      </li>
+    ))}
+  </ul>
+</Layout>
+```
+
+### Index Routes:
+
+Setiap folder bisa memiliki `index.astro` yang menjadi "halaman depan" folder tersebut.
+
+```astro
+---
+// src/pages/blog/index.astro
+// URL: /blog
+import Layout from '../../layouts/Layout.astro';
+import { getCollection } from 'astro:content';
+
+const posts = await getCollection('blog');
+---
+
+<Layout title="Blog">
+  <h1>Artikel Terbaru</h1>
+  
+  <div class="post-grid">
+    {posts.map(post => (
+      <article>
+        <a href={`/blog/${post.slug}`}>
+          <h2>{post.data.title}</h2>
+          <time>{post.data.pubDate.toDateString()}</time>
+        </a>
+      </article>
+    ))}
+  </div>
+</Layout>
+```
+
+### Trailing Slashes:
+
+Kamu bisa mengontrol trailing slash di `astro.config.mjs`:
+
+```javascript
+// astro.config.mjs
+export default defineConfig({
+  trailingSlash: 'always',    // /about/ (dengan slash)
+  // trailingSlash: 'never',  // /about (tanpa slash)
+  // trailingSlash: 'ignore', // default, terima keduanya
+});
+```
+
+---
+
+## 4.3 Dynamic Routes
+
+Dynamic routes memungkinkan kamu membuat satu file yang menangani banyak URL berbeda berdasarkan parameter.
+
+### Rest Parameters (`[param].astro`):
+
+```astro
+---
+// src/pages/blog/[slug].astro
+// Matches: /blog/hello-world, /blog/astro-guide, dll
+
+import Layout from '../../layouts/Layout.astro';
+import { getCollection } from 'astro:content';
+
+// 1. getStaticPaths() - WAJIB untuk SSG dynamic routes
+export async function getStaticPaths() {
+  const posts = await getCollection('blog');
+  
+  return posts.map(post => ({
+    params: { slug: post.slug },  // { slug: 'hello-world' }
+    props: { post },              // Meneruskan data ke komponen
+  }));
+}
+
+// 2. Ambil parameter dari URL
+const { slug } = Astro.params;      // 'hello-world'
+const { post } = Astro.props;       // Object post lengkap
+
+// 3. Render konten
+const { Content } = await post.render();
+---
+
+<Layout title={post.data.title}>
+  <article>
+    <header>
+      <h1>{post.data.title}</h1>
+      <time>{post.data.pubDate.toLocaleDateString('id-ID')}</time>
+      <p>By {post.data.author}</p>
+    </header>
+    
+    <div class="content">
+      <Content />  <!-- Render MDX/Markdown -->
+    </div>
+    
+    <footer>
+      <p>Tags: {post.data.tags.join(', ')}</p>
+      <p>URL Slug: {slug}</p>
+    </footer>
+  </article>
+</Layout>
+```
+
+### Multiple Parameters:
+
+```astro
+---
+// src/pages/products/[category]/[id].astro
+// Matches: /products/electronics/123, /products/books/456
+
+export async function getStaticPaths() {
+  // Simulasi data dari database/API
+  const products = [
+    { category: 'electronics', id: '123', name: 'Laptop' },
+    { category: 'electronics', id: '124', name: 'Mouse' },
+    { category: 'books', id: '456', name: 'Astro Guide' },
+    { category: 'books', id: '457', name: 'Web Dev 101' },
+  ];
+
+  return products.map(product => ({
+    params: { 
+      category: product.category,  // 'electronics'
+      id: product.id               // '123'
+    },
+    props: { product },
+  }));
+}
+
+const { category, id } = Astro.params;    // { category: 'electronics', id: '123' }
+const { product } = Astro.props;          // { name: 'Laptop', ... }
+---
+
+<h1>{product.name}</h1>
+<p>Category: {category}</p>
+<p>ID: {id}</p>
+```
+
+### Catch-All Routes (`[...path].astro`):
+
+Menangkap segmen URL yang tidak terbatas.
+
+```astro
+---
+// src/pages/docs/[...slug].astro
+// Matches: 
+//   /docs/intro
+//   /docs/guides/installation
+//   /docs/guides/advanced/ssr
+//   /docs/api/reference/components/button
+
+import Layout from '../../layouts/DocsLayout.astro';
+
+export async function getStaticPaths() {
+  const docs = await getCollection('docs');
+  
+  return docs.map(doc => ({
+    params: { 
+      slug: doc.slug              // 'guides/installation' atau 'api/reference'
+    },
+    props: { doc },
+  }));
+}
+
+const { slug } = Astro.params;        // 'guides/installation' (string)
+const { doc } = Astro.props;
+
+// Split slug menjadi array untuk breadcrumb
+const pathSegments = slug.split('/'); // ['guides', 'installation']
+---
+
+<Layout>
+  <nav aria-label="breadcrumb">
+    <a href="/docs">Docs</a>
+    {pathSegments.map((segment, index) => (
+      <span>
+        {' > '}
+        <a href={`/docs/${pathSegments.slice(0, index + 1).join('/')}`}>
+          {segment}
+        </a>
+      </span>
+    ))}
+  </nav>
+  
+  <h1>{doc.data.title}</h1>
+  <Content />
+</Layout>
+```
+
+### Optional Catch-All (`[[...path]].astro`):
+
+Versi optional - bisa match dengan atau tanpa parameter.
+
+```astro
+---
+// src/pages/products/[[...filters]].astro
+// Matches: 
+//   /products              (tanpa filter)
+//   /products/electronics  (dengan filter)
+//   /products/electronics/under-1000/sorted-by-price
+
+export async function getStaticPaths() {
+  return [
+    { params: { filters: undefined } },           // /products
+    { params: { filters: 'electronics' } },       // /products/electronics
+    { params: { filters: 'electronics/under-1000' } },
+  ];
+}
+
+const { filters } = Astro.params;  // undefined atau 'electronics/under-1000'
+
+// Parse filters
+const filterArray = filters ? filters.split('/') : [];
+const category = filterArray[0];      // 'electronics' atau undefined
+const priceFilter = filterArray[1];   // 'under-1000' atau undefined
+---
+
+<h1>Produk {category ? `- ${category}` : ''}</h1>
+{priceFilter && <p>Filter Harga: {priceFilter}</p>}
+```
+
+---
+
+## 4.4 Nested Routes
+
+Nested routes memungkinkan kamu membuat layout yang persisten untuk sekelompok halaman.
+
+### Struktur Nested dengan Layout:
+
+```
+src/pages/
+├── dashboard/
+│   ├── index.astro           →  /dashboard
+│   ├── settings.astro        →  /dashboard/settings
+│   ├── profile.astro         →  /dashboard/profile
+│   └── _layout.astro         →  Layout khusus dashboard (private convention)
+└── dashboard.astro           →  Layout wrapper (optional)
+```
+
+### Contoh Layout Nested:
+
+```astro
+---
+// src/pages/dashboard.astro
+// Layout wrapper untuk semua halaman dashboard
+import DashboardLayout from '../layouts/DashboardLayout.astro';
+---
+
+<DashboardLayout>
+  <slot />  <!-- Konten dari child pages -->
+</DashboardLayout>
+```
+
+```astro
+---
+// src/pages/dashboard/index.astro
+// URL: /dashboard
+// Otomatis menggunakan layout dari dashboard.astro di parent folder!
+
+const stats = {
+  users: 1234,
+  revenue: 'Rp 50.000.000',
+  orders: 89
+};
+---
+
+<h1>Dashboard Overview</h1>
+
+<div class="stats-grid">
+  <div class="stat-card">
+    <h3>Total Users</h3>
+    <p class="number">{stats.users}</p>
+  </div>
+  <div class="stat-card">
+    <h3>Revenue</h3>
+    <p class="number">{stats.revenue}</p>
+  </div>
+  <div class="stat-card">
+    <h3>Orders</h3>
+    <p class="number">{stats.orders}</p>
+  </div>
+</div>
+```
+
+```astro
+---
+// src/pages/dashboard/settings.astro
+// URL: /dashboard/settings
+// Juga menggunakan layout dashboard.astro secara otomatis!
+
+const settings = {
+  theme: 'dark',
+  notifications: true,
+  language: 'id'
+};
+---
+
+<h1>Pengaturan</h1>
+
+<form>
+  <label>
+    Tema:
+    <select value={settings.theme}>
+      <option value="light">Terang</option>
+      <option value="dark">Gelap</option>
+    </select>
+  </label>
+  
+  <label>
+    <input type="checkbox" checked={settings.notifications} />
+    Aktifkan Notifikasi
+  </label>
+  
+  <button type="submit">Simpan</button>
+</form>
+```
+
+### Rest Parameter untuk Nested Dynamic:
+
+```astro
+---
+// src/pages/blog/[...slug].astro
+// Handles: /blog/2026/01/astro-release atau /blog/category/tutorial/intro
+
+export async function getStaticPaths() {
+  // Bisa mengembalikan array slug bersarang
+  return [
+    { params: { slug: '2026/01/astro-release' } },
+    { params: { slug: 'category/tutorial/intro' } },
+    { params: { slug: 'guides' } },  // Single segment juga valid
+  ];
+}
+
+const { slug } = Astro.params;  // '2026/01/astro-release'
+const segments = slug.split('/');  // ['2026', '01', 'astro-release']
+---
+
+<nav>
+  {segments.map((seg, i) => (
+    <span>
+      {i > 0 && ' / '}
+      <a href={`/blog/${segments.slice(0, i + 1).join('/')}`}>
+        {seg}
+      </a>
+    </span>
+  ))}
+</nav>
+<!-- Output: 2026 / 01 / astro-release -->
+```
+
+---
+
+## 4.5 API Routes
+
+API routes memungkinkan kamu membuat endpoint backend langsung di Astro. File di `src/pages/api/` menjadi API endpoints.
+
+### Basic API Route:
+
+```typescript
+// src/pages/api/hello.ts
+// URL: /api/hello
+// Method: GET (default)
+
+import type { APIRoute } from 'astro';
+
+export const GET: APIRoute = async ({ request, url }) => {
+  // Akses query parameters
+  const name = url.searchParams.get('name') || 'World';
+  
+  return new Response(
+    JSON.stringify({
+      message: `Hello, ${name}!`,
+      timestamp: new Date().toISOString(),
+      method: 'GET'
+    }),
+    {
+      status: 200,
+      headers: {
+        'Content-Type': 'application/json'
+      }
+    }
+  );
+};
+```
+
+**Test:** `curl http://localhost:4321/api/hello?name=Budi`
+
+### Response dengan Astro Response Helpers:
+
+```typescript
+// src/pages/api/users.ts
+import type { APIRoute } from 'astro';
+
+// Simulasi database
+const users = [
+  { id: 1, name: 'Budi', email: 'budi@example.com' },
+  { id: 2, name: 'Ana', email: 'ana@example.com' },
+];
+
+export const GET: APIRoute = async () => {
+  return Response.json({ 
+    success: true, 
+    data: users,
+    count: users.length 
+  });
+};
+
+export const POST: APIRoute = async ({ request }) => {
+  try {
+    const body = await request.json();
+    
+    // Validasi sederhana
+    if (!body.name || !body.email) {
+      return Response.json(
+        { success: false, error: 'Name and email required' },
+        { status: 400 }
+      );
+    }
+    
+    const newUser = {
+      id: users.length + 1,
+      name: body.name,
+      email: body.email
+    };
+    
+    users.push(newUser);
+    
+    return Response.json(
+      { success: true, data: newUser },
+      { status: 201 }
+    );
+    
+  } catch (error) {
+    return Response.json(
+      { success: false, error: 'Invalid JSON' },
+      { status: 400 }
+    );
+  }
+};
+```
+
+### Dynamic API Routes:
+
+```typescript
+// src/pages/api/users/[id].ts
+import type { APIRoute } from 'astro';
+
+const users = [
+  { id: '1', name: 'Budi' },
+  { id: '2', name: 'Ana' },
+];
+
+export const GET: APIRoute = async ({ params }) => {
+  const user = users.find(u => u.id === params.id);
+  
+  if (!user) {
+    return Response.json(
+      { success: false, error: 'User not found' },
+      { status: 404 }
+    );
+  }
+  
+  return Response.json({ success: true, data: user });
+};
+
+export const DELETE: APIRoute = async ({ params }) => {
+  const index = users.findIndex(u => u.id === params.id);
+  
+  if (index === -1) {
+    return Response.json(
+      { success: false, error: 'User not found' },
+      { status: 404 }
+    );
+  }
+  
+  const deleted = users.splice(index, 1)[0];
+  
+  return Response.json({ 
+    success: true, 
+    message: `User ${deleted.name} deleted` 
+  });
+};
+```
+
+### API dengan Context Lengkap:
+
+```typescript
+// src/pages/api/protected.ts
+import type { APIRoute } from 'astro';
+
+export const GET: APIRoute = async (context) => {
+  // Akses semua context properties
+  const { 
+    request,        // Request object
+    url,           // URL object
+    params,        // Route params
+    locals,        // Data dari middleware
+    cookies,       // Cookie utilities
+    redirect,      // Redirect helper
+    site           // Site URL dari config
+  } = context;
+  
+  // Cek authentication dari middleware
+  if (!locals.user) {
+    return Response.json(
+      { error: 'Unauthorized' },
+      { status: 401 }
+    );
+  }
+  
+  // Set cookie
+  cookies.set('session', 'abc123', {
+    httpOnly: true,
+    secure: true,
+    maxAge: 60 * 60 * 24 // 1 hari
+  });
+  
+  return Response.json({
+    message: 'Protected data',
+    user: locals.user,
+    site: site?.toString()
+  });
+};
+```
+
+---
+
+## 4.6 404 & Error Pages
+
+Astro menyediakan cara untuk menangani halaman tidak ditemukan dan error.
+
+### Custom 404 Page:
+
+```astro
+---
+// src/pages/404.astro
+// Otomatis menjadi halaman 404
+
+import Layout from '../layouts/Layout.astro';
+
+const suggestions = [
+  { title: 'Beranda', url: '/' },
+  { title: 'Blog', url: '/blog' },
+  { title: 'Kontak', url: '/contact' }
+];
+---
+
+<Layout title="Halaman Tidak Ditemukan - 404">
+  <div class="error-container">
+    <h1>404</h1>
+    <p class="message">Oops! Halaman yang kamu cari tidak ditemukan.</p>
+    
+    <div class="suggestions">
+      <p>Mungkin maksud kamu:</p>
+      <ul>
+        {suggestions.map(item => (
+          <li>
+            <a href={item.url}>{item.title}</a>
+          </li>
+        ))}
+      </ul>
+    </div>
+    
+    <a href="/" class="btn-home">Kembali ke Beranda</a>
+  </div>
+</Layout>
+
+<style>
+  .error-container {
+    text-align: center;
+    padding: 4rem 2rem;
+    max-width: 600px;
+    margin: 0 auto;
+  }
+  
+  h1 {
+    font-size: 6rem;
+    color: #3b82f6;
+    margin: 0;
+  }
+  
+  .message {
+    font-size: 1.25rem;
+    color: #6b7280;
+    margin: 1rem 0 2rem;
+  }
+  
+  .btn-home {
+    display: inline-block;
+    background: #3b82f6;
+    color: white;
+    padding: 0.75rem 1.5rem;
+    border-radius: 8px;
+    text-decoration: none;
+    margin-top: 2rem;
+  }
+</style>
+```
+
+### Error Page dengan SSR:
+
+```astro
+---
+// src/pages/500.astro
+// Untuk error server (SSR mode)
+
+import Layout from '../layouts/Layout.astro';
+
+interface Props {
+  error: unknown;
+}
+
+const { error } = Astro.props;
+const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+---
+
+<Layout title="Server Error">
+  <h1>500 - Server Error</h1>
+  <p>Terjadi kesalahan pada server kami.</p>
+  
+  {import.meta.env.DEV && (
+    <pre class="error-stack">{errorMessage}</pre>
+  )}
+</Layout>
+```
+
+### Redirects:
+
+```astro
+---
+// src/pages/old-page.astro
+// Redirect permanen ke halaman baru
+
+return Astro.redirect('/new-page', 301);  // Permanent redirect
+// atau 302 untuk temporary redirect
+---
+
+<!-- Content tidak akan dirender karena redirect -->
+```
+
+---
+
+## 4.7 Internationalization (i18n) Routing
+
+Astro 3.0+ memiliki built-in i18n routing yang powerful.
+
+### Konfigurasi i18n:
+
+```javascript
+// astro.config.mjs
+export default defineConfig({
+  i18n: {
+    // Bahasa default
+    defaultLocale: 'id',
+    
+    // Semua bahasa yang didukung
+    locales: ['id', 'en', 'es', 'fr'],
+    
+    // Routing strategy
+    routing: {
+      prefixDefaultLocale: false,  // /id/about atau /about?
+      redirectToDefaultLocale: true  // Redirect / ke /id?
+    },
+    
+    // Fallback jika konten tidak tersedia
+    fallback: {
+      es: 'en',  // Jika tidak ada versi ES, pakai EN
+      fr: 'en'
+    }
+  }
+});
+```
+
+### Struktur Folder i18n:
+
+```
+src/pages/
+├── index.astro              →  / (redirect ke /id atau /en)
+├── about.astro              →  /about (default locale)
+├── blog/
+│   └── [slug].astro         →  /blog/:slug
+│
+└── [lang]/                  →  Locale-specific pages
+    ├── index.astro          →  /id/, /en/, /es/, /fr/
+    ├── about.astro          →  /id/about, /en/about, dll
+    └── blog/
+        └── [slug].astro     →  /id/blog/:slug, /en/blog/:slug
+```
+
+### Mengakses Locale di Component:
+
+```astro
+---
+// src/pages/[lang]/about.astro
+import Layout from '../../layouts/Layout.astro';
+
+// Dapatkan locale dari params
+const { lang } = Astro.params;  // 'id', 'en', 'es', atau 'fr'
+
+// Konten terjemahan
+const content = {
+  id: {
+  },
+  en: {
+  },
+  es: {
+  }
+};
+
+// Fallback ke default jika tidak ada
+const t = content[lang] || content['id'];
+---
+
+<Layout title={t.title} lang={lang}>
+  <h1>{t.title}</h1>
+  <p>{t.description}</p>
+  
+  <!-- Language Switcher -->
+  <nav aria-label="Language switcher">
+    <p>Bahasa / Language / Idioma:</p>
+    {['id', 'en', 'es'].map(l => (
+      <a 
+        href={`/${l}/about`} 
+        aria-current={l === lang ? 'page' : undefined}
+        class={l === lang ? 'active' : ''}
+      >
+        {l.toUpperCase()}
+      </a>
+    ))}
+  </nav>
+</Layout>
+```
+
+### Helper i18n di Astro:
+
+```astro
+---
+// Menggunakan Astro.preferredLocale
+const preferredLocale = Astro.preferredLocale;           // 'id' (dari browser)
+const preferredLocales = Astro.preferredLocaleList;      // ['id', 'en-US', 'en']
+const currentLocale = Astro.currentLocale;               // Locale aktif saat ini
+
+// Redirect berdasarkan preferensi browser
+if (!Astro.params.lang && preferredLocale) {
+  return Astro.redirect(`/${preferredLocale}/`);
+}
+---
+
+<p>Locale aktif: {currentLocale}</p>
+<p>Locale preferensi browser: {preferredLocale}</p>
+```
+
+---
+
+## Ringkasan Sesi 4
+
+| Konsep | Deskripsi | Contoh |
+|--------|-----------|--------|
+| **File-Based Routing** | URL dari struktur folder | `src/pages/about.astro` → `/about` |
+| **Static Routes** | URL tetap | `index.astro`, `about.astro` |
+| **Dynamic Routes** | URL dengan parameter | `[slug].astro`, `[id].astro` |
+| **getStaticPaths()** | Generate halaman statis untuk dynamic routes | Wajib untuk SSG |
+| **Rest Parameters** | Menangkap multiple segments | `[...path].astro` |
+| **API Routes** | Backend endpoints | `src/pages/api/users.ts` |
+| **404 Page** | Halaman not found | `src/pages/404.astro` |
+| **i18n Routing** | Multi-bahasa | `[lang]/about.astro` |
+
+---
+
+**Selanjutnya:** Di Sesi 5, kita akan membahas **Components & Framework Integration** - cara menggunakan React, Vue, Svelte, SolidJS dalam satu project Astro, serta memahami Islands Architecture lebih dalam dengan client directives.

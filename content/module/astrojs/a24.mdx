@@ -1,0 +1,1405 @@
+---
+title: "Sesi 24: Testing dan Debugging"
+description: "Astro adalah framework yang menghasilkan HTML murni di server secara default, dengan interaktivitas melalui \"Islands Architecture\". Pola ini memerluka..."
+category: "astrojs"
+tags: ["astrojs", "testing"]
+order: 24
+---
+
+## Sesi 24: Testing dan Debugging
+
+### Pendahuluan: Mengapa Testing Penting dalam Astro
+
+Astro adalah framework yang menghasilkan HTML murni di server secara default, dengan interaktivitas melalui "Islands Architecture". Pola ini memerlukan strategi testing yang berbeda dari framework JavaScript tradisional seperti React atau Vue yang 100% client-side.
+
+**Konsep Fundamental:**
+
+1. **Server-First Architecture**: Komponen Astro dirender di server sebagai HTML statis. Testing harus mencakup output HTML, bukan hanya perilaku JavaScript.
+2. **Islands of Interaktivitas**: Hanya komponen dengan directive `client:*` yang mengirim JavaScript ke browser. Testing harus membedakan antara komponen statis (server-only) dan interaktif (hydrated).
+3. **Zero-JS by Default**: Halaman Astro umumnya tidak memiliki JavaScript runtime overhead, sehingga testing performa dan bundle size menjadi kritis.
+
+### Unit Testing
+
+Unit testing menguji unit terkecil dari kode secara isolasi: fungsi utilitas, helper, dan logika bisnis yang terpisah dari UI.
+
+#### Setup Vitest untuk Astro
+
+Vitest adalah testing framework pilihan untuk proyek Vite-based seperti Astro. Vitest menyediakan ESM native support dan HMR (Hot Module Replacement) untuk testing yang cepat.
+
+**Instalasi Dependencies:**
+
+```bash
+npm install --save-dev vitest @testing-library/dom @testing-library/jest-dom happy-dom
+```
+
+**Konfigurasi `vitest.config.ts`:**
+
+```typescript
+import { defineConfig } from 'vitest/config';
+import path from 'node:path';
+
+export default defineConfig({
+  test: {
+    // Mengaktifkan global API (describe, it, expect) tanpa import
+    globals: true,
+    
+    // Environment untuk mensimulasikan DOM
+    environment: 'happy-dom',
+    
+    // Setup file yang dijalankan sebelum semua test
+    setupFiles: ['./tests/setup.ts'],
+    
+    // Pattern file test
+    include: ['src/**/*.test.ts', 'tests/**/*.test.ts'],
+    
+    // Coverage configuration
+    coverage: {
+      provider: 'v8',
+      reporter: ['text', 'json', 'html'],
+      exclude: [
+        'node_modules/',
+        'tests/setup.ts',
+        '**/*.d.ts',
+        '**/*.config.*',
+      ],
+    },
+    
+    // Aliases yang sama dengan Astro config
+    alias: {
+      '@': path.resolve(__dirname, './src'),
+      '@components': path.resolve(__dirname, './src/components'),
+      '@utils': path.resolve(__dirname, './src/utils'),
+    },
+  },
+});
+```
+
+**Setup File (`tests/setup.ts`):**
+
+```typescript
+import '@testing-library/jest-dom';
+
+// Mock Astro module imports
+vi.mock('astro:content', () => ({
+  getCollection: vi.fn(),
+  getEntry: vi.fn(),
+}));
+
+vi.mock('astro:assets', () => ({
+  Image: vi.fn(),
+  getImage: vi.fn(),
+}));
+
+// Extend matchers
+expect.extend({
+  toHaveValidAstroAttrs(received, expected) {
+    const pass = received.hasAttribute('data-astro-cid');
+    return {
+      pass,
+      message: () => `expected ${received} to have Astro scoped attribute`,
+    };
+  },
+});
+```
+
+#### Testing Utility Functions
+
+Utility functions adalah kandidat utama untuk unit testing karena pure logic tanpa side effects.
+
+**Contoh: Parser Frontmatter Kustom**
+
+```typescript
+// src/utils/parseFrontmatter.ts
+interface FrontmatterData {
+  pubDate: Date;
+  tags?: string[];
+  draft?: boolean;
+}
+
+export function parseFrontmatter(content: string): FrontmatterData {
+  const frontmatterRegex = /^---\n([\s\S]*?)\n---/;
+  const match = content.match(frontmatterRegex);
+  
+  if (!match) {
+    throw new Error('Invalid frontmatter: missing delimiters');
+  }
+  
+  const lines = match[1].split('\n');
+  const data: Partial<FrontmatterData> = {};
+  
+  for (const line of lines) {
+    const [key, ...valueParts] = line.split(':');
+    const value = valueParts.join(':').trim();
+    
+    if (key === 'pubDate') {
+      data[key] = new Date(value);
+    } else if (key === 'tags') {
+      data[key] = value.split(',').map(t => t.trim());
+    } else if (key === 'draft') {
+      data[key] = value === 'true';
+    } else {
+      data[key as keyof FrontmatterData] = value;
+    }
+  }
+  
+  if (!data.title || !data.pubDate) {
+    throw new Error('Missing required fields: title, pubDate');
+  }
+  
+  return data as FrontmatterData;
+}
+```
+
+**Unit Test Lengkap:**
+
+```typescript
+// src/utils/parseFrontmatter.test.ts
+import { describe, it, expect, vi } from 'vitest';
+import { parseFrontmatter } from './parseFrontmatter';
+
+describe('parseFrontmatter', () => {
+  it('should parse valid frontmatter correctly', () => {
+    const content = `---
+pubDate: 2024-01-15
+tags: astro, javascript, web
+draft: false
+---`;
+    
+    const result = parseFrontmatter(content);
+    
+    expect(result.title).toBe('Artikel Test');
+    expect(result.pubDate).toBeInstanceOf(Date);
+    expect(result.pubDate.toISOString()).toContain('2024-01-15');
+    expect(result.tags).toEqual(['astro', 'javascript', 'web']);
+    expect(result.draft).toBe(false);
+  });
+
+  it('should throw error for missing frontmatter delimiters', () => {
+    const content = 'Just plain text without frontmatter';
+    
+    expect(() => parseFrontmatter(content)).toThrow(
+      'Invalid frontmatter: missing delimiters'
+    );
+  });
+
+  it('should throw error for missing required fields', () => {
+    const content = `---
+tags: javascript
+---`;
+    
+    expect(() => parseFrontmatter(content)).toThrow(
+      'Missing required fields'
+    );
+  });
+
+  it('should handle optional fields gracefully', () => {
+    const content = `---
+pubDate: 2024-01-15
+---`;
+    
+    const result = parseFrontmatter(content);
+    expect(result.tags).toBeUndefined();
+    expect(result.draft).toBeUndefined();
+  });
+
+  it('should handle date edge cases', () => {
+    const content = `---
+pubDate: 2023-02-29
+---`;
+    
+    // 2023 bukan tahun kabisat
+    expect(() => parseFrontmatter(content)).not.toThrow();
+    const result = parseFrontmatter(content);
+    expect(isNaN(result.pubDate.getTime())).toBe(false);
+  });
+});
+```
+
+#### Testing Astro Components secara Isolasi
+
+Menguji komponen Astro memerlukan pendekatan khusus karena file `.astro` perlu dikompilasi terlebih dahulu.
+
+**Menggunakan `astro-testing-library` (Community Approach):**
+
+```typescript
+// src/components/Button.test.ts
+import { describe, it, expect, beforeAll } from 'vitest';
+import { loadAstroComponent } from '../testing/astro-test-utils';
+
+describe('Button Component', () => {
+  let Button: any;
+  
+  beforeAll(async () => {
+    // Load dan compile komponen Astro
+    Button = await loadAstroComponent('./src/components/Button.astro');
+  });
+
+  it('should render with provided text', async () => {
+    const props = {
+      variant: 'primary',
+      size: 'md',
+      text: 'Klik Saya',
+    };
+    
+    const html = await Button.renderToString(props);
+    
+    expect(html).toContain('Klik Saya');
+    expect(html).toContain('button');
+    expect(html).toContain('variant-primary');
+    expect(html).toContain('size-md');
+  });
+
+  it('should include href when provided', async () => {
+    const props = {
+      text: 'Link Button',
+      href: '/dashboard',
+    };
+    
+    const html = await Button.renderToString(props);
+    
+    expect(html).toContain('<a');
+    expect(html).toContain('href="/dashboard"');
+    expect(html).not.toContain('<button');
+  });
+
+  it('should handle disabled state correctly', async () => {
+    const props = {
+      text: 'Disabled',
+      disabled: true,
+    };
+    
+    const html = await Button.renderToString(props);
+    
+    expect(html).toContain('disabled');
+    expect(html).toContain('aria-disabled="true"');
+  });
+});
+```
+
+**Utility Helper untuk Testing Astro Components:**
+
+```typescript
+// tests/utils/astro-test-utils.ts
+import { compile } from 'astro/compiler';
+import { loadESM } from 'esm-loader';
+
+export async function loadAstroComponent(path: string) {
+  const fs = await import('node:fs');
+  const source = fs.readFileSync(path, 'utf-8');
+  
+  // Compile Astro ke JavaScript
+  const result = await compile(source, {
+    filename: path,
+    generate: 'ssr',
+  });
+  
+  // Load hasil compile sebagai module
+  const module = await loadESM(result.js.code);
+  return module.default;
+}
+
+export async function renderToString(Component: any, props: any) {
+  // Simulasi Astro runtime
+  const slots = props.slots || {};
+  const html = await Component.render(props, slots);
+  return html;
+}
+```
+
+### Integration Testing
+
+Integration testing menguji interaksi antar komponen dan sistem, termasuk routing, data fetching, dan API endpoints.
+
+#### Testing API Routes
+
+API Routes di Astro adalah file di `src/pages/api/` yang mengeksport fungsi HTTP handler.
+
+**Contoh API Route:**
+
+```typescript
+// src/pages/api/newsletter.ts
+import type { APIRoute } from 'astro';
+
+export const POST: APIRoute = async ({ request }) => {
+  try {
+    const body = await request.json();
+    const { email, name } = body;
+    
+    // Validasi
+    if (!email || !email.includes('@')) {
+      return new Response(
+        JSON.stringify({ error: 'Email valid diperlukan' }),
+        { status: 400, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+    
+    // Simulasi simpan ke database
+    const subscriber = await saveToDatabase({ email, name, subscribedAt: new Date() });
+    
+    return new Response(
+      JSON.stringify({ 
+        success: true, 
+        message: 'Berlangganan berhasil',
+        id: subscriber.id 
+      }),
+      { status: 201, headers: { 'Content-Type': 'application/json' } }
+    );
+    
+  } catch (error) {
+    return new Response(
+      JSON.stringify({ error: 'Internal server error' }),
+      { status: 500 }
+    );
+  }
+};
+
+async function saveToDatabase(data: any) {
+  // Mock database operation
+  return { id: crypto.randomUUID(), ...data };
+}
+```
+
+**Integration Test dengan Vitest:**
+
+```typescript
+// src/pages/api/newsletter.test.ts
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { POST } from './newsletter';
+
+describe('Newsletter API', () => {
+  const createMockRequest = (body: any) => {
+    return new Request('http://localhost/api/newsletter', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  };
+
+  it('should successfully subscribe with valid data', async () => {
+    const request = createMockRequest({
+      email: 'test@example.com',
+      name: 'John Doe',
+    });
+    
+    const response = await POST({ request });
+    const data = await response.json();
+    
+    expect(response.status).toBe(201);
+    expect(data.success).toBe(true);
+    expect(data.id).toBeDefined();
+    expect(data.message).toBe('Berlangganan berhasil');
+  });
+
+  it('should reject invalid email format', async () => {
+    const request = createMockRequest({
+      email: 'invalid-email',
+      name: 'John',
+    });
+    
+    const response = await POST({ request });
+    const data = await response.json();
+    
+    expect(response.status).toBe(400);
+    expect(data.error).toBe('Email valid diperlukan');
+  });
+
+  it('should reject missing email', async () => {
+    const request = createMockRequest({
+      name: 'John',
+    });
+    
+    const response = await POST({ request });
+    expect(response.status).toBe(400);
+  });
+
+  it('should handle malformed JSON gracefully', async () => {
+    const request = new Request('http://localhost/api/newsletter', {
+      method: 'POST',
+      body: 'not valid json',
+    });
+    
+    const response = await POST({ request });
+    expect(response.status).toBe(500);
+  });
+});
+```
+
+#### Testing Content Collections
+
+Content Collections adalah fitur inti Astro untuk mengelola konten Markdown/MDX dengan type safety.
+
+**Setup Test untuk Content Collections:**
+
+```typescript
+// tests/content-collections.test.ts
+import { describe, it, expect, beforeAll } from 'vitest';
+import { getCollection, getEntry, type CollectionEntry } from 'astro:content';
+
+describe('Blog Content Collection', () => {
+  let posts: CollectionEntry<'blog'>[];
+  
+  beforeAll(async () => {
+    posts = await getCollection('blog');
+  });
+
+  it('should have valid schema for all posts', () => {
+    expect(posts.length).toBeGreaterThan(0);
+    
+    posts.forEach((post) => {
+      // Cek required fields
+      expect(post.data.title).toBeDefined();
+      expect(typeof post.data.title).toBe('string');
+      expect(post.data.title.length).toBeGreaterThan(0);
+      
+      expect(post.data.pubDate).toBeInstanceOf(Date);
+      expect(post.data.pubDate.getTime()).toBeLessThan(Date.now());
+      
+      // Cek slug format
+      expect(post.slug).toMatch(/^[a-z0-9-]+$/);
+      expect(post.id).toContain('.md');
+    });
+  });
+
+  it('should have valid optional fields when present', () => {
+    posts.forEach((post) => {
+      if (post.data.tags) {
+        expect(Array.isArray(post.data.tags)).toBe(true);
+        post.data.tags.forEach((tag: string) => {
+          expect(typeof tag).toBe('string');
+          expect(tag).toMatch(/^[a-z0-9-]+$/);
+        });
+      }
+      
+      if (post.data.author) {
+        expect(typeof post.data.author).toBe('string');
+      }
+      
+      if (post.data.draft !== undefined) {
+        expect(typeof post.data.draft).toBe('boolean');
+      }
+    });
+  });
+
+  it('should have unique slugs', () => {
+    const slugs = posts.map(p => p.slug);
+    const uniqueSlugs = [...new Set(slugs)];
+    expect(slugs.length).toBe(uniqueSlugs.length);
+  });
+
+  it('should render body content', async () => {
+    const post = posts[0];
+    const { Content } = await post.render();
+    expect(Content).toBeDefined();
+  });
+});
+
+describe('Specific Entry Retrieval', () => {
+  it('should retrieve single entry by slug', async () => {
+    const post = await getEntry('blog', 'getting-started');
+    expect(post).toBeDefined();
+    expect(post?.data.title).toBe('Getting Started');
+  });
+
+  it('should return undefined for non-existent slug', async () => {
+    const post = await getEntry('blog', 'non-existent-post');
+    expect(post).toBeUndefined();
+  });
+});
+```
+
+### End-to-End (E2E) Testing dengan Playwright
+
+E2E testing mensimulasikan pengguna sungguhan berinteraksi dengan aplikasi di browser.
+
+#### Setup Playwright untuk Astro
+
+**Instalasi:**
+
+```bash
+npm init playwright@latest
+```
+
+**Konfigurasi `playwright.config.ts`:**
+
+```typescript
+import { defineConfig, devices } from '@playwright/test';
+
+export default defineConfig({
+  testDir: './e2e',
+  fullyParallel: true,
+  forbidOnly: !!process.env.CI,
+  retries: process.env.CI ? 2 : 0,
+  workers: process.env.CI ? 1 : undefined,
+  reporter: 'html',
+  
+  use: {
+    baseURL: 'http://localhost:4321',
+    trace: 'on-first-retry',
+    screenshot: 'only-on-failure',
+    video: 'retain-on-failure',
+  },
+
+  projects: [
+    {
+      name: 'chromium',
+      use: { ...devices['Desktop Chrome'] },
+    },
+    {
+      name: 'firefox',
+      use: { ...devices['Desktop Firefox'] },
+    },
+    {
+      name: 'webkit',
+      use: { ...devices['Desktop Safari'] },
+    },
+    // Mobile viewports
+    {
+      name: 'Mobile Chrome',
+      use: { ...devices['Pixel 5'] },
+    },
+    {
+      name: 'Mobile Safari',
+      use: { ...devices['iPhone 12'] },
+    },
+  ],
+
+  webServer: {
+    command: 'npm run preview',
+    url: 'http://localhost:4321',
+    reuseExistingServer: !process.env.CI,
+  },
+});
+```
+
+#### E2E Test Scenarios
+
+**1. Navigation dan Routing:**
+
+```typescript
+// e2e/navigation.spec.ts
+import { test, expect } from '@playwright/test';
+
+test.describe('Navigation', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto('/');
+  });
+
+  test('homepage should have correct title and meta', async ({ page }) => {
+    await expect(page).toHaveTitle(/Astro Site/);
+    
+    const metaDescription = page.locator('meta[name="description"]');
+    await expect(metaDescription).toHaveAttribute('content', /.+/);
+    
+    // Cek canonical URL
+    const canonical = page.locator('link[rel="canonical"]');
+    await expect(canonical).toHaveAttribute('href', 'http://localhost:4321/');
+  });
+
+  test('navigation menu should work correctly', async ({ page }) => {
+    // Cek link navigasi
+    const navLinks = page.locator('nav a');
+    await expect(navLinks).toHaveCount(4);
+    
+    // Klik link blog
+    await page.click('nav a[href="/blog"]');
+    await expect(page).toHaveURL('/blog');
+    await expect(page.locator('h1')).toContainText('Blog');
+    
+    // Kembali ke beranda
+    await page.click('nav a[href="/"]');
+    await expect(page).toHaveURL('/');
+  });
+
+  test('mobile menu should toggle correctly', async ({ page }) => {
+    // Set viewport mobile
+    await page.setViewportSize({ width: 375, height: 667 });
+    
+    const menuButton = page.locator('[aria-label="Toggle menu"]');
+    const navMenu = page.locator('nav[aria-label="Main navigation"]');
+    
+    // Menu harus hidden secara default di mobile
+    await expect(navMenu).not.toBeVisible();
+    
+    // Klik toggle
+    await menuButton.click();
+    await expect(navMenu).toBeVisible();
+    await expect(menuButton).toHaveAttribute('aria-expanded', 'true');
+    
+    // Klik lagi untuk tutup
+    await menuButton.click();
+    await expect(navMenu).not.toBeVisible();
+  });
+});
+```
+
+**2. Form Interactions:**
+
+```typescript
+// e2e/forms.spec.ts
+import { test, expect } from '@playwright/test';
+
+test.describe('Contact Form', () => {
+  test('should submit form successfully', async ({ page }) => {
+    await page.goto('/contact');
+    
+    // Isi form
+    await page.fill('input[name="name"]', 'John Doe');
+    await page.fill('input[name="email"]', 'john@example.com');
+    await page.fill('textarea[name="message"]', 'Test message content');
+    
+    // Submit
+    await page.click('button[type="submit"]');
+    
+    // Cek success message
+    await expect(page.locator('[role="alert"]')).toContainText('Pesan berhasil dikirim');
+    
+    // Cek form reset
+    await expect(page.locator('input[name="name"]')).toHaveValue('');
+  });
+
+  test('should show validation errors', async ({ page }) => {
+    await page.goto('/contact');
+    
+    // Submit form kosong
+    await page.click('button[type="submit"]');
+    
+    // Cek browser validation atau custom error
+    const nameInput = page.locator('input[name="name"]');
+    await expect(nameInput).toHaveAttribute('required', '');
+    
+    // Atau jika menggunakan custom validation
+    await expect(page.locator('.error-message')).toContainText('Nama wajib diisi');
+  });
+
+  test('should prevent double submission', async ({ page }) => {
+    await page.goto('/contact');
+    
+    await page.fill('input[name="name"]', 'John');
+    await page.fill('input[name="email"]', 'john@example.com');
+    await page.fill('textarea[name="message"]', 'Message');
+    
+    const submitButton = page.locator('button[type="submit"]');
+    
+    // Double click
+    await submitButton.dblclick();
+    
+    // Pastikan hanya satu request yang terkirim (cek loading state)
+    await expect(submitButton).toBeDisabled();
+    await expect(submitButton).toContainText('Mengirim...');
+  });
+});
+```
+
+**3. Islands Interaktivitas:**
+
+```typescript
+// e2e/islands.spec.ts
+import { test, expect } from '@playwright/test';
+
+test.describe('Interactive Islands', () => {
+  test('counter component should hydrate and work', async ({ page }) => {
+    await page.goto('/demo');
+    
+    const counter = page.locator('[data-testid="counter"]');
+    const incrementBtn = counter.locator('button:has-text("+")');
+    const countDisplay = counter.locator('[data-testid="count"]');
+    
+    // Cek initial state
+    await expect(countDisplay).toHaveText('0');
+    
+    // Klik increment
+    await incrementBtn.click();
+    await expect(countDisplay).toHaveText('1');
+    
+    await incrementBtn.click();
+    await expect(countDisplay).toHaveText('2');
+    
+    // Cek localStorage persistence jika ada
+    const stored = await page.evaluate(() => localStorage.getItem('counter-value'));
+    expect(stored).toBe('2');
+  });
+
+  test('search should filter results dynamically', async ({ page }) => {
+    await page.goto('/blog');
+    
+    const searchInput = page.locator('input[type="search"]');
+    const results = page.locator('.search-results article');
+    
+    // Initial state: semua artikel terlihat
+    await expect(results).toHaveCount(5);
+    
+    // Type search query
+    await searchInput.fill('astro');
+    
+    // Tunggu debounce
+    await page.waitForTimeout(300);
+    
+    // Hasil terfilter
+    const filteredCount = await results.count();
+    expect(filteredCount).toBeLessThan(5);
+    
+    // Cek highlight text
+    const highlighted = page.locator('mark');
+    await expect(highlighted.first()).toContainText('astro');
+  });
+
+  test('theme toggle should persist preference', async ({ page }) => {
+    await page.goto('/');
+    
+    const themeToggle = page.locator('button[aria-label="Toggle theme"]');
+    const html = page.locator('html');
+    
+    // Cek initial theme
+    const initialTheme = await html.getAttribute('data-theme');
+    
+    // Toggle theme
+    await themeToggle.click();
+    
+    // Cek theme berubah
+    const newTheme = await html.getAttribute('data-theme');
+    expect(newTheme).not.toBe(initialTheme);
+    
+    // Reload page
+    await page.reload();
+    
+    // Cek theme persist
+    const persistedTheme = await html.getAttribute('data-theme');
+    expect(persistedTheme).toBe(newTheme);
+  });
+});
+```
+
+**4. View Transitions:**
+
+```typescript
+// e2e/view-transitions.spec.ts
+import { test, expect } from '@playwright/test';
+
+test.describe('View Transitions', () => {
+  test('should animate page navigation', async ({ page }) => {
+    await page.goto('/');
+    
+    // Aktifkan view transitions jika perlu
+    const hasViewTransition = await page.evaluate(() => 
+      'startViewTransition' in document
+    );
+    
+    test.skip(!hasViewTransition, 'Browser tidak support View Transitions');
+    
+    const link = page.locator('a[href="/about"]');
+    
+    // Trigger navigation
+    await link.click();
+    
+    // Cek transisi berjalan (tidak ada error)
+    await expect(page).toHaveURL('/about');
+    await expect(page.locator('h1')).toBeVisible();
+  });
+
+  test('should preserve scroll position on back navigation', async ({ page }) => {
+    await page.goto('/blog');
+    
+    // Scroll ke bawah
+    await page.evaluate(() => window.scrollTo(0, 500));
+    
+    // Klik artikel
+    await page.click('article:first-child a');
+    await expect(page).toHaveURL(/\/blog\/.+/);
+    
+    // Kembali
+    await page.goBack();
+    
+    // Cek scroll position
+    const scrollPosition = await page.evaluate(() => window.scrollY);
+    expect(scrollPosition).toBeGreaterThan(400);
+  });
+});
+```
+
+### Debugging Tools Lanjutan
+
+#### Astro Dev Toolbar Deep Dive
+
+Dev Toolbar muncul otomatis di pojok kanan bawah saat mode development. Toolbar ini menyediakan insight real-time tentang performa dan struktur aplikasi.
+
+**Fitur-Fitur Utama:**
+
+1. **Inspect Mode**: Hover elemen untuk melihat:
+   - Nama komponen Astro yang merender elemen tersebut
+   - Props yang diteruskan (jika ada)
+   - Waktu render komponen
+   - Directive hydrasi yang digunakan (`client:load`, `client:idle`, dll)
+
+2. **Audits Panel**: Memeriksa:
+   - **Performance**: Image tanpa width/height, render-blocking resources
+   - **Accessibility**: Missing alt text, contrast issues, focusable elements
+   - **SEO**: Missing meta tags, heading hierarchy
+
+**Mengaktifkan dan Mengkonfigurasi:**
+
+```javascript
+// astro.config.mjs
+export default defineConfig({
+  devToolbar: {
+    enabled: true,
+    // Custom apps bisa ditambahkan di sini
+  },
+});
+```
+
+**Membuat Custom Dev Toolbar App:**
+
+```typescript
+// src/dev-toolbar-apps/analytics-checker.ts
+import { defineToolbarApp } from 'astro/toolbar';
+
+export default defineToolbarApp({
+  id: 'analytics-checker',
+  name: 'Analytics Validator',
+  icon: '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20v-6M6 20V10M18 20V4"/></svg>',
+  
+  init(canvas, app) {
+    // Cek apakah analytics script ada
+    const hasAnalytics = !!document.querySelector('script[src*="analytics"]');
+    const hasGTM = !!document.querySelector('script[src*="googletagmanager"]');
+    
+    const status = hasAnalytics || hasGTM ? 'OK' : 'Missing';
+    const color = hasAnalytics || hasGTM ? 'green' : 'red';
+    
+    canvas.innerHTML = `
+      <div style="padding: 1rem; font-family: system-ui;">
+        <h3 style="margin: 0 0 0.5rem;">Analytics Status</h3>
+        <div style="display: flex; align-items: center; gap: 0.5rem;">
+          <span style="display: inline-block; width: 12px; height: 12px; 
+                       background: ${color}; border-radius: 50%;"></span>
+          <span>${status}</span>
+        </div>
+        ${!hasAnalytics && !hasGTM ? '<p style="color: orange; margin-top: 0.5rem;">⚠️ Analytics tidak terdeteksi</p>' : ''}
+      </div>
+    `;
+    
+    // Update badge di toolbar
+    app.setBadge({
+      text: status === 'OK' ? '✓' : '!',
+      color: status === 'OK' ? 'green' : 'red',
+    });
+  },
+});
+```
+
+**Registrasi Custom App:**
+
+```javascript
+// astro.config.mjs
+import { defineConfig } from 'astro/config';
+
+export default defineConfig({
+  devToolbar: {
+    apps: [
+      {
+        id: 'analytics-checker',
+        entrypoint: './src/dev-toolbar-apps/analytics-checker.ts',
+      },
+    ],
+  },
+});
+```
+
+#### VS Code Debugging Configuration
+
+Untuk debugging server-side Astro code di VS Code:
+
+**.vscode/launch.json:**
+
+```json
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "node",
+      "request": "launch",
+      "name": "Debug Astro Server",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev"],
+      "port": 9229,
+      "skipFiles": ["<node_internals>/**"],
+      "sourceMaps": true,
+      "resolveSourceMapLocations": [
+        "${workspaceFolder}/**",
+        "!**/node_modules/**"
+      ],
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "chrome",
+      "request": "launch",
+      "name": "Debug Client Side",
+      "url": "http://localhost:4321",
+      "webRoot": "${workspaceFolder}/src",
+      "sourceMapPathOverrides": {
+        "vite:///src/*": "${webRoot}/*"
+      }
+    },
+    {
+      "type": "node",
+      "request": "launch",
+      "name": "Debug Build Process",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "build"],
+      "port": 9229,
+      "skipFiles": ["<node_internals>/**"]
+    }
+  ],
+  "compounds": [
+    {
+      "name": "Full Stack Debug",
+      "configurations": ["Debug Astro Server", "Debug Client Side"]
+    }
+  ]
+}
+```
+
+**Debugging Server Islands:**
+
+```typescript
+// src/pages/api/debug.ts
+import type { APIRoute } from 'astro';
+
+export const GET: APIRoute = async ({ request }) => {
+  // Breakpoint bisa dipasang di sini
+  const url = new URL(request.url);
+  const params = Object.fromEntries(url.searchParams);
+  
+  console.log('Debug params:', params);
+  console.log('Headers:', Object.fromEntries(request.headers));
+  
+  // Untuk debugging session/cookies
+  const cookies = request.headers.get('cookie');
+  
+  return new Response(
+    JSON.stringify({
+      timestamp: new Date().toISOString(),
+      params,
+      cookies,
+      env: import.meta.env.MODE,
+    }, null, 2),
+    {
+      status: 200,
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    }
+  );
+};
+```
+
+### Error Handling dan Logging
+
+#### Structured Error Handling
+
+Implementasi error handling yang robust di Astro memerlukan pemahaman perbedaan server vs client context.
+
+**Global Error Handler:**
+
+```typescript
+// src/middleware.ts
+import { defineMiddleware } from 'astro:middleware';
+
+export const onRequest = defineMiddleware(async (context, next) => {
+  try {
+    return await next();
+  } catch (error) {
+    // Log error ke service monitoring (Sentry, LogRocket, dll)
+    console.error('Server Error:', {
+      url: context.request.url,
+      method: context.request.method,
+      error: error instanceof Error ? error.message : 'Unknown error',
+      stack: error instanceof Error ? error.stack : undefined,
+      timestamp: new Date().toISOString(),
+    });
+    
+    // Return generic error untuk production
+    if (import.meta.env.PROD) {
+      return new Response(
+        JSON.stringify({ error: 'Internal Server Error' }),
+        { status: 500, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+    
+    // Return detailed error untuk development
+    throw error;
+  }
+});
+```
+
+**Component-Level Error Handling:**
+
+```astro
+---
+// src/components/DataFetcher.astro
+interface Props {
+  endpoint: string;
+  fallback?: string;
+}
+
+const { endpoint, fallback = 'Data tidak tersedia' } = Astro.props;
+
+let data: any = null;
+let error: Error | null = null;
+let loadingTime: number = 0;
+
+const startTime = Date.now();
+
+try {
+  const response = await fetch(endpoint, {
+    signal: AbortSignal.timeout(5000), // Timeout 5 detik
+  });
+  
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+  }
+  
+  data = await response.json();
+  loadingTime = Date.now() - startTime;
+  
+} catch (e) {
+  error = e instanceof Error ? e : new Error('Unknown error');
+  loadingTime = Date.now() - startTime;
+  
+  // Log untuk monitoring
+  if (import.meta.env.PROD) {
+    await fetch('/api/log-error', {
+      method: 'POST',
+      body: JSON.stringify({
+        component: 'DataFetcher',
+        endpoint,
+        error: error.message,
+        duration: loadingTime,
+      }),
+    }).catch(() => {}); // Ignore logging errors
+  }
+}
+---
+
+{error ? (
+  <div class="error-container" role="alert" aria-live="polite">
+    <h3>Error Memuat Data</h3>
+    <p>{fallback}</p>
+    {import.meta.env.DEV && (
+      <details>
+        <summary>Detail Error (Development Only)</summary>
+        <pre>{error.message}</pre>
+        <pre>{error.stack}</pre>
+      </details>
+    )}
+    <button onclick="window.location.reload()">Coba Lagi</button>
+  </div>
+) : (
+  <div class="data-container" data-loading-time={loadingTime}>
+    <slot data={data} />
+  </div>
+)}
+```
+
+**Client-Side Error Boundary (untuk Islands):**
+
+```tsx
+// src/components/ErrorBoundary.tsx (React example)
+import { Component, type ReactNode } from 'react';
+
+interface Props {
+  children: ReactNode;
+  fallback?: ReactNode;
+}
+
+interface State {
+  hasError: boolean;
+  error?: Error;
+}
+
+export class ErrorBoundary extends Component<Props, State> {
+  constructor(props: Props) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  static getDerivedStateFromError(error: Error): State {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
+    console.error('React Error Boundary caught:', error, errorInfo);
+    
+    // Kirim ke analytics
+    if (typeof window !== 'undefined' && (window as any).gtag) {
+      (window as any).gtag('event', 'exception', {
+        fatal: false,
+      });
+    }
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return this.props.fallback || (
+        <div className="error-fallback" role="alert">
+          <h2>Terjadi Kesalahan</h2>
+          <p>Silakan muat ulang halaman.</p>
+          <button onClick={() => window.location.reload()}>
+            Muat Ulang
+          </button>
+        </div>
+      );
+    }
+
+    return this.props.children;
+  }
+}
+```
+
+#### Logging Strategy
+
+**Server-Side Logging:**
+
+```typescript
+// src/lib/logger.ts
+type LogLevel = 'debug' | 'info' | 'warn' | 'error';
+
+interface LogEntry {
+  level: LogLevel;
+  message: string;
+  timestamp: string;
+  context?: Record<string, any>;
+  requestId?: string;
+}
+
+class Logger {
+  private static instance: Logger;
+  private logs: LogEntry[] = [];
+  
+  static getInstance(): Logger {
+    if (!Logger.instance) {
+      Logger.instance = new Logger();
+    }
+    return Logger.instance;
+  }
+
+  log(level: LogLevel, message: string, context?: Record<string, any>) {
+    const entry: LogEntry = {
+      level,
+      message,
+      timestamp: new Date().toISOString(),
+      context,
+      requestId: this.getRequestId(),
+    };
+    
+    this.logs.push(entry);
+    
+    // Console output dengan formatting
+    const prefix = `[${entry.timestamp}] [${level.toUpperCase()}]`;
+    
+    if (level === 'error') {
+      console.error(prefix, message, context || '');
+    } else if (level === 'warn') {
+      console.warn(prefix, message, context || '');
+    } else {
+      console.log(prefix, message, context || '');
+    }
+    
+    // Di production, kirim ke external service
+    if (import.meta.env.PROD && level !== 'debug') {
+      this.sendToRemote(entry);
+    }
+  }
+  
+  debug(message: string, context?: Record<string, any>) {
+    this.log('debug', message, context);
+  }
+  
+  info(message: string, context?: Record<string, any>) {
+    this.log('info', message, context);
+  }
+  
+  warn(message: string, context?: Record<string, any>) {
+    this.log('warn', message, context);
+  }
+  
+  error(message: string, context?: Record<string, any>) {
+    this.log('error', message, context);
+  }
+  
+  private getRequestId(): string | undefined {
+    // Implementasi untuk mengambil request ID dari AsyncLocalStorage atau context
+    return undefined;
+  }
+  
+  private async sendToRemote(entry: LogEntry) {
+    // Implementasi pengiriman ke LogRocket, Sentry, atau custom endpoint
+    try {
+      await fetch('/api/log', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(entry),
+        // Fire and forget
+        keepalive: true,
+      });
+    } catch {
+      // Silent fail untuk logging
+    }
+  }
+  
+  // Untuk debugging: export logs
+  exportLogs(): LogEntry[] {
+    return [...this.logs];
+  }
+}
+
+export const logger = Logger.getInstance();
+```
+
+**Penggunaan Logger di Komponen:**
+
+```astro
+---
+// src/pages/api/webhook.ts
+import type { APIRoute } from 'astro';
+import { logger } from '../../lib/logger';
+
+export const POST: APIRoute = async ({ request }) => {
+  logger.info('Webhook received', {
+    url: request.url,
+    headers: Object.fromEntries(request.headers),
+  });
+  
+  try {
+    const payload = await request.json();
+    logger.debug('Webhook payload', { payload });
+    
+    // Proses webhook
+    await processWebhook(payload);
+    
+    logger.info('Webhook processed successfully');
+    return new Response('OK', { status: 200 });
+    
+  } catch (error) {
+    logger.error('Webhook processing failed', {
+      error: error instanceof Error ? error.message : 'Unknown',
+      stack: error instanceof Error ? error.stack : undefined,
+    });
+    
+    return new Response('Internal Server Error', { status: 500 });
+  }
+};
+---
+```
+
+### Testing Best Practices untuk Astro
+
+#### 1. Testing Pyramid untuk Astro
+
+```
+         /\
+        /  \  E2E Tests (Playwright) - Alur kritis user
+       /____\     10%
+      /      \
+     /        \ Integration Tests - API, Collections
+    /__________\     30%
+   /            \
+  /              \ Unit Tests - Utils, Helpers
+ /________________\     60%
+```
+
+#### 2. Mocking Astro Modules
+
+```typescript
+// tests/mocks/astro.ts
+import { vi } from 'vitest';
+
+// Mock astro:content
+export const mockGetCollection = vi.fn();
+export const mockGetEntry = vi.fn();
+
+vi.mock('astro:content', () => ({
+  getCollection: mockGetCollection,
+  getEntry: mockGetEntry,
+  defineCollection: vi.fn((config) => config),
+  z: {
+    object: vi.fn(() => ({ parse: vi.fn() })),
+    string: vi.fn(() => ({ optional: vi.fn() })),
+    date: vi.fn(),
+    boolean: vi.fn(),
+    array: vi.fn(),
+  },
+}));
+
+// Mock astro:assets
+export const mockGetImage = vi.fn();
+
+vi.mock('astro:assets', () => ({
+  getImage: mockGetImage,
+  Image: vi.fn(({ src, alt, ...props }) => {
+    return `<img src="${src}" alt="${alt}" loading="lazy" decoding="async" />`;
+  }),
+}));
+```
+
+#### 3. Test Data Factories
+
+```typescript
+// tests/factories/blog.ts
+import type { CollectionEntry } from 'astro:content';
+
+export function createBlogEntry(overrides?: Partial<CollectionEntry<'blog'>>): CollectionEntry<'blog'> {
+  return {
+    id: 'test-post.md',
+    slug: 'test-post',
+    body: 'Konten test',
+    collection: 'blog',
+    data: {
+      pubDate: new Date('2024-01-15'),
+      author: 'Test Author',
+      tags: ['astro', 'testing'],
+      ...overrides?.data,
+    },
+    render: async () => ({
+      Content: () => null,
+      headings: [],
+      remarkPluginFrontmatter: {},
+    }),
+    ...overrides,
+  };
+}
+```
+
+#### 4. Coverage Requirements
+
+Target coverage untuk proyek Astro:
+- **Utils/Helpers**: 90%+ (logic pure)
+- **API Routes**: 80%+ (error handling penting)
+- **Components**: 70%+ (fokus pada branching logic)
+- **E2E**: 50%+ (critical user paths only)
+
+**Konfigurasi Coverage di `vitest.config.ts`:**
+
+```typescript
+export default defineConfig({
+  test: {
+    coverage: {
+      provider: 'v8',
+      reporter: ['text', 'json', 'html', 'lcov'],
+      thresholds: {
+        lines: 80,
+        functions: 80,
+        branches: 75,
+        statements: 80,
+      },
+      exclude: [
+        'node_modules/',
+        'tests/',
+        '**/*.d.ts',
+        '**/*.config.*',
+        'src/env.d.ts',
+      ],
+    },
+  },
+});
+```

@@ -1,0 +1,604 @@
+---
+title: "Sesi 38: Laravel Jetstream (Advanced Starter Kit)"
+description: "Memahami fitur-fitur advanced Laravel Jetstream, membandingkannya dengan Breeze, dan mengimplementasikan team management serta security features."
+category: "laravel"
+tags: ["laravel"]
+order: 38
+---
+
+## Tujuan Pembelajaran
+
+Memahami fitur-fitur advanced Laravel Jetstream, membandingkannya dengan Breeze, dan mengimplementasikan team management serta security features.
+
+## 1. Jetstream vs Breeze Comparison
+
+| Feature | Breeze | Jetstream |
+|---------|--------|-----------|
+| **Stack** | Livewire/Inertia | Livewire/Inertia |
+| **Team Management** | ❌ | ✅ |
+| **API Token** | ❌ | ✅ (Sanctum) |
+| **Two-Factor Auth** | ❌ | ✅ |
+| **Session Management** | ❌ | ✅ |
+| **Profile Photo** | ❌ | ✅ |
+| **Account Deletion** | ✅ | ✅ |
+| **Complexity** | Simple | Advanced |
+| **Use Case** | Basic apps | SaaS, multi-user |
+
+## 2. Instalasi Jetstream
+
+### 2.1 Livewire Stack
+
+```bash
+# Install Laravel
+laravel new my-app
+cd my-app
+
+# Install Jetstream
+composer require laravel/jetstream
+
+# Install dengan Livewire
+php artisan jetstream:install livewire
+
+# Atau Livewire dengan dark mode
+php artisan jetstream:install livewire --dark
+
+# Setup
+php artisan migrate
+npm install
+npm run dev
+```
+
+### 2.2 Inertia Stack
+
+```bash
+# Install dengan Inertia + Vue
+php artisan jetstream:install inertia
+
+# Atau Inertia + React (Laravel 11+)
+php artisan jetstream:install inertia --ssr
+
+npm install
+npm run dev
+```
+
+## 3. Team Management
+
+### 3.1 Enable Team Features
+
+```php
+<?php
+
+// config/jetstream.php
+'features' => [
+    Features::termsAndPrivacyPolicy(),
+    Features::profilePhotos(),
+    Features::api(),
+    Features::teams(['invitations' => true]), // Enable team invitations
+    Features::accountDeletion(),
+],
+```
+
+### 3.2 Team Model Customization
+
+```php
+<?php
+
+// app/Models/Team.php
+namespace App\Models;
+
+use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Laravel\Jetstream\Events\TeamCreated;
+use Laravel\Jetstream\Events\TeamDeleted;
+use Laravel\Jetstream\Events\TeamUpdated;
+use Laravel\Jetstream\Team as JetstreamTeam;
+
+class Team extends JetstreamTeam
+{
+    use HasFactory;
+
+    protected $fillable = ['name', 'personal_team'];
+
+    protected $casts = [
+        'personal_team' => 'boolean',
+    ];
+
+    protected $dispatchesEvents = [
+        'created' => TeamCreated::class,
+        'updated' => TeamUpdated::class,
+        'deleted' => TeamDeleted::class,
+    ];
+
+    /**
+     * Custom: Team subscription tier
+     */
+    public function subscriptionTier(): Attribute
+    {
+        return Attribute::make(
+            get: fn () => $this->subscription?->tier ?? 'free'
+        );
+    }
+
+    /**
+     * Custom: Check if team can add more members
+     */
+    public function canAddMoreMembers(): bool
+    {
+        $maxMembers = match($this->subscriptionTier) {
+            'free' => 3,
+            'pro' => 10,
+            'enterprise' => 100,
+            default => 3,
+        };
+
+        return $this->users()->count() < $maxMembers;
+    }
+}
+```
+
+### 3.3 Team Policies
+
+```php
+<?php
+
+// app/Policies/TeamPolicy.php
+namespace App\Policies;
+
+use App\Models\Team;
+use App\Models\User;
+
+class TeamPolicy
+{
+    public function viewAny(User $user): bool
+    {
+        return true;
+    }
+
+    public function view(User $user, Team $team): bool
+    {
+        return $user->belongsToTeam($team);
+    }
+
+    public function create(User $user): bool
+    {
+        // Limit team creation per user
+        return $user->ownedTeams()->count() < 5;
+    }
+
+    public function update(User $user, Team $team): bool
+    {
+        return $user->ownsTeam($team);
+    }
+
+    public function delete(User $user, Team $team): bool
+    {
+        return $user->ownsTeam($team) && !$team->personal_team;
+    }
+
+    public function addTeamMember(User $user, Team $team): bool
+    {
+        return $user->ownsTeam($team) && $team->canAddMoreMembers();
+    }
+
+    public function updateTeamMember(User $user, Team $team): bool
+    {
+        return $user->ownsTeam($team);
+    }
+
+    public function removeTeamMember(User $user, Team $team): bool
+    {
+        return $user->ownsTeam($team);
+    }
+}
+```
+
+### 3.4 Team Invitations
+
+```php
+<?php
+
+// Custom invitation logic
+namespace App\Actions\Jetstream;
+
+use Laravel\Jetstream\Contracts\InvitesTeamMembers;
+
+class InviteTeamMember implements InvitesTeamMembers
+{
+    public function invite(User $user, Team $team, string $email, ?string $role = null): void
+    {
+        // Validasi
+        Gate::forUser($user)->authorize('addTeamMember', $team);
+
+        // Check if already member
+        if ($team->hasUserWithEmail($email)) {
+            throw new Exception('User already belongs to the team.');
+        }
+
+        // Create invitation
+        $invitation = $team->teamInvitations()->create([
+            'email' => $email,
+            'role' => $role ?? 'editor',
+        ]);
+
+        // Send notification
+        Mail::to($email)->send(new TeamInvitation($invitation));
+    }
+}
+```
+
+## 4. API Token Management (Sanctum)
+
+### 4.1 Token Abilities
+
+```php
+<?php
+
+// app/Models/User.php
+use Laravel\Sanctum\HasApiTokens;
+
+class User extends Authenticatable
+{
+    use HasApiTokens, HasFactory, HasProfilePhoto, HasTeams, Notifiable, TwoFactorAuthenticatable;
+
+    /**
+     * Create token with specific abilities
+     */
+    public function createApiToken(string $name, array $abilities = ['read']): string
+    {
+        $token = $this->createToken($name, $abilities);
+        return $token->plainTextToken;
+    }
+}
+```
+
+### 4.2 Token Management UI
+
+```php
+<?php
+
+// app/Http/Controllers/ApiTokenController.php
+namespace App\Http\Controllers;
+
+use Illuminate\Http\Request;
+use Laravel\Sanctum\PersonalAccessToken;
+
+class ApiTokenController extends Controller
+{
+    public function index(Request $request)
+    {
+        return $request->user()->tokens->map(function ($token) {
+            return [
+                'id' => $token->id,
+                'name' => $token->name,
+                'abilities' => $token->abilities,
+                'last_used_at' => $token->last_used_at,
+                'expires_at' => $token->expires_at,
+            ];
+        });
+    }
+
+    public function store(Request $request)
+    {
+        $validated = $request->validate([
+            'name' => 'required|string|max:255',
+            'abilities' => 'array',
+            'abilities.*' => 'in:read,write,admin',
+        ]);
+
+        $token = $request->user()->createToken(
+            $validated['name'],
+            $validated['abilities'] ?? ['read']
+        );
+
+        return response()->json([
+            'token' => $token->plainTextToken,
+            'id' => $token->accessToken->id,
+        ]);
+    }
+
+    public function destroy($tokenId)
+    {
+        $token = PersonalAccessToken::findOrFail($tokenId);
+        
+        // Ensure user owns this token
+        if ($token->tokenable_id !== auth()->id()) {
+            abort(403);
+        }
+
+        $token->delete();
+
+        return response()->noContent();
+    }
+}
+```
+
+### 4.3 Token Middleware & Authorization
+
+```php
+<?php
+
+// routes/api.php
+Route::middleware(['auth:sanctum'])->group(function () {
+    // Read-only endpoints
+    Route::get('/user', fn (Request $request) => $request->user());
+    Route::get('/posts', [PostController::class, 'index']);
+    
+    // Write endpoints (require write ability)
+    Route::middleware(['ability:write,admin'])->group(function () {
+        Route::post('/posts', [PostController::class, 'store']);
+        Route::put('/posts/{post}', [PostController::class, 'update']);
+    });
+    
+    // Admin only endpoints
+    Route::middleware(['ability:admin'])->group(function () {
+        Route::delete('/posts/{post}', [PostController::class, 'destroy']);
+        Route::get('/admin/stats', [AdminController::class, 'stats']);
+    });
+});
+```
+
+## 5. Two-Factor Authentication
+
+### 5.1 Enable 2FA
+
+```php
+<?php
+
+// User enable 2FA
+use Laravel\Fortify\Fortify;
+
+// Enable di profile settings
+// Jetstream menyediakan UI otomatis
+
+// Custom 2FA confirmation
+public function enableTwoFactor(Request $request)
+{
+    $user = $request->user();
+
+    // Generate secret
+    $secret = $user->generateTwoFactorSecret();
+
+    // Generate QR Code URL
+    $qrCodeUrl = app(TwoFactorAuthService::class)->getQRCodeUrl(
+        config('app.name'),
+        $user->email,
+        $secret
+    );
+
+    return response()->json([
+        'secret' => $secret,
+        'qr_code_url' => $qrCodeUrl,
+    ]);
+}
+
+public function confirmTwoFactor(Request $request)
+{
+    $request->validate([
+        'code' => 'required|string|size:6',
+    ]);
+
+    $user = $request->user();
+
+    // Verify code
+    $valid = app(TwoFactorAuthService::class)->verify(
+        $user->two_factor_secret,
+        $request->code
+    );
+
+    if (!$valid) {
+        throw ValidationException::withMessages([
+            'code' => ['Invalid verification code.'],
+        ]);
+    }
+
+    // Enable 2FA
+    $user->forceFill([
+        'two_factor_confirmed_at' => now(),
+        'two_factor_recovery_codes' => encrypt(json_encode(
+            Collection::times(8, fn () => Str::random(10))->all()
+        )),
+    ])->save();
+
+    return response()->noContent();
+}
+```
+
+### 5.2 2FA Challenge
+
+```php
+<?php
+
+// app/Http/Middleware/TwoFactorChallenge.php
+namespace App\Http\Middleware;
+
+use Closure;
+use Illuminate\Http\Request;
+
+class TwoFactorChallenge
+{
+    public function handle(Request $request, Closure $next)
+    {
+        $user = $request->user();
+
+        if ($user && $user->two_factor_confirmed_at && !$request->session()->get('two_factor_confirmed')) {
+            return redirect()->route('two-factor.login');
+        }
+
+        return $next($request);
+    }
+}
+```
+
+## 6. Session Management
+
+### 6.1 Browser Sessions
+
+```php
+<?php
+
+// Jetstream otomatis menyediakan logout other browsers
+
+// Custom session management
+public function sessions(Request $request)
+{
+    return collect(
+        DB::table('sessions')
+            ->where('user_id', $request->user()->id)
+            ->orderBy('last_activity', 'desc')
+            ->get()
+    )->map(function ($session) use ($request) {
+        return (object) [
+            'agent' => $this->createAgent($session),
+            'ip_address' => $session->ip_address,
+            'is_current_device' => $session->id === $request->session()->getId(),
+            'last_active' => Carbon::createFromTimestamp($session->last_activity)->diffForHumans(),
+        ];
+    });
+}
+
+public function logoutOtherBrowsers(Request $request)
+{
+    $request->validate([
+        'password' => 'required|current_password',
+    ]);
+
+    Auth::logoutOtherDevices($request->password);
+
+    $request->session()->put('two_factor_confirmed', null);
+
+    return back()->with('status', 'Logged out of other browser sessions.');
+}
+```
+
+## 7. Profile Photo
+
+### 7.1 Custom Storage
+
+```php
+<?php
+
+// config/jetstream.php
+'features' => [
+    Features::profilePhotos(['disk' => 's3']), // S3 storage
+],
+
+// app/Models/User.php
+public function updateProfilePhoto(UploadedFile $photo): void
+{
+    tap($this->profile_photo_path, function ($previous) use ($photo) {
+        $this->forceFill([
+            'profile_photo_path' => $photo->storePublicly(
+                'profile-photos',
+                ['disk' => $this->profilePhotoDisk()]
+            ),
+        ])->save();
+
+        if ($previous) {
+            Storage::disk($this->profilePhotoDisk())->delete($previous);
+        }
+    });
+}
+
+protected function profilePhotoDisk(): string
+{
+    return 's3'; // atau config('jetstream.profile_photo_disk', 'public')
+}
+```
+
+## 8. Custom Jetstream Components
+
+### 8.1 Livewire Component
+
+```php
+<?php
+
+// app/Livewire/TeamSubscription.php
+namespace App\Livewire;
+
+use Livewire\Component;
+
+class TeamSubscription extends Component
+{
+    public $team;
+    public $plans;
+
+    public function mount($team)
+    {
+        $this->team = $team;
+        $this->plans = SubscriptionPlan::all();
+    }
+
+    public function subscribe($planId)
+    {
+        $this->authorize('update', $this->team);
+
+        $plan = SubscriptionPlan::findOrFail($planId);
+
+        // Process subscription
+        $subscription = $this->team->subscriptions()->create([
+            'plan_id' => $plan->id,
+            'starts_at' => now(),
+            'ends_at' => now()->addMonth(),
+        ]);
+
+        $this->dispatch('subscribed');
+    }
+
+    public function render()
+    {
+        return view('livewire.team-subscription');
+    }
+}
+```
+
+```php
+<?php
+
+// resources/views/livewire/team-subscription.blade.php
+<div>
+    <x-action-section>
+        <x-slot name="title">
+            {{ __('Team Subscription') }}
+        </x-slot>
+
+        <x-slot name="description">
+            {{ __('Manage your team subscription plan.') }}
+        </x-slot>
+
+        <x-slot name="content">
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                @foreach($plans as $plan)
+                    <div class="border rounded-lg p-4 {{ $team->subscription?->plan_id === $plan->id ? 'border-green-500 bg-green-50' : '' }}">
+                        <h3 class="font-bold text-lg">{{ $plan->name }}</h3>
+                        <p class="text-2xl font-bold">Rp {{ number_format($plan->price) }}</p>
+                        <ul class="mt-2 text-sm">
+                            <li>Up to {{ $plan->max_members }} members</li>
+                            <li>{{ $plan->features }}</li>
+                        </ul>
+                        
+                        @if($team->subscription?->plan_id !== $plan->id)
+                            <x-button wire:click="subscribe({{ $plan->id }})" class="mt-4">
+                                Subscribe
+                            </x-button>
+                        @else
+                            <span class="text-green-600 font-semibold">Current Plan</span>
+                        @endif
+                    </div>
+                @endforeach
+            </div>
+        </x-slot>
+    </x-action-section>
+</div>
+```
+
+## Kesimpulan
+
+Laravel Jetstream menyediakan foundation lengkap untuk SaaS applications:
+- **Team Management** dengan roles, permissions, dan invitations
+- **API Token Management** terintegrasi dengan Sanctum
+- **Two-Factor Authentication** untuk security tambahan
+- **Session Management** dengan browser session tracking
+- **Profile Photos** dengan customizable storage
+- **Livewire/Inertia stacks** untuk flexibility frontend
+
+Selanjutnya di **Sesi 39**, kita akan mempelajari Laravel Fortify untuk headless authentication backend.
+```

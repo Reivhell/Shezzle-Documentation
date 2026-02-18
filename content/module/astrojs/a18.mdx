@@ -1,0 +1,603 @@
+---
+title: "Sesi 18: Official Integrations"
+description: "Astro menyediakan integrations official yang maintained oleh core team untuk berbagai kebutuhan umum."
+category: "astrojs"
+tags: ["astrojs"]
+order: 18
+---
+
+Sesi 18: Integrations & Plugins
+
+## 18.1 Official Integrations
+
+Astro menyediakan integrations official yang maintained oleh core team untuk berbagai kebutuhan umum.
+
+### Analogi Sederhana:
+
+> Bayangkan official integrations seperti **aplikasi bawaan di smartphone** (Kontak, Kalender, Kamera). Sudah terintegrasi sempurna dengan sistem, selalu update, dan didukung penuh oleh vendor.
+
+### Daftar Official Integrations:
+
+| Integration | Fungsi | Instalasi |
+|-------------|--------|-----------|
+| `@astrojs/react` | React components support | `npx astro add react` |
+| `@astrojs/vue` | Vue components support | `npx astro add vue` |
+| `@astrojs/svelte` | Svelte components support | `npx astro add svelte` |
+| `@astrojs/solid-js` | SolidJS components support | `npx astro add solid-js` |
+| `@astrojs/preact` | Preact components support | `npx astro add preact` |
+| `@astrojs/alpinejs` | Alpine.js integration | `npx astro add alpinejs` |
+| `@astrojs/lit` | Lit web components | `npx astro add lit` |
+| `@astrojs/tailwind` | Tailwind CSS | `npx astro add tailwind` |
+| `@astrojs/mdx` | MDX support | `npx astro add mdx` |
+| `@astrojs/sitemap` | XML sitemap generation | `npx astro add sitemap` |
+| `@astrojs/robots-txt` | robots.txt generation | `npx astro add robots-txt` |
+| `@astrojs/rss` | RSS feed generation | `npx astro add rss` |
+| `@astrojs/partytown` | Third-party script offloading | `npx astro add partytown` |
+| `@astrojs/sitemap` | Image optimization | Built-in |
+| `@astrojs/markdoc` | Markdoc support | `npx astro add markdoc` |
+| `@astrojs/db` | Database with Astro DB | `npx astro add db` |
+
+### Konfigurasi React Integration:
+
+```javascript
+// astro.config.mjs
+import { defineConfig } from 'astro/config';
+import react from '@astrojs/react';
+
+export default defineConfig({
+  integrations: [
+    react({
+      // Include paths untuk React components
+      include: ['**/react-components/**', '**/*.react.jsx'],
+      
+      // Exclude paths
+      exclude: ['**/legacy-react/**'],
+      
+      // Experimental: use React 18 streaming
+      experimentalReactChildren: true,
+    }),
+  ],
+});
+```
+
+### Konfigurasi Tailwind Integration:
+
+```javascript
+// astro.config.mjs
+import { defineConfig } from 'astro/config';
+import tailwind from '@astrojs/tailwind';
+
+export default defineConfig({
+  integrations: [
+    tailwind({
+      // Path ke config file (opsional)
+      configFile: './tailwind.config.mjs',
+      
+      // Apply base styles (default: true)
+      applyBaseStyles: true,
+      
+      // CSS nesting (requires tailwindcss-nesting plugin)
+      nesting: true,
+    }),
+  ],
+});
+```
+
+---
+
+## 18.2 Community Integrations
+
+Integrations dibuat oleh komunitas untuk kebutuhan spesifik.
+
+### Popular Community Integrations:
+
+```javascript
+// astro.config.mjs
+import { defineConfig } from 'astro/config';
+
+// UI Components
+import astroIcon from 'astro-icon';           // Icon system
+import astroNavbar from 'astro-navbar';       // Responsive navbar
+import astroSpa from 'astro-spa';             // SPA behavior
+import astroCompress from 'astro-compress';   // Asset compression
+
+// SEO & Performance
+import astroSeo from 'astro-seo';             // SEO meta tags
+import astroCritters from 'astro-critters';   // Critical CSS
+import astroPurgecss from 'astro-purgecss';   // Unused CSS removal
+
+// Content
+import astroEmbed from 'astro-embed';         // Embed YouTube, etc
+import astroOgImages from 'astro-og-images';  // OG image generation
+import astroReadingTime from 'astro-reading-time'; // Reading time
+
+// Development
+import astroTypedoc from 'astro-typedoc';     // TypeDoc integration
+import astroCheck from 'astro-check';         // Type checking
+
+export default defineConfig({
+  integrations: [
+    // UI
+    astroIcon({
+      include: {
+        mdi: ['*'], // Material Design Icons
+        'simple-icons': ['*'],
+      },
+    }),
+    
+    // SEO
+    astroSeo({
+      canonical: true,
+      noindex: ['/admin/**', '/draft/**'],
+    }),
+    
+    // Performance
+    astroCompress({
+      CSS: true,
+      HTML: true,
+      JavaScript: true,
+      Image: false, // Use Astro's built-in
+      SVG: true,
+    }),
+    
+    // Content
+    astroReadingTime(),
+  ],
+});
+```
+
+### Menggunakan Astro Icon:
+
+```astro
+---
+// src/pages/index.astro
+import { Icon } from 'astro-icon/components';
+---
+
+<Icon name="mdi:home" size={24} />
+<Icon name="mdi:account" size={32} class="text-blue-500" />
+<Icon name="simple-icons:astro" size={48} />
+```
+
+---
+
+## 18.3 Creating Custom Integrations
+
+Membuat integration sendiri untuk kebutuhan spesifik.
+
+### Struktur Custom Integration:
+
+```javascript
+// my-integration.mjs
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+
+/**
+ * Custom Astro Integration
+ * @param {Object} options - Integration options
+ * @returns {AstroIntegration}
+ */
+export default function myIntegration(options = {}) {
+  const {
+    feature = 'default',
+    verbose = false,
+  } = options;
+
+  return {
+    name: 'my-custom-integration',
+    hooks: {
+      // 1. Config setup
+      'astro:config:setup': ({ 
+        config,           // Astro config object
+        command,          // 'dev' | 'build' | 'preview'
+        updateConfig,     // Function to update config
+        addRenderer,      // Add framework renderer
+        injectScript,     // Inject client-side script
+        injectRoute,      // Add new route
+        addWatchFile,     // Watch file for changes
+        addClientDirective, // Add custom client directive
+        logger,           // Integration logger
+      }) => {
+        if (verbose) {
+          logger.info('Setting up my integration...');
+        }
+
+        // Inject global CSS
+        updateConfig({
+          vite: {
+            css: {
+              preprocessorOptions: {
+                scss: {
+                  additionalData: `@import "${join(__dirname, 'styles.scss')}";`,
+                },
+              },
+            },
+          },
+        });
+
+        // Inject client script
+        injectScript('page', `
+          console.log('My integration loaded!');
+          window.myIntegration = { feature: '${feature}' };
+        `);
+
+        // Add virtual module
+        updateConfig({
+          vite: {
+            plugins: [{
+              name: 'my-integration-virtual',
+              resolveId(id) {
+                if (id === 'my-integration:config') {
+                  return id;
+                }
+              },
+              load(id) {
+                if (id === 'my-integration:config') {
+                  return `export default ${JSON.stringify(options)};`;
+                }
+              },
+            }],
+          },
+        });
+      },
+
+      // 2. Config done
+      'astro:config:done': ({ config, logger }) => {
+        logger.debug('Config finalized');
+      },
+
+      // 3. Server setup (dev/preview)
+      'astro:server:setup': ({ server, logger }) => {
+        // Add custom middleware
+        server.middlewares.use('/api/my-integration', (req, res) => {
+          res.end(JSON.stringify({ status: 'ok' }));
+        });
+      },
+
+      // 4. Server start
+      'astro:server:start': ({ address, logger }) => {
+        logger.info(`Server started at ${address}`);
+      },
+
+      // 5. Build setup
+      'astro:build:setup': ({ vite, target, logger }) => {
+        // Modify Vite config for build
+        if (target === 'server') {
+          vite.build.rollupOptions.external = [
+            ...(vite.build.rollupOptions.external || []),
+            'some-server-only-package',
+          ];
+        }
+      },
+
+      // 6. Build start
+      'astro:build:start': ({ logger }) => {
+        logger.info('Build starting...');
+      },
+
+      // 7. Build generated (SSG)
+      'astro:build:generated': ({ dir, logger }) => {
+        logger.info(`Static files generated in ${dir}`);
+      },
+
+      // 8. Build done
+      'astro:build:done': ({ dir, routes, logger }) => {
+        logger.info(`Build complete! ${routes.length} routes generated.`);
+        
+        // Post-build processing
+        if (feature === 'advanced') {
+          // Run additional processing
+        }
+      },
+    },
+  };
+}
+```
+
+### Penggunaan Custom Integration:
+
+```javascript
+// astro.config.mjs
+import { defineConfig } from 'astro/config';
+import myIntegration from './my-integration.mjs';
+
+export default defineConfig({
+  integrations: [
+    myIntegration({
+      feature: 'advanced',
+      verbose: true,
+    }),
+  ],
+});
+```
+
+---
+
+## 18.4 Integration API
+
+API lengkap untuk membuat integrations yang powerful.
+
+### Hook Reference:
+
+| Hook | Kapan Dipanggil | Use Case |
+|------|-----------------|----------|
+| `astro:config:setup` | Saat inisialisasi | Modify config, inject scripts |
+| `astro:config:done` | Setelah config final | Validasi config |
+| `astro:server:setup` | Saat dev server setup | Add middleware |
+| `astro:server:start` | Server started | Logging, external connections |
+| `astro:server:done` | Server closed | Cleanup |
+| `astro:build:start` | Build dimulai | Pre-build setup |
+| `astro:build:setup` | Vite config untuk build | Modify build config |
+| `astro:build:generated` | SSG files generated | Post-process static files |
+| `astro:build:ssr` | SSR manifest created | Modify SSR output |
+| `astro:build:done` | Build selesai | Post-build tasks |
+
+### Advanced Integration Example:
+
+```javascript
+// astro-i18n-integration.mjs
+import { readdir, readFile, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+
+export default function astroI18n(options = {}) {
+  const {
+    defaultLocale = 'en',
+    locales = ['en'],
+    routes = {},
+  } = options;
+
+  return {
+    name: 'astro-i18n',
+    hooks: {
+      'astro:config:setup': ({ injectRoute, updateConfig, logger }) => {
+        // Inject routes untuk setiap locale
+        for (const locale of locales) {
+          injectRoute({
+            pattern: `/${locale}/[...slug]`,
+            entrypoint: join(process.cwd(), 'src/pages/[...slug].astro'),
+            prerender: true,
+          });
+        }
+
+        // Add Vite alias untuk translations
+        updateConfig({
+          vite: {
+            resolve: {
+              alias: {
+                'i18n:translations': '/src/translations',
+              },
+            },
+          },
+        });
+
+        logger.info(`Injected ${locales.length} locale routes`);
+      },
+
+      'astro:build:done': async ({ dir, routes, logger }) => {
+        // Generate sitemap per locale
+        for (const locale of locales) {
+          const localeRoutes = routes.filter(r => 
+            r.pathname?.startsWith(`/${locale}/`)
+          );
+
+          const sitemap = generateSitemap(localeRoutes, locale);
+          await writeFile(
+            join(dir.pathname, `sitemap-${locale}.xml`),
+            sitemap
+          );
+        }
+
+        // Generate hreflang tags file
+        const hreflangData = generateHreflang(routes, locales);
+        await writeFile(
+          join(dir.pathname, 'hreflang.json'),
+          JSON.stringify(hreflangData, null, 2)
+        );
+
+        logger.info('Generated i18n sitemaps and hreflang data');
+      },
+    },
+  };
+}
+
+function generateSitemap(routes, locale) {
+  const urlset = routes.map(route => `
+    <url>
+      <loc>https://example.com${route.pathname}</loc>
+      <lastmod>${new Date().toISOString()}</lastmod>
+      <changefreq>weekly</changefreq>
+      <priority>0.7</priority>
+    </url>
+  `).join('');
+
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  ${urlset}
+</urlset>`;
+}
+
+function generateHreflang(routes, locales) {
+  // Logic untuk generate hreflang mappings
+  return routes.reduce((acc, route) => {
+    // ...
+    return acc;
+  }, {});
+}
+```
+
+---
+
+## 18.5 Popular Integrations (Tailwind, React, Vue, etc.)
+
+Deep dive ke integrations yang paling sering digunakan.
+
+### Tailwind + Typography + Forms:
+
+```javascript
+// astro.config.mjs
+import { defineConfig } from 'astro/config';
+import tailwind from '@astrojs/tailwind';
+
+export default defineConfig({
+  integrations: [
+    tailwind({
+      configFile: './tailwind.config.mjs',
+      applyBaseStyles: false, // Custom base styles
+    }),
+  ],
+});
+```
+
+```javascript
+// tailwind.config.mjs
+/** @type {import('tailwindcss').Config} */
+export default {
+  content: ['./src/**/*.{astro,html,js,jsx,md,mdx,svelte,ts,tsx,vue}'],
+  theme: {
+    extend: {
+      colors: {
+        brand: {
+          50: '#eff6ff',
+          100: '#dbeafe',
+          500: '#3b82f6',
+          600: '#2563eb',
+          900: '#1e3a8a',
+        },
+      },
+      fontFamily: {
+        sans: ['Inter', 'system-ui', 'sans-serif'],
+      },
+    },
+  },
+  plugins: [
+    require('@tailwindcss/typography'),
+    require('@tailwindcss/forms'),
+    require('@tailwindcss/aspect-ratio'),
+    require('@tailwindcss/container-queries'),
+  ],
+};
+```
+
+### React dengan TypeScript:
+
+```javascript
+// astro.config.mjs
+import { defineConfig } from 'astro/config';
+import react from '@astrojs/react';
+
+export default defineConfig({
+  integrations: [
+    react({
+      include: ['**/react/**/*.{jsx,tsx}', '**/*.react.{jsx,tsx}'],
+      exclude: ['**/react/legacy/**'],
+    }),
+  ],
+});
+```
+
+```typescript
+// tsconfig.json
+{
+  "extends": "astro/tsconfigs/strict",
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "jsxImportSource": "react",
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["src/*"],
+      "@components/*": ["src/components/*"],
+      "@react/*": ["src/components/react/*"],
+    }
+  }
+}
+```
+
+### Vue 3 dengan Composition API:
+
+```javascript
+// astro.config.mjs
+import { defineConfig } from 'astro/config';
+import vue from '@astrojs/vue';
+
+export default defineConfig({
+  integrations: [
+    vue({
+      appEntrypoint: '/src/pages/_app',
+      jsx: true, // Enable JSX in Vue
+      script: {
+        defineModel: true, // Enable defineModel macro
+        propsDestructure: true,
+      },
+    }),
+  ],
+});
+```
+
+```typescript
+// src/pages/_app.ts
+import type { App } from 'vue';
+import { createPinia } from 'pinia';
+
+export default (app: App) => {
+  app.use(createPinia());
+};
+```
+
+### MDX dengan Plugins:
+
+```javascript
+// astro.config.mjs
+import { defineConfig } from 'astro/config';
+import mdx from '@astrojs/mdx';
+import remarkToc from 'remark-toc';
+import remarkGfm from 'remark-gfm';
+import rehypeSlug from 'rehype-slug';
+import rehypeAutolinkHeadings from 'rehype-autolink-headings';
+
+export default defineConfig({
+  integrations: [
+    mdx({
+      syntaxHighlight: 'shiki',
+      shikiConfig: {
+        theme: 'github-dark',
+      },
+      remarkPlugins: [
+        remarkGfm, // GitHub Flavored Markdown
+        [remarkToc, { heading: 'Table of Contents' }],
+      ],
+      rehypePlugins: [
+        rehypeSlug,
+        [rehypeAutolinkHeadings, { behavior: 'wrap' }],
+      ],
+      remarkRehype: {
+        footnoteLabel: 'Footnotes',
+      },
+      gfm: true,
+    }),
+  ],
+});
+```
+
+---
+
+## Ringkasan Sesi 18
+
+| Tipe Integration | Contoh | Kapan Digunakan |
+|------------------|--------|-----------------|
+| **Official** | `@astrojs/react`, `@astrojs/tailwind` | Kebutuhan umum, production-ready |
+| **Community** | `astro-icon`, `astro-seo` | Fitur spesifik, cek maintenance |
+| **Custom** | Integration buatan sendiri | Kebutuhan unik perusahaan/project |
+
+### Best Practices:
+
+1. **Minimal Integrations**: Jangan install yang tidak perlu
+2. **Version Pinning**: Lock version untuk stability
+3. **Check Bundle Size**: Some integrations add significant weight
+4. **Custom Integration**: Dokumentasikan hooks yang digunakan
+5. **Testing**: Test integration di berbagai environment
+
+---
+
+**Selanjutnya:** Di Sesi 19, kita akan membahas **Adapters & Deployment** - deploy ke berbagai platform (Vercel, Netlify, Cloudflare, Node, dll).

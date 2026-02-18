@@ -1,0 +1,877 @@
+---
+title: "Sesi 11: Service Container Deep Dive"
+description: "Service Container adalah \"kotak ajaib\" Laravel yang mengelola class dependencies dan melakukan dependency injection. Bayangkan container sebagai pabri..."
+category: "laravel"
+tags: ["laravel", "architecture"]
+order: 11
+---
+
+## 11.1 Dependency Injection: Constructor, Method, Facade
+
+Service Container adalah "kotak ajaib" Laravel yang mengelola class dependencies dan melakukan dependency injection. Bayangkan container sebagai pabrik pintar yang tahu persis cara membuat object apa pun beserta dependensinya.
+
+### 11.1.1 Constructor Injection
+
+Cara paling umum dan recommended untuk dependency injection:
+
+```php
+<?php
+
+namespace App\Http\Controllers;
+
+use App\Services\PaymentService;
+use App\Repositories\OrderRepository;
+use Illuminate\Http\Request;
+
+class OrderController extends Controller
+{
+    protected PaymentService $payment;
+    protected OrderRepository $orders;
+
+    /**
+     * Dependencies di-resolve otomatis oleh container
+     */
+    public function __construct(
+        PaymentService $payment,
+        OrderRepository $orders
+    ) {
+        $this->payment = $payment;
+        $this->orders = $orders;
+    }
+
+    public function store(Request $request)
+    {
+        // Gunakan dependencies
+        $order = $this->orders->create($request->validated());
+        
+        $payment = $this->payment->process($order);
+        
+        return redirect()->route('orders.show', $order);
+    }
+}
+```
+
+### 11.1.2 Method Injection
+
+Inject dependencies hanya untuk method tertentu:
+
+```php
+<?php
+
+namespace App\Http\Controllers;
+
+use App\Services\InvoiceGenerator;
+use Illuminate\Http\Request;
+
+class ReportController extends Controller
+{
+    /**
+     * Method injection - hanya dipanggil saat method ini di-execute
+     */
+    public function downloadInvoice(
+        Request $request,
+        InvoiceGenerator $invoice,
+        int $orderId
+    ) {
+        // InvoiceGenerator di-resolve saat method dipanggil
+        $pdf = $invoice->generate($orderId);
+        
+        return response()->download($pdf);
+    }
+
+    /**
+     * Multiple method dengan injection berbeda
+     */
+    public function sendReport(
+        Request $request,
+        \App\Services\EmailService $email
+    ) {
+        $email->sendReport($request->user());
+        
+        return back()->with('success', 'Report sent!');
+    }
+}
+```
+
+### 11.1.3 Action Injection di Closure Routes
+
+```php
+<?php
+
+use Illuminate\Http\Request;
+use App\Services\AnalyticsService;
+
+Route::get('/dashboard', function (
+    Request $request,
+    AnalyticsService $analytics
+) {
+    $stats = $analytics->forUser($request->user());
+    
+    return view('dashboard', compact('stats'));
+});
+```
+
+### 11.1.4 Facades vs Dependency Injection
+
+> **tip**
+>
+  Facades adalah "shortcut" static untuk class di container. Mereka sama powerfulnya dengan DI, tapi kurang explicit untuk testing.
+
+```php
+<?php
+
+namespace App\Http\Controllers;
+
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\Log;
+
+class FileController extends Controller
+{
+    /**
+     * Menggunakan Facades (static-like syntax)
+     */
+    public function storeWithFacades(Request $request)
+    {
+        // Cache
+        $cached = Cache::remember('files', 3600, function () {
+            return File::all();
+        });
+        
+        // Storage
+        $path = Storage::put('uploads', $request->file('document'));
+        
+        // Logging
+        Log::info('File uploaded', ['path' => $path]);
+        
+        return response()->json(['path' => $path]);
+    }
+
+    /**
+     * Equivalent dengan Dependency Injection (lebih testable)
+     */
+    public function storeWithDI(
+        Request $request,
+        \Illuminate\Contracts\Cache\Repository $cache,
+        \Illuminate\Contracts\Filesystem\Filesystem $storage,
+        \Psr\Log\LoggerInterface $log
+    ) {
+        $cached = $cache->remember('files', 3600, function () {
+            return File::all();
+        });
+        
+        $path = $storage->put('uploads', $request->file('document'));
+        
+        $log->info('File uploaded', ['path' => $path]);
+        
+        return response()->json(['path' => $path]);
+    }
+}
+```
+
+---
+
+## 11.2 Binding: Singleton, Scoped, Instance
+
+Binding mengajarkan container "cara membuat" object tertentu. Ini seperti memberi resep ke pabrik.
+
+### 11.2.1 Basic Binding
+
+```php
+<?php
+
+// app/Providers/AppServiceProvider.php
+
+namespace App\Providers;
+
+use App\Services\Payment\PaymentGateway;
+use App\Services\Payment\StripeGateway;
+use App\Services\Payment\PayPalGateway;
+use Illuminate\Support\ServiceProvider;
+
+class AppServiceProvider extends ServiceProvider
+{
+    public function register(): void
+    {
+        /**
+         * Simple binding - instance baru setiap kali di-resolve
+         */
+        $this->app->bind(PaymentGateway::class, StripeGateway::class);
+        
+        // Dengan closure untuk logic kompleks
+        $this->app->bind(PaymentGateway::class, function ($app) {
+            $config = $app['config']['services.stripe'];
+            
+            return new StripeGateway(
+                $config['key'],
+                $config['secret'],
+                $config['webhook_secret']
+            );
+        });
+    }
+}
+```
+
+### 11.2.2 Singleton Binding
+
+> **note**
+>
+  Singleton = satu instance untuk seluruh aplikasi. Berguna untuk koneksi database, HTTP client, atau service yang expensive untuk dibuat ulang.
+
+```php
+<?php
+
+public function register(): void
+{
+    /**
+     * Singleton - instance yang sama selama request lifecycle
+     */
+    $this->app->singleton(PaymentGateway::class, function ($app) {
+        return new StripeGateway(
+            config('services.stripe.key'),
+            config('services.stripe.secret')
+        );
+    });
+    
+    /**
+     * Scoped Singleton - instance yang sama dalam satu request HTTP,
+     * tapi berbeda antar request (untuk Octane/Swoole)
+     */
+    $this->app->scoped(UserContext::class, function ($app) {
+        return new UserContext(auth()->user());
+    });
+    
+    /**
+     * Instance binding - object yang sudah jadi
+     */
+    $analytics = new AnalyticsService('api-key-123');
+    $this->app->instance(AnalyticsService::class, $analytics);
+}
+```
+
+### 11.2.3 Conditional Binding
+
+```php
+<?php
+
+public function register(): void
+{
+    /**
+     * Bind berbeda berdasarkan environment
+     */
+    if ($this->app->environment('testing')) {
+        $this->app->singleton(PaymentGateway::class, FakePaymentGateway::class);
+    } else {
+        $this->app->singleton(PaymentGateway::class, StripeGateway::class);
+    }
+    
+    /**
+     * Bind berbeda berdasarkan config
+     */
+    $gateway = config('services.payment.default');
+    
+    match ($gateway) {
+        'stripe' => $this->app->singleton(
+            PaymentGateway::class, 
+            StripeGateway::class
+        ),
+        'paypal' => $this->app->singleton(
+            PaymentGateway::class, 
+            PayPalGateway::class
+        ),
+        default => throw new \InvalidArgumentException("Unknown gateway: {$gateway}"),
+    };
+}
+```
+
+### 11.2.4 Binding Interfaces ke Implementasi
+
+```php
+<?php
+
+// app/Contracts/NotificationSender.php
+
+namespace App\Contracts;
+
+interface NotificationSender
+{
+    public function send(string $to, string $message): bool;
+    public function sendBulk(array $recipients, string $message): array;
+}
+```
+
+```php
+<?php
+
+// app/Services/Notification/EmailSender.php
+
+namespace App\Services\Notification;
+
+use App\Contracts\NotificationSender;
+
+class EmailSender implements NotificationSender
+{
+    public function send(string $to, string $message): bool
+    {
+        // Send email logic
+        return true;
+    }
+    
+    public function sendBulk(array $recipients, string $message): array
+    {
+        $results = [];
+        foreach ($recipients as $recipient) {
+            $results[$recipient] = $this->send($recipient, $message);
+        }
+        return $results;
+    }
+}
+```
+
+```php
+<?php
+
+// app/Services/Notification/SmsSender.php
+
+namespace App\Services\Notification;
+
+use App\Contracts\NotificationSender;
+
+class SmsSender implements NotificationSender
+{
+    public function send(string $to, string $message): bool
+    {
+        // Send SMS logic
+        return true;
+    }
+    
+    public function sendBulk(array $recipients, string $message): array
+    {
+        // Bulk SMS logic
+        return [];
+    }
+}
+```
+
+```php
+<?php
+
+// app/Providers/AppServiceProvider.php
+
+public function register(): void
+{
+    // Type-hint interface, dapatkan implementasi
+    $this->app->bind(
+        \App\Contracts\NotificationSender::class,
+        \App\Services\Notification\EmailSender::class
+    );
+    
+    // Atau conditional
+    $this->app->bind(
+        \App\Contracts\NotificationSender::class,
+        function ($app) {
+            return match (config('notification.driver')) {
+                'email' => new \App\Services\Notification\EmailSender(),
+                'sms' => new \App\Services\Notification\SmsSender(),
+                default => throw new \Exception('Invalid notification driver'),
+            };
+        }
+    );
+}
+```
+
+Penggunaan:
+
+```php
+<?php
+
+namespace App\Http\Controllers;
+
+use App\Contracts\NotificationSender;
+
+class NotificationController extends Controller
+{
+    public function __construct(
+        protected NotificationSender $sender
+    ) {}
+    
+    public function send(Request $request)
+    {
+        // Container otomatis inject implementasi yang di-bind
+        $success = $this->sender->send(
+            $request->input('to'),
+            $request->input('message')
+        );
+        
+        return response()->json(['success' => $success]);
+    }
+}
+```
+
+---
+
+## 11.3 Contextual Binding
+
+Binding yang berbeda tergantung "siapa" yang membutuhkannya.
+
+### 11.3.1 When-Then Binding
+
+```php
+<?php
+
+public function register(): void
+{
+    /**
+     * PhotoController mendapatkan LocalStorage,
+     * VideoController mendapatkan S3Storage
+     */
+    $this->app->when(PhotoController::class)
+        ->needs(StorageInterface::class)
+        ->give(LocalStorage::class);
+    
+    $this->app->when(VideoController::class)
+        ->needs(StorageInterface::class)
+        ->give(S3Storage::class);
+    
+    /**
+     * Dengan closure untuk konfigurasi berbeda
+     */
+    $this->app->when(OrderController::class)
+        ->needs(PaymentGateway::class)
+        ->give(function () {
+            return new StripeGateway([
+                'key' => config('services.stripe.live_key'),
+                'secret' => config('services.stripe.live_secret'),
+            ]);
+        });
+    
+    $this->app->when(TestOrderController::class)
+        ->needs(PaymentGateway::class)
+        ->give(function () {
+            return new StripeGateway([
+                'key' => config('services.stripe.test_key'),
+                'secret' => config('services.stripe.test_secret'),
+            ]);
+        });
+}
+```
+
+### 11.3.2 Tagged Services
+
+```php
+<?php
+
+public function register(): void
+{
+    // Register multiple implementations dengan tag
+    $this->app->bind(ReportGenerator::class, PdfReportGenerator::class);
+    $this->app->tag(PdfReportGenerator::class, 'reports');
+    
+    $this->app->bind(ReportGenerator::class, ExcelReportGenerator::class);
+    $this->app->tag(ExcelReportGenerator::class, 'reports');
+    
+    $this->app->bind(ReportGenerator::class, CsvReportGenerator::class);
+    $this->app->tag(CsvReportGenerator::class, 'reports');
+}
+
+public function boot(): void
+{
+    /**
+     * Inject semua tagged services sekaligus
+     */
+    $this->app->bind(ReportManager::class, function ($app) {
+        $generators = $app->tagged('reports');
+        return new ReportManager($generators);
+    });
+}
+```
+
+```php
+<?php
+
+namespace App\Services;
+
+class ReportManager
+{
+    protected iterable $generators;
+    
+    public function __construct(iterable $generators)
+    {
+        $this->generators = $generators;
+    }
+    
+    public function generateAll(array $data): array
+    {
+        $reports = [];
+        
+        foreach ($this->generators as $generator) {
+            $reports[] = $generator->generate($data);
+        }
+        
+        return $reports;
+    }
+}
+```
+
+---
+
+## 11.4 Container Resolution dan Auto-Wiring
+
+### 11.4.1 Make Method
+
+Buat instance manual dari container:
+
+```php
+<?php
+
+// Di controller atau service
+$payment = app()->make(PaymentGateway::class);
+
+// Dengan parameters
+$payment = app()->make(PaymentGateway::class, [
+    'apiKey' => 'custom-key',
+    'sandbox' => true,
+]);
+
+// Helper global
+$payment = app(PaymentGateway::class);
+$payment = resolve(PaymentGateway::class);
+
+// Jika belum terdaftar, container akan coba auto-resolve
+$service = app()->make(\App\Services\ComplexService::class);
+```
+
+### 11.4.2 Auto-Wiring
+
+Container secara otomatis menyelesaikan dependencies menggunakan type-hints:
+
+```php
+<?php
+
+namespace App\Services;
+
+use App\Repositories\UserRepository;
+use Illuminate\Contracts\Cache\Repository as Cache;
+use Psr\Log\LoggerInterface;
+
+class UserService
+{
+    /**
+     * Semua parameter di-resolve otomatis oleh container
+     */
+    public function __construct(
+        protected UserRepository $users,
+        protected Cache $cache,
+        protected LoggerInterface $log
+    ) {}
+    
+    public function find(int $id): ?User
+    {
+        return $this->cache->remember("user.{$id}", 3600, function () use ($id) {
+            $this->log->info("Fetching user from database", ['id' => $id]);
+            return $this->users->find($id);
+        });
+    }
+}
+```
+
+### 11.4.3 Variadic Dependencies
+
+```php
+<?php
+
+namespace App\Services;
+
+class ReportAggregator
+{
+    /**
+     * Container akan inject semua tagged services
+     */
+    public function __construct(
+        protected ReportGenerator ...$generators
+    ) {}
+    
+    public function aggregate(array $data): array
+    {
+        $results = [];
+        
+        foreach ($this->generators as $generator) {
+            $results[] = $generator->generate($data);
+        }
+        
+        return $results;
+    }
+}
+```
+
+### 11.4.4 Optional Dependencies
+
+```php
+<?php
+
+namespace App\Http\Controllers;
+
+use App\Services\AnalyticsService;
+
+class DashboardController extends Controller
+{
+    /**
+     * AnalyticsService optional - bisa null
+     */
+    public function index(?AnalyticsService $analytics = null)
+    {
+        $stats = $analytics?->getStats() ?? [];
+        
+        return view('dashboard', compact('stats'));
+    }
+}
+```
+
+---
+
+## 11.5 Service Container Events
+
+### 11.5.1 Resolving Events
+
+```php
+<?php
+
+public function boot(): void
+{
+    /**
+     * Dipanggil SEBELUM service di-resolve
+     */
+    $this->app->resolving(PaymentGateway::class, function ($gateway, $app) {
+        // Konfigurasi tambahan sebelum digunakan
+        $gateway->setLogger($app->make('log'));
+    });
+    
+    /**
+     * Dipanggil SETELAH service di-resolve
+     */
+    $this->app->afterResolving(PaymentGateway::class, function ($gateway, $app) {
+        // Setup tambahan setelah instance dibuat
+        if ($app->environment('local')) {
+            $gateway->enableDebugMode();
+        }
+    });
+    
+    /**
+     * Listen untuk semua resolving
+     */
+    $this->app->resolving(function ($object, $app) {
+        if ($object instanceof LoggerAwareInterface) {
+            $object->setLogger($app->make('log'));
+        }
+    });
+}
+```
+
+### 11.5.2 Rebinding
+
+```php
+<?php
+
+public function boot(): void
+{
+    /**
+     * Dipanggil saat binding di-override
+     */
+    $this->app->rebinding('config', function ($app, $config) {
+        // Config berubah, update services yang bergantung
+        $app->make(SettingsService::class)->refresh();
+    });
+}
+```
+
+---
+
+## 11.6 Container dalam Testing
+
+### 11.6.1 Mocking Dependencies
+
+```php
+<?php
+
+namespace Tests\Feature;
+
+use App\Contracts\PaymentGateway;
+use Mockery;
+use Tests\TestCase;
+
+class OrderControllerTest extends TestCase
+{
+    public function test_order_creation()
+    {
+        // Mock payment gateway
+        $mock = Mockery::mock(PaymentGateway::class);
+        $mock->shouldReceive('process')
+            ->once()
+            ->with(Mockery::on(function ($order) {
+                return $order->total === 10000;
+            }))
+            ->andReturn(['status' => 'success', 'id' => 'pay_123']);
+        
+        // Bind mock ke container
+        $this->app->instance(PaymentGateway::class, $mock);
+        
+        // Jalankan test
+        $response = $this->postJson('/api/orders', [
+            'items' => [['product_id' => 1, 'quantity' => 2]],
+        ]);
+        
+        $response->assertCreated();
+    }
+    
+    public function test_order_with_fake_payment()
+    {
+        // Gunakan fake implementation
+        $this->app->singleton(PaymentGateway::class, FakePaymentGateway::class);
+        
+        $response = $this->postJson('/api/orders', [
+            'items' => [['product_id' => 1, 'quantity' => 2]],
+        ]);
+        
+        $response->assertCreated();
+        
+        // Assert fake dipanggil
+        $fake = $this->app->make(PaymentGateway::class);
+        $this->assertCount(1, $fake->charges);
+    }
+}
+```
+
+### 11.6.2 Spy dan Partial Mock
+
+```php
+<?php
+
+public function test_notification_sent()
+{
+    // Spy - track calls tanpa mengubah behavior
+    $spy = Mockery::spy(EmailService::class);
+    $this->app->instance(EmailService::class, $spy);
+    
+    // Jalankan action
+    $this->post('/register', [
+        'email' => 'test@example.com',
+        'name' => 'Test User',
+    ]);
+    
+    // Assert spy dipanggil
+    $spy->shouldHaveReceived('sendWelcomeEmail')
+        ->once()
+        ->with(Mockery::on(function ($user) {
+            return $user->email === 'test@example.com';
+        }));
+}
+```
+
+---
+
+## 11.7 Advanced Container Patterns
+
+### 11.7.1 Extending Bindings
+
+```php
+<?php
+
+public function register(): void
+{
+    // Register base implementation
+    $this->app->singleton(CacheManager::class, function ($app) {
+        return new CacheManager($app['config']['cache']);
+    });
+    
+    // Extend dengan decorator
+    $this->app->extend(CacheManager::class, function ($manager, $app) {
+        return new LoggingCacheManager(
+            $manager,
+            $app->make('log')
+        );
+    });
+}
+```
+
+### 11.7.2 Container sebagai Service Locator (Anti-pattern)
+
+> **caution**
+>
+  Hindari menggunakan container sebagai service locator di dalam class. Ini membuat code sulit di-test dan mengaburkan dependencies. Gunakan constructor injection sebagai gantinya.
+
+```php
+<?php
+
+// ❌ JANGAN: Service Locator Anti-pattern
+class BadService
+{
+    public function process()
+    {
+        $payment = app()->make(PaymentGateway::class);
+        $mailer = app()->make(Mailer::class);
+        
+        // ...
+    }
+}
+
+// ✅ DO: Constructor Injection
+class GoodService
+{
+    public function __construct(
+        protected PaymentGateway $payment,
+        protected Mailer $mailer
+    ) {}
+    
+    public function process()
+    {
+        // Dependencies sudah jelas dari constructor
+    }
+}
+```
+
+### 11.7.3 Method Call Injection
+
+```php
+<?php
+
+class ReportController extends Controller
+{
+    /**
+     * Inject saat method dipanggil (via container)
+     */
+    public function generate(
+        Request $request,
+        ReportGenerator $generator // Di-resolve saat method dipanggil
+    ) {
+        return $generator->create($request->all());
+    }
+}
+
+// Manual call dengan injection
+$controller = app()->call([ReportController::class, 'generate'], [
+    'request' => request(),
+    'customParam' => 'value',
+]);
+```
+
+---
+
+## 11.8 Kesimpulan
+
+Service Container adalah fondasi dependency injection Laravel yang membuat aplikasi:
+
+| Konsep | Manfaat |
+|--------|---------|
+| **Constructor Injection** | Dependencies explicit, mudah di-test |
+| **Binding** | Flexibility mengganti implementasi |
+| **Singleton/Scoped** | Performance, resource management |
+| **Contextual Binding** | Konfigurasi berbeda per consumer |
+| **Auto-wiring** | Less boilerplate, convention over configuration |
+
+**Best Practices:**
+- Selalu prefer constructor injection daripada service locator
+- Gunakan interface untuk dependencies yang mungkin berubah
+- Manfaatkan singleton untuk expensive objects
+- Mock dependencies di testing untuk isolation
+- Hindari logic kompleks di service provider `register()` method
+```

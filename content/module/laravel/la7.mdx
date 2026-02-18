@@ -1,0 +1,1044 @@
+---
+title: "Sesi 7: Request Handling & Validation"
+description: "Request object adalah \"kurir\" yang membawa data dari browser ke aplikasi Laravel. Bayangkan request sebagai amplop yang berisi formulir, file, dan inf..."
+category: "laravel"
+tags: ["laravel", "request"]
+order: 7
+---
+
+## 7.1 Request Object: Retrieval Methods
+
+Request object adalah "kurir" yang membawa data dari browser ke aplikasi Laravel. Bayangkan request sebagai amplop yang berisi formulir, file, dan informasi pengirim.
+
+### 7.1.1 Mengakses Request
+
+Ada dua cara mengakses request object:
+
+<div class="tabs-container">
+  
+### Dependency Injection
+
+```php
+<?php
+
+namespace App\Http\Controllers;
+
+use Illuminate\Http\Request;
+
+class UserController extends Controller
+{
+    public function store(Request $request)
+    {
+        // $request berisi semua data HTTP request
+        $name = $request->input('name');
+        
+        return response()->json(['name' => $name]);
+    }
+}
+```
+  
+
+  
+  
+### Helper Function
+
+```php
+<?php
+
+namespace App\Http\Controllers;
+
+class UserController extends Controller
+{
+    public function store()
+    {
+        // Menggunakan helper request()
+        $name = request('name');
+        
+        // Atau
+        $name = request()->input('name');
+        
+        return response()->json(['name' => $name]);
+    }
+}
+```
+  
+
+</div>
+
+### 7.1.2 Mengambil Input Data
+
+> **tip**
+>
+  Laravel menyediakan multiple cara mengambil input—pilih yang paling readable untuk kasus Anda.
+
+```php
+<?php
+
+public function store(Request $request)
+{
+    // Mengambil single value dengan default
+    $name = $request->input('name', 'Guest');
+    
+    // Dot notation untuk nested array
+    $city = $request->input('address.city');
+    $zip = $request->input('address.zip', '00000');
+    
+    // Mengambil semua input
+    $all = $request->all();
+    // ['name' => 'John', 'email' => 'john@example.com', ...]
+    
+    // Mengambil hanya field tertentu
+    $only = $request->only(['name', 'email']);
+    // ['name' => 'John', 'email' => 'john@example.com']
+    
+    // Mengambil semua kecuali field tertentu
+    $except = $request->except(['password', 'password_confirmation']);
+    
+    // Mengambil dari query string (URL parameter)
+    $page = $request->query('page', 1);
+    // /users?page=5 → $page = 5
+    // /users → $page = 1 (default)
+    
+    // Dynamic property (hanya untuk body, bukan query string)
+    $name = $request->name;
+    
+    // Array access
+    $name = $request['name'];
+}
+```
+
+### 7.1.3 Boolean, Date, dan Collection Input
+
+```php
+<?php
+
+public function store(Request $request)
+{
+    // Boolean input (checkbox, toggle)
+    $isActive = $request->boolean('is_active');
+    // '1', 'true', 'on', 'yes' → true
+    // '0', 'false', 'off', 'no', '' → false
+    
+    // Date input
+    $birthDate = $request->date('birth_date');
+    // Carbon instance
+    
+    $birthDate = $request->date('birth_date', 'Y-m-d', 'Asia/Jakarta');
+    // dengan format dan timezone custom
+    
+    // Enum input (PHP 8.1+)
+    $status = $request->enum('status', UserStatus::class);
+    
+    // String input dengan filtering
+    $bio = $request->string('bio')->trim()->lower();
+    // Trim whitespace dan convert ke lowercase
+    
+    // Collection input
+    $tags = $request->collect('tags');
+    // Instance Laravel Collection
+    
+    $tags = $request->collect('tags')->map(function ($tag) {
+        return strtolower(trim($tag));
+    });
+    
+    // Input sebagai array dengan wildcard
+    $quantities = $request->input('products.*.quantity');
+    // ['products' => [['quantity' => 2], ['quantity' => 5]]]
+    // Result: [2, 5]
+}
+```
+
+### 7.1.4 Informasi Request
+
+```php
+<?php
+
+public function handle(Request $request)
+{
+    // URL dan Path
+    $url = $request->url();           // http://example.com/users
+    $fullUrl = $request->fullUrl();   // http://example.com/users?page=2
+    $path = $request->path();         // users
+    $segment = $request->segment(1);  // users (dari /users/123)
+    
+    // HTTP Method
+    $method = $request->method();     // GET, POST, PUT, dll
+    $isPost = $request->isMethod('post');
+    $isGet = $request->isGet();
+    
+    // Headers
+    $contentType = $request->header('Content-Type');
+    $allHeaders = $request->headers->all();
+    $hasHeader = $request->hasHeader('X-Requested-With');
+    
+    // IP dan User Agent
+    $ip = $request->ip();
+    $ips = $request->ips();           // Array jika behind proxy
+    $userAgent = $request->userAgent();
+    
+    // Content negotiation
+    $acceptsJson = $request->acceptsJson();
+    $wantsJson = $request->wantsJson();
+    $format = $request->format();     // html, json, xml, dll
+    
+    // Check AJAX/PJAX
+    $isAjax = $request->ajax();
+    $isPjax = $request->pjax();
+    
+    // Check secure (HTTPS)
+    $isSecure = $request->secure();
+}
+```
+
+---
+
+## 7.2 File Uploads Handling dan Storage
+
+### 7.2.1 Basic File Upload
+
+```php
+<?php
+
+namespace App\Http\Controllers;
+
+use Illuminate\Http\Request;
+
+class DocumentController extends Controller
+{
+    public function upload(Request $request)
+    {
+        // Validasi file
+        $request->validate([
+            'document' => 'required|file|mimes:pdf,doc,docx|max:10240', // max 10MB
+        ]);
+
+        // Ambil file dari request
+        $file = $request->file('document');
+        // atau
+        $file = $request->document;
+
+        // Informasi file
+        $originalName = $file->getClientOriginalName();
+        $extension = $file->getClientOriginalExtension();
+        $mimeType = $file->getMimeType();
+        $size = $file->getSize(); // dalam bytes
+        
+        // Simpan file
+        $path = $file->store('documents');
+        // Simpan ke storage/app/documents/nama-random.ext
+        
+        $path = $file->store('documents', 'public');
+        // Simpan ke storage/app/public/documents/ (disk public)
+        
+        // Simpan dengan nama custom
+        $filename = time() . '_' . $originalName;
+        $path = $file->storeAs('documents', $filename, 'public');
+        
+        return response()->json([
+            'path' => $path,
+            'url' => Storage::url($path),
+        ]);
+    }
+}
+```
+
+### 7.2.2 Multiple File Upload
+
+```php
+<?php
+
+public function uploadGallery(Request $request)
+{
+    $request->validate([
+        'photos' => 'required|array',
+        'photos.*' => 'required|image|mimes:jpeg,png,jpg|max:2048',
+    ]);
+
+    $uploadedPaths = [];
+
+    foreach ($request->file('photos') as $photo) {
+        // Generate nama unik
+        $filename = uniqid() . '_' . $photo->getClientOriginalName();
+        
+        // Resize dan optimize (dengan package intervention/image)
+        // $image = Image::make($photo)->resize(1200, null, function ($constraint) {
+        //     $constraint->aspectRatio();
+        //     $constraint->upsize();
+        // });
+        
+        $path = $photo->storeAs('gallery', $filename, 'public');
+        $uploadedPaths[] = $path;
+    }
+
+    return response()->json([
+        'uploaded' => count($uploadedPaths),
+        'paths' => $uploadedPaths,
+    ]);
+}
+```
+
+### 7.2.3 File Validation Lanjutan
+
+```php
+<?php
+
+public function uploadAvatar(Request $request)
+{
+    $validated = $request->validate([
+        'avatar' => [
+            'required',
+            'image',
+            'mimes:jpeg,png,jpg,webp',
+            'mimetypes:image/jpeg,image/png,image/webp',
+            'max:5120', // 5MB
+            'dimensions:min_width=100,min_height=100,max_width=2000,max_height=2000',
+            // Validasi dimensi gambar
+        ],
+    ]);
+
+    $file = $request->file('avatar');
+
+    // Check apakah file valid
+    if (!$file->isValid()) {
+        return response()->json(['error' => 'Upload failed'], 400);
+    }
+
+    // Generate hash untuk cek duplikat
+    $hash = md5_file($file->getRealPath());
+    
+    // Cek apakah file sudah pernah diupload
+    $existing = FileUpload::where('hash', $hash)->first();
+    if ($existing) {
+        return response()->json([
+            'path' => $existing->path,
+            'message' => 'File already exists',
+        ]);
+    }
+
+    // Simpan dengan nama berdasarkan hash
+    $extension = $file->getClientOriginalExtension();
+    $filename = $hash . '.' . $extension;
+    
+    $path = $file->storeAs('avatars', $filename, 'public');
+
+    // Simpan ke database
+    FileUpload::create([
+        'hash' => $hash,
+        'path' => $path,
+        'original_name' => $file->getClientOriginalName(),
+        'size' => $file->getSize(),
+    ]);
+
+    return response()->json([
+        'path' => $path,
+        'url' => Storage::disk('public')->url($path),
+    ]);
+}
+```
+
+### 7.2.4 Streaming Large Files
+
+```php
+<?php
+
+use Illuminate\Support\Facades\Storage;
+use Symfony\Component\HttpFoundation\StreamedResponse;
+
+public function downloadLargeFile($filename)
+{
+    $path = storage_path("app/documents/{$filename}");
+    
+    if (!file_exists($path)) {
+        abort(404);
+    }
+
+    return new StreamedResponse(function () use ($path) {
+        $stream = fopen($path, 'r');
+        fpassthru($stream);
+        fclose($stream);
+    }, 200, [
+        'Content-Type' => mime_content_type($path),
+        'Content-Disposition' => 'attachment; filename="' . $filename . '"',
+    ]);
+}
+
+public function streamVideo($filename)
+{
+    $path = storage_path("app/videos/{$filename}");
+    
+    $response = new StreamedResponse(function () use ($path) {
+        $stream = fopen($path, 'rb');
+        while (!feof($stream)) {
+            echo fread($stream, 1024 * 8); // Stream 8KB per chunk
+            flush();
+        }
+        fclose($stream);
+    });
+
+    $response->headers->set('Content-Type', 'video/mp4');
+    $response->headers->set('Accept-Ranges', 'bytes');
+    
+    return $response;
+}
+```
+
+---
+
+## 7.3 Validation: Form Request Classes vs Inline Validation
+
+### 7.3.1 Inline Validation (Di Controller)
+
+Cepat untuk logic sederhana:
+
+```php
+<?php
+
+public function store(Request $request)
+{
+    $validated = $request->validate([
+        'title' => 'required|string|max:255',
+        'body' => 'required|string|min:10',
+        'email' => 'required|email|unique:users',
+        'password' => 'required|min:8|confirmed',
+        'tags' => 'nullable|array',
+        'tags.*' => 'exists:tags,id',
+        'published_at' => 'nullable|date|after_or_equal:today',
+    ], [
+        // Custom error messages
+        'title.required' => 'Judul wajib diisi.',
+        'title.max' => 'Judul maksimal 255 karakter.',
+        'body.min' => 'Konten minimal 10 karakter.',
+        'email.unique' => 'Email sudah terdaftar.',
+    ]);
+
+    // $validated hanya berisi field yang tervalidasi
+    Post::create($validated);
+
+    return redirect()->route('posts.index');
+}
+```
+
+### 7.3.2 Form Request Classes (Recommended)
+
+Pisahkan logic validasi ke class tersendiri:
+
+1. **Generate Form Request**
+   ```bash
+   php artisan make:request StorePostRequest
+   ```
+
+2. **Definisi Rules**
+   ```php
+   <?php
+
+   namespace App\Http\Requests;
+
+   use Illuminate\Foundation\Http\FormRequest;
+
+   class StorePostRequest extends FormRequest
+   {
+       /**
+        * Determine if the user is authorized to make this request.
+        */
+       public function authorize(): bool
+       {
+           // Logic otorisasi
+           return auth()->check();
+           
+           // Atau dengan policy
+           // return $this->user()->can('create', Post::class);
+       }
+
+       /**
+        * Get the validation rules that apply to the request.
+        */
+       public function rules(): array
+       {
+           return [
+               'title' => [
+                   'required',
+                   'string',
+                   'max:255',
+                   'unique:posts,title',
+               ],
+               'slug' => [
+                   'required',
+                   'string',
+                   'max:255',
+                   'unique:posts,slug',
+                   'regex:/^[a-z0-9-]+$/',
+               ],
+               'body' => 'required|string|min:100',
+               'excerpt' => 'nullable|string|max:500',
+               'featured_image' => 'nullable|image|max:2048',
+               'category_id' => 'required|exists:categories,id',
+               'tags' => 'nullable|array',
+               'tags.*' => 'exists:tags,id',
+               'published_at' => 'nullable|date',
+               'is_featured' => 'boolean',
+               'meta_description' => 'nullable|string|max:160',
+           ];
+       }
+
+       /**
+        * Prepare the data for validation.
+        */
+       protected function prepareForValidation(): void
+       {
+           // Generate slug dari title jika tidak disediakan
+           if (empty($this->slug)) {
+               $this->merge([
+                   'slug' => \Str::slug($this->title),
+               ]);
+           }
+       }
+
+       /**
+        * Get custom attributes for validator errors.
+        */
+       public function attributes(): array
+       {
+           return [
+               'title' => 'Judul',
+               'body' => 'Konten',
+               'category_id' => 'Kategori',
+               'published_at' => 'Tanggal Publikasi',
+           ];
+       }
+
+       /**
+        * Get the error messages for the defined validation rules.
+        */
+       public function messages(): array
+       {
+           return [
+               'title.required' => ':attribute wajib diisi.',
+               'title.unique' => ':attribute sudah digunakan.',
+               'slug.regex' => ':attribute hanya boleh huruf kecil, angka, dan strip.',
+               'body.min' => ':attribute minimal :min karakter.',
+               'category_id.exists' => 'Kategori yang dipilih tidak valid.',
+           ];
+       }
+   }
+   ```
+
+3. **Gunakan di Controller**
+   ```php
+   <?php
+
+   use App\Http\Requests\StorePostRequest;
+
+   class PostController extends Controller
+   {
+       public function store(StorePostRequest $request)
+       {
+           // Data sudah tervalidasi dan diotorisasi
+           $validated = $request->validated();
+           
+           // Handle file upload jika ada
+           if ($request->hasFile('featured_image')) {
+               $validated['featured_image'] = $request
+                   ->file('featured_image')
+                   ->store('posts', 'public');
+           }
+           
+           $post = auth()->user()->posts()->create($validated);
+           
+           // Attach tags
+           if (!empty($validated['tags'])) {
+               $post->tags()->sync($validated['tags']);
+           }
+
+           return redirect()->route('posts.show', $post)
+               ->with('success', 'Post berhasil dibuat!');
+       }
+   }
+   ```
+
+### 7.3.3 Available Validation Rules
+
+> **note**
+>
+  Laravel memiliki 100+ validation rules built-in. Berikut yang paling sering digunakan.
+
+| Rule | Deskripsi | Contoh |
+|------|-----------|--------|
+| `required` | Field wajib ada | `'name' => 'required'` |
+| `nullable` | Boleh null/kosong | `'bio' => 'nullable\|string'` |
+| `string` | Harus string | `'name' => 'string'` |
+| `integer` | Harus integer | `'age' => 'integer'` |
+| `numeric` | Harus angka (int/float) | `'price' => 'numeric'` |
+| `boolean` | true/false/1/0 | `'active' => 'boolean'` |
+| `array` | Harus array | `'tags' => 'array'` |
+| `date` | Format tanggal valid | `'birth_date' => 'date'` |
+| `email` | Format email valid | `'email' => 'email'` |
+| `url` | Format URL valid | `'website' => 'url'` |
+| `ip` | Format IP valid | `'ip_address' => 'ip'` |
+| `json` | Format JSON valid | `'metadata' => 'json'` |
+| `uuid` | Format UUID valid | `'id' => 'uuid'` |
+| `min:5` | Minimal 5 karakter/item | `'password' => 'min:8'` |
+| `max:255` | Maksimal 255 karakter/item | `'title' => 'max:255'` |
+| `between:1,100` | Antara 1 dan 100 | `'quantity' => 'between:1,100'` |
+| `in:active,inactive` | Harus salah satu value | `'status' => 'in:active,inactive'` |
+| `not_in:banned,deleted` | Tidak boleh value tersebut | `'status' => 'not_in:banned'` |
+| `unique:users` | Unik di tabel users | `'email' => 'unique:users'` |
+| `exists:categories,id` | Ada di tabel categories | `'category_id' => 'exists:categories,id'` |
+| `regex:/^[a-z]+$` | Match regex | `'username' => 'regex:/^[a-z0-9_]+$/'` |
+| `confirmed` | Harus ada field _confirmation | `'password' => 'confirmed'` |
+| `different:old_password` | Harus berbeda dengan field lain | `'new_password' => 'different:old_password'` |
+| `same:password` | Harus sama dengan field lain | `'password_confirmation' => 'same:password'` |
+| `before:today` | Tanggal sebelum | `'birth_date' => 'before:today'` |
+| `after_or_equal:today` | Tanggal setelah/sama | `'event_date' => 'after_or_equal:today'` |
+| `file` | Harus file upload | `'document' => 'file'` |
+| `image` | Harus image (jpeg, png, etc) | `'avatar' => 'image'` |
+| `mimes:pdf,doc` | Ekstensi file tertentu | `'doc' => 'mimes:pdf,doc,docx'` |
+| `max:10240` | Ukuran file max (KB) | `'file' => 'max:10240'` |
+| `dimensions` | Dimensi gambar | `'photo' => 'dimensions:min_width=100,min_height=100'` |
+
+---
+
+## 7.4 Custom Validation Rules (Rule Objects)
+
+### 7.4.1 Membuat Custom Rule
+
+```bash
+php artisan make:rule StrongPassword
+```
+
+```php
+<?php
+
+namespace App\Rules;
+
+use Closure;
+use Illuminate\Contracts\Validation\ValidationRule;
+
+class StrongPassword implements ValidationRule
+{
+    /**
+     * Run the validation rule.
+     */
+    public function validate(string $attribute, mixed $value, Closure $fail): void
+    {
+        // Minimal 8 karakter
+        if (strlen($value) < 8) {
+            $fail('The :attribute must be at least 8 characters.');
+            return;
+        }
+
+        // Harus ada huruf besar
+        if (!preg_match('/[A-Z]/', $value)) {
+            $fail('The :attribute must contain at least one uppercase letter.');
+            return;
+        }
+
+        // Harus ada huruf kecil
+        if (!preg_match('/[a-z]/', $value)) {
+            $fail('The :attribute must contain at least one lowercase letter.');
+            return;
+        }
+
+        // Harus ada angka
+        if (!preg_match('/[0-9]/', $value)) {
+            $fail('The :attribute must contain at least one number.');
+            return;
+        }
+
+        // Harus ada special character
+        if (!preg_match('/[!@#$%^&*(),.?":{}|<>]/', $value)) {
+            $fail('The :attribute must contain at least one special character.');
+            return;
+        }
+    }
+}
+```
+
+Penggunaan:
+
+```php
+<?php
+
+use App\Rules\StrongPassword;
+
+$request->validate([
+    'password' => ['required', 'string', new StrongPassword],
+]);
+```
+
+### 7.4.2 Rule dengan Dependency
+
+```php
+<?php
+
+namespace App\Rules;
+
+use App\Models\Coupon;
+use Closure;
+use Illuminate\Contracts\Validation\ValidationRule;
+
+class ValidCoupon implements ValidationRule
+{
+    public function __construct(
+        protected ?float $orderTotal = null
+    ) {}
+
+    public function validate(string $attribute, mixed $value, Closure $fail): void
+    {
+        $coupon = Coupon::where('code', $value)
+            ->where('is_active', true)
+            ->where('expires_at', '>', now())
+            ->first();
+
+        if (!$coupon) {
+            $fail('The coupon code is invalid or expired.');
+            return;
+        }
+
+        if ($this->orderTotal && $this->orderTotal < $coupon->min_order_amount) {
+            $fail("This coupon requires a minimum order of {$coupon->min_order_amount}.");
+            return;
+        }
+
+        if ($coupon->usage_limit && $coupon->used_count >= $coupon->usage_limit) {
+            $fail('This coupon has reached its usage limit.');
+            return;
+        }
+    }
+}
+```
+
+```php
+<?php
+
+$request->validate([
+    'coupon_code' => [
+        'nullable',
+        'string',
+        new ValidCoupon($request->input('order_total')),
+    ],
+]);
+```
+
+### 7.4.3 Closure-based Custom Rules
+
+Untuk logic sederhana tanpa membuat class:
+
+```php
+<?php
+
+use Illuminate\Support\Facades\Validator;
+
+$validator = Validator::make($request->all(), [
+    'phone' => [
+        'required',
+        'string',
+        function ($attribute, $value, $fail) {
+            // Format Indonesia: +62 atau 08
+            if (!preg_match('/^(\\+62|62|0)8[1-9][0-9]{6,9}$/', $value)) {
+                $fail('The :attribute must be a valid Indonesian phone number.');
+            }
+        },
+    ],
+    'ref_code' => [
+        'nullable',
+        'string',
+        function ($attribute, $value, $fail) {
+            if ($value && !User::where('referral_code', $value)->exists()) {
+                $fail('The referral code is invalid.');
+            }
+        },
+    ],
+]);
+```
+
+---
+
+## 7.5 Validation Error Handling dan Localization
+
+### 7.5.1 Handling Validation Errors
+
+```php
+<?php
+
+public function store(Request $request)
+{
+    try {
+        $validated = $request->validate([
+            'email' => 'required|email|unique:users',
+            'password' => 'required|min:8',
+        ]);
+    } catch (ValidationException $e) {
+        // Custom handling
+        return response()->json([
+            'message' => 'Validation failed',
+            'errors' => $e->errors(),
+        ], 422);
+    }
+}
+```
+
+### 7.5.2 Error di Blade Templates
+
+```blade
+{{-- resources/views/auth/register.blade.php --}}
+
+<form method="POST" action="{{ route('register') }}">
+    @csrf
+    
+    {{-- Input dengan error handling --}}
+    <div>
+        <label for="email">Email</label>
+        <input 
+            type="email" 
+            name="email" 
+            id="email" 
+            value="{{ old('email') }}"
+            class="@error('email') is-invalid @enderror"
+        >
+        
+        @error('email')
+            <span class="error">{{ $message }}</span>
+        @enderror
+    </div>
+    
+    <div>
+        <label for="password">Password</label>
+        <input 
+            type="password" 
+            name="password" 
+            id="password"
+            class="@error('password') is-invalid @enderror"
+        >
+        
+        @error('password')
+            <span class="error">{{ $message }}</span>
+        @enderror
+    </div>
+    
+    {{-- Tampilkan semua error --}}
+    @if ($errors->any())
+        <div class="alert alert-danger">
+            <ul>
+                @foreach ($errors->all() as $error)
+                    <li>{{ $error }}</li>
+                @endforeach
+            </ul>
+        </div>
+    @endif
+    
+    <button type="submit">Register</button>
+</form>
+```
+
+### 7.5.3 Localization (Bahasa Indonesia)
+
+1. **Buat File Bahasa**
+   ```bash
+   mkdir -p lang/id
+   ```
+
+2. **File lang/id/validation.php**
+   ```php
+   <?php
+
+   return [
+       'required' => 'Kolom :attribute wajib diisi.',
+       'email' => 'Kolom :attribute harus berupa email yang valid.',
+       'min' => [
+           'string' => 'Kolom :attribute minimal harus :min karakter.',
+           'array' => 'Kolom :attribute minimal harus memiliki :min item.',
+       ],
+       'max' => [
+           'string' => 'Kolom :attribute tidak boleh lebih dari :max karakter.',
+       ],
+       'unique' => ':attribute sudah terdaftar.',
+       'confirmed' => 'Konfirmasi :attribute tidak cocok.',
+       'password' => [
+           'mixed' => ':attribute harus mengandung huruf besar dan kecil.',
+           'numbers' => ':attribute harus mengandung angka.',
+           'symbols' => ':attribute harus mengandung simbol.',
+       ],
+       
+       // Custom attribute names
+       'attributes' => [
+           'name' => 'Nama',
+           'email' => 'Email',
+           'password' => 'Password',
+           'title' => 'Judul',
+           'body' => 'Isi',
+       ],
+   ];
+   ```
+
+3. **Set Locale di config/app.php atau runtime**
+   ```php
+   // config/app.php
+   'locale' => 'id',
+   'fallback_locale' => 'en',
+   
+   // Atau runtime
+   App::setLocale('id');
+   ```
+
+### 7.5.4 JSON Response untuk API
+
+```php
+<?php
+
+// Handler otomatis di app/Exceptions/Handler.php
+// atau bootstrap/app.php di Laravel 11+
+
+->withExceptions(function (Exceptions $exceptions) {
+    $exceptions->render(function (ValidationException $e, Request $request) {
+        if ($request->is('api/*')) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation error',
+                'errors' => $e->errors(),
+            ], 422);
+        }
+    });
+})
+```
+
+---
+
+## 7.6 Advanced Validation Techniques
+
+### 7.6.1 Conditional Validation
+
+```php
+<?php
+
+$request->validate([
+    'type' => 'required|in:individual,company',
+    
+    // Hanya required jika type = company
+    'company_name' => 'required_if:type,company|string|max:255',
+    'company_tax_id' => 'required_if:type,company|string',
+    
+    // Required unless
+    'middle_name' => 'required_unless:type,company|nullable|string',
+    
+    // Required with
+    'spouse_name' => 'required_with:marital_status|nullable|string',
+    
+    // Required with all
+    'bank_account' => 'required_with_all:bank_name,bank_branch|string',
+    
+    // Exclude if
+    'student_id' => 'exclude_if:type,company|required|string',
+    
+    // Prohibited if
+    'parent_guardian' => 'prohibited_if:age,18|nullable|string',
+]);
+```
+
+### 7.6.2 Array Validation Kompleks
+
+```php
+<?php
+
+$request->validate([
+    'products' => 'required|array|min:1',
+    'products.*.id' => 'required|exists:products,id',
+    'products.*.quantity' => 'required|integer|min:1|max:100',
+    'products.*.options' => 'nullable|array',
+    'products.*.options.*.name' => 'required_with:products.*.options|string',
+    'products.*.options.*.value' => 'required_with:products.*.options|string',
+    
+    'shipping_address' => 'required|array',
+    'shipping_address.street' => 'required|string',
+    'shipping_address.city' => 'required|string',
+    'shipping_address.postal_code' => 'required|string|size:5',
+    
+    'billing_address' => 'nullable|array',
+    'billing_address.street' => 'required_with:billing_address|string',
+    'billing_address.city' => 'required_with:billing_address|string',
+]);
+```
+
+### 7.6.3 Sometimes and Nullable
+
+```php
+<?php
+
+$validator = Validator::make($request->all(), [
+    'username' => 'sometimes|required|string|unique:users',
+    'email' => 'sometimes|required|email|unique:users',
+]);
+
+// Sometimes: validasi hanya jika field ada di request
+// Berguna untuk PATCH request (partial update)
+
+$validator->sometimes('reason', 'required|string', function ($input) {
+    return $input->status === 'rejected';
+});
+// Field 'reason' wajib diisi hanya jika status = rejected
+```
+
+### 7.6.4 Validator Instance Manual
+
+```php
+<?php
+
+use Illuminate\Support\Facades\Validator;
+
+public function store(Request $request)
+{
+    $validator = Validator::make($request->all(), [
+        'title' => 'required|string|max:255',
+        'body' => 'required|string',
+    ]);
+
+    // Tambah rules setelah pembuatan
+    $validator->sometimes('published_at', 'required|date', function ($input) {
+        return $input->status === 'published';
+    });
+
+    // Custom error message setelah pembuatan
+    $validator->setCustomMessages([
+        'title.required' => 'Judul tidak boleh kosong.',
+    ]);
+
+    // Jalankan validasi
+    if ($validator->fails()) {
+        // Custom redirect
+        return redirect('posts/create')
+            ->withErrors($validator)
+            ->withInput();
+    }
+
+    // Atau
+    $validated = $validator->validated();
+    
+    // Stop on first failure
+    $validated = $validator->stopOnFirstFailure()->validated();
+    
+    // Validate without auto-redirect (API)
+    $validated = $validator->validate();
+}
+```
+
+---
+
+## 7.7 Kesimpulan
+
+Request handling dan validation adalah fondasi keamanan dan reliability aplikasi Laravel. Ingat prinsip utama:
+
+| Prinsip | Implementasi |
+|---------|--------------|
+| **Never trust user input** | Selalu validasi sebelum processing |
+| **Fail fast** | Validasi di awal, reject invalid request segera |
+| **Separate concerns** | Gunakan Form Request untuk validasi kompleks |
+| **Clear messages** | Error message yang informatif dan user-friendly |
+| **Localization ready** | Siapkan multiple language dari awal |
+
+**Checklist Validasi:**
+- Gunakan Form Request untuk logic reusable
+- Implementasikan `authorize()` untuk security
+- Manfaatkan `prepareForValidation()` untuk data transformation
+- Sediakan custom messages yang jelas
+- Handle file upload dengan validasi ketat (type, size, dimensions)
+- Gunakan custom rules untuk business logic spesifik
+```

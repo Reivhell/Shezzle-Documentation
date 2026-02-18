@@ -1,0 +1,664 @@
+---
+title: "Sesi 31: Eloquent Query Builder & Collections"
+description: "Menguasai teknik querying lanjutan dengan scopes, query builder methods, dan collections untuk handling dataset kecil maupun besar dengan optimal."
+category: "laravel"
+tags: ["laravel", "build", "eloquent"]
+order: 31
+---
+
+## Tujuan Pembelajaran
+
+Menguasai teknik querying lanjutan dengan scopes, query builder methods, dan collections untuk handling dataset kecil maupun besar dengan optimal.
+
+## 1. Query Scopes
+
+### 1.1 Local Scopes
+
+Local scopes adalah reusable query constraints yang dipanggil secara chainable.
+
+```php
+<?php
+
+namespace App\Models;
+
+use Illuminate\Database\Eloquent\Builder;
+
+class Post extends Model
+{
+    /**
+     * Scope untuk post yang published
+     */
+    public function scopePublished(Builder $query): Builder
+    {
+        return $query->where('status', 'published')
+                     ->where('published_at', '<=', now());
+    }
+
+    /**
+     * Scope dengan parameter
+     */
+    public function scopeOfCategory(Builder $query, string $category): Builder
+    {
+        return $query->whereHas('category', function ($q) use ($category) {
+            $q->where('slug', $category);
+        });
+    }
+
+    /**
+     * Scope untuk date range
+     */
+    public function scopePublishedBetween(Builder $query, $start, $end): Builder
+    {
+        return $query->whereBetween('published_at', [$start, $end]);
+    }
+
+    /**
+     * Scope untuk popular posts
+     */
+    public function scopePopular(Builder $query, int $minViews = 1000): Builder
+    {
+        return $query->where('views_count', '>=', $minViews)
+                     ->orderBy('views_count', 'desc');
+    }
+}
+```
+
+Penggunaan:
+
+```php
+<?php
+
+// Chain multiple scopes
+$posts = Post::published()
+    ->ofCategory('technology')
+    ->popular(500)
+    ->latest()
+    ->get();
+
+// Dengan eager loading
+$posts = Post::with('author')
+    ->published()
+    ->popular()
+    ->paginate(20);
+```
+
+### 1.2 Global Scopes
+
+Global scopes otomatis diterapkan pada semua query model.
+
+```php
+<?php
+
+namespace App\Scopes;
+
+use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Scope;
+
+class PublishedScope implements Scope
+{
+    public function apply(Builder $builder, Model $model): void
+    {
+        $builder->where('status', 'published')
+                ->where('published_at', '<=', now());
+    }
+}
+```
+
+```php
+<?php
+
+namespace App\Models;
+
+use App\Scopes\PublishedScope;
+use Illuminate\Database\Eloquent\Attributes\ScopedBy;
+
+#[ScopedBy([PublishedScope::class])] // Laravel 11+ attribute
+class Post extends Model
+{
+    // Atau manual dalam boot method
+    protected static function booted(): void
+    {
+        static::addGlobalScope(new PublishedScope);
+    }
+}
+```
+
+Mengabaikan global scope:
+
+```php
+<?php
+
+// Remove specific scope
+Post::withoutGlobalScope(PublishedScope::class)->get();
+
+// Remove multiple scopes
+Post::withoutGlobalScopes([PublishedScope::class, AnotherScope::class])->get();
+
+// Remove all global scopes
+Post::withoutGlobalScopes()->get();
+
+// Laravel 11+ dengan attribute
+Post::withoutGlobalScope('published')->get();
+```
+
+### 1.3 Anonymous Global Scopes
+
+```php
+<?php
+
+class User extends Model
+{
+    protected static function booted(): void
+    {
+        // Scope untuk tenant isolation
+        static::addGlobalScope('tenant', function (Builder $builder) {
+            if (auth()->check() && auth()->user()->tenant_id) {
+                $builder->where('tenant_id', auth()->user()->tenant_id);
+            }
+        });
+
+        // Scope untuk soft delete awareness
+        static::addGlobalScope('active', function (Builder $builder) {
+            $builder->where('is_active', true);
+        });
+    }
+}
+```
+
+## 2. Query Builder Methods
+
+### 2.1 Where Clauses Advanced
+
+```php
+<?php
+
+// Basic where
+User::where('status', 'active')->get();
+
+// Where dengan operator
+User::where('age', '>=', 18)->get();
+User::where('name', 'like', '%john%')->get();
+
+// Array syntax
+User::where([
+    ['status', 'active'],
+    ['age', '>=', 18],
+    ['country', 'ID']
+])->get();
+
+// Or where
+User::where('role', 'admin')
+    ->orWhere('role', 'moderator')
+    ->get();
+
+// Where nested (grouping)
+User::where(function ($query) {
+    $query->where('role', 'admin')
+          ->orWhere('role', 'superadmin');
+})->where('is_active', true)->get();
+
+// Where not
+User::whereNot('status', 'banned')->get();
+
+// Where any / where all (Laravel 10.22+)
+User::whereAny(['name', 'email', 'phone'], 'like', '%search%')->get();
+User::whereAll(['email_verified_at', 'phone_verified_at'], '!=', null)->get();
+```
+
+### 2.2 Specialized Where Methods
+
+```php
+<?php
+
+// Where in
+User::whereIn('id', [1, 2, 3])->get();
+User::whereNotIn('id', [4, 5, 6])->get();
+
+// Where between
+Order::whereBetween('total', [100, 500])->get();
+Order::whereNotBetween('created_at', [now()->subMonth(), now()])->get();
+
+// Where null / not null
+Post::whereNull('published_at')->get();
+Post::whereNotNull('deleted_at')->get();
+
+// Where date / time
+Post::whereDate('created_at', '2024-01-15')->get();
+Post::whereMonth('created_at', 1)->get();
+Post::whereYear('created_at', 2024)->get();
+Post::whereDay('created_at', 15)->get();
+Post::whereTime('created_at', '>=', '09:00:00')->get();
+
+// Where column compare
+User::whereColumn('updated_at', '>', 'created_at')->get();
+User::whereColumn('balance', '>=', 'credit_limit')->get();
+```
+
+### 2.3 JSON Where Clauses
+
+```php
+<?php
+
+// Where pada JSON column
+User::where('settings->theme', 'dark')->get();
+User::where('metadata->notifications->email', true)->get();
+
+// Where JSON contains
+User::whereJsonContains('roles', 'admin')->get();
+User::whereJsonContains('tags', ['php', 'laravel'])->get();
+
+// Where JSON length
+User::whereJsonLength('permissions', '>', 5)->get();
+User::whereJsonLength('permissions', 0)->get(); // Empty array
+```
+
+### 2.4 Full-Text Search
+
+```php
+<?php
+
+// MySQL/PostgreSQL full-text
+Post::whereFullText('content', 'laravel tutorial')->get();
+
+// Dengan options (PostgreSQL)
+Post::whereFullText('content', 'laravel', ['language' => 'english'])->get();
+
+// Or where full text
+Post::whereFullText('title', 'search')
+    ->orWhereFullText('content', 'search')
+    ->get();
+```
+
+### 2.5 Aggregates & Grouping
+
+```php
+<?php
+
+// Basic aggregates
+User::count();
+Order::sum('total');
+Order::avg('total');
+Order::max('total');
+Order::min('total');
+
+// Aggregates dengan query
+Order::where('status', 'completed')->sum('total');
+
+// Group by dengan having
+Order::select('user_id', DB::raw('SUM(total) as total_spent'))
+    ->groupBy('user_id')
+    ->having('total_spent', '>', 1000)
+    ->get();
+
+// Having raw
+Order::groupBy('user_id')
+    ->havingRaw('SUM(total) > ?', [1000])
+    ->get();
+
+// Multiple aggregates
+Order::selectRaw('
+    user_id,
+    COUNT(*) as order_count,
+    SUM(total) as total_spent,
+    AVG(total) as average_order,
+    MAX(created_at) as last_order
+')
+->groupBy('user_id')
+->get();
+```
+
+### 2.6 Ordering & Limiting
+
+```php
+<?php
+
+// Basic ordering
+User::orderBy('name')->get();
+User::orderBy('created_at', 'desc')->get();
+User::latest()->get(); // orderBy created_at desc
+User::oldest()->get(); // orderBy created_at asc
+
+// Order by raw
+User::orderByRaw('FIELD(role, "admin", "moderator", "user")')->get();
+
+// Order by relationship aggregate
+Post::withCount('comments')->orderBy('comments_count', 'desc')->get();
+
+// In random order
+User::inRandomOrder()->first();
+
+// Skip & take / offset & limit
+User::skip(10)->take(5)->get();
+User::offset(20)->limit(10)->get();
+
+// For page
+User::forPage(2, 15)->get(); // Page 2, 15 per page
+```
+
+## 3. Eloquent Collections
+
+### 3.1 Collection Methods Dasar
+
+```php
+<?php
+
+$users = User::all();
+
+// Filtering
+$admins = $users->where('role', 'admin');
+$active = $users->where('is_active', true);
+
+// First & last
+$first = $users->first();
+$firstAdmin = $users->firstWhere('role', 'admin');
+$last = $users->last();
+
+// Pluck
+$names = $users->pluck('name');
+$emails = $users->pluck('email', 'id'); // key by id
+
+// Unique
+$uniqueRoles = $users->pluck('role')->unique();
+
+// Sorting
+$sorted = $users->sortBy('name');
+$sortedDesc = $users->sortByDesc('created_at');
+$sortedMulti = $users->sortBy(['role', 'name']);
+
+// Grouping
+$byRole = $users->groupBy('role');
+$byDomain = $users->groupBy(function ($user) {
+    return explode('@', $user->email)[1];
+});
+```
+
+### 3.2 Transformasi Data
+
+```php
+<?php
+
+$orders = Order::with('items')->get();
+
+// Map - transform setiap item
+$totals = $orders->map(function ($order) {
+    return [
+        'id' => $order->id,
+        'total' => $order->items->sum('price'),
+        'item_count' => $order->items->count(),
+    ];
+});
+
+// Transform (modify collection itself)
+$orders->transform(function ($order) {
+    $order->total = $order->items->sum('price');
+    return $order;
+});
+
+// Flat map
+$allTags = $posts->flatMap->tags; // Flatten semua tags dari semua posts
+
+// Map to groups
+$grouped = $orders->mapToGroups(function ($order) {
+    return [$order->status => $order->total];
+});
+
+// Map with keys
+$byId = $orders->keyBy('id');
+$byCustom = $orders->keyBy(function ($order) {
+    return "ORDER-{$order->id}";
+});
+```
+
+### 3.3 Reducing & Aggregating
+
+```php
+<?php
+
+$orders = Order::all();
+
+// Reduce
+$totalRevenue = $orders->reduce(function ($carry, $order) {
+    return $carry + $order->total;
+}, 0);
+
+// Sum dengan key
+$total = $orders->sum('total');
+
+// Count dengan kondisi
+$pendingCount = $orders->where('status', 'pending')->count();
+
+// Average
+$avgOrder = $orders->avg('total');
+
+// Min & max dengan callback
+$cheapest = $orders->min('total');
+$mostItems = $orders->max(function ($order) {
+    return $order->items->count();
+});
+
+// Statistics
+$stats = $orders->pipe(function ($collection) {
+    return [
+        'count' => $collection->count(),
+        'total' => $collection->sum('total'),
+        'average' => $collection->avg('total'),
+        'median' => $collection->median('total'),
+    ];
+});
+```
+
+### 3.4 Higher Order Messages
+
+```php
+<?php
+
+// Syntax singkat untuk operasi common
+$users = User::all();
+
+// vs map
+$names = $users->map->name;
+
+// vs filter
+$active = $users->filter->is_active;
+
+// vs each
+$users->each->notify(new WelcomeNotification());
+
+// vs contains
+$hasAdmin = $users->contains->isAdmin();
+
+// vs sum
+$totalBalance = $users->sum->balance;
+```
+
+## 4. Lazy Collections untuk Large Datasets
+
+### 4.1 cursor() - Generator-based
+
+```php
+<?php
+
+// Memory efficient untuk jutaan records
+User::cursor()->each(function ($user) {
+    // Process satu per satu, memory tetap rendah
+    ProcessUserData::dispatch($user);
+});
+
+// Dengan filter (hati-hati, filter di PHP bukan SQL)
+User::cursor()
+    ->filter(fn ($user) => $user->isActive())
+    ->each(function ($user) {
+        // Process
+    });
+
+// Chunking alternatif
+User::cursor()->chunk(100)->each(function ($chunk) {
+    // Process 100 users at a time
+    foreach ($chunk as $user) {
+        // ...
+    }
+});
+```
+
+### 4.2 lazy() - LazyCollection
+
+```php
+<?php
+
+// Sama seperti cursor tapi dengan method collection lengkap
+User::lazy()->each(function ($user) {
+    ProcessUser::dispatch($user);
+});
+
+// Dengan chunk size custom
+User::lazy(1000)->each(function ($user) {
+    // Chunk 1000 per query
+});
+
+// Filter & map (lazy evaluation)
+$processed = User::lazy()
+    ->filter(fn ($u) => $u->created_at->isRecent())
+    ->map(fn ($u) => $u->toExportFormat())
+    ->take(1000); // Hanya ambil 1000 pertama
+
+// Memory-safe file processing
+User::lazy()
+    ->map(fn ($u) => $u->toCsvRow())
+    ->pipe(function ($lines) {
+        file_put_contents('users.csv', $lines->implode("\n"));
+    });
+```
+
+### 4.3 chunk() vs cursor() vs lazy()
+
+| Method | Memory | Use Case | Notes |
+|--------|--------|----------|-------|
+| `chunk()` | Medium | Batch processing | Multiple queries, bisa update data |
+| `cursor()` | Low | Very large datasets | Single query, hold connection |
+| `lazy()` | Low | Large datasets dengan collection methods | Best of both worlds |
+
+```php
+<?php
+
+// Chunk - untuk update massal
+User::where('last_login_at', '<', now()->subYear())
+    ->chunkById(1000, function ($users) {
+        foreach ($users as $user) {
+            $user->update(['status' => 'inactive']);
+        }
+    });
+
+// Cursor - untuk read-only processing besar
+foreach (User::cursor() as $user) {
+    ExportUser::dispatch($user);
+}
+
+// Lazy - untuk transformasi kompleks
+User::lazy()
+    ->filter->isVerified()
+    ->map->toExportFormat()
+    ->groupBy('country')
+    ->each(function ($users, $country) {
+        Cache::put("users:{$country}", $users);
+    });
+```
+
+## 5. Advanced Query Patterns
+
+### 5.1 Subqueries
+
+```php
+<?php
+
+// Select subquery
+User::select('id', 'name')
+    ->selectSub(function ($query) {
+        $query->from('orders')
+              ->selectRaw('SUM(total)')
+              ->whereColumn('orders.user_id', 'users.id');
+    }, 'total_spent')
+    ->get();
+
+// Where exists subquery
+User::whereExists(function ($query) {
+    $query->from('orders')
+          ->whereColumn('orders.user_id', 'users.id')
+          ->where('total', '>', 1000);
+})->get();
+
+// Order by subquery
+User::orderByDesc(function ($query) {
+    $query->from('posts')
+          ->selectRaw('COUNT(*)')
+          ->whereColumn('posts.user_id', 'users.id');
+})->get();
+```
+
+### 5.2 Union & Union All
+
+```php
+<?php
+
+$activeUsers = User::where('last_login_at', '>', now()->subMonth())
+    ->select('name', 'email', 'created_at');
+
+$newUsers = User::where('created_at', '>', now()->subWeek())
+    ->select('name', 'email', 'created_at');
+
+// Union (distinct)
+$results = $activeUsers->union($newUsers)->get();
+
+// Union all (keep duplicates)
+$results = $activeUsers->unionAll($newUsers)->get();
+```
+
+### 5.3 Conditional Queries
+
+```php
+<?php
+
+$query = Order::query();
+
+// When - conditional query building
+$query->when($request->status, function ($q, $status) {
+    return $q->where('status', $status);
+});
+
+$query->when($request->min_total, function ($q, $min) {
+    return $q->where('total', '>=', $min);
+});
+
+// Unless - kebalikan when
+$query->unless(auth()->user()->isAdmin(), function ($q) {
+    return $q->where('user_id', auth()->id());
+});
+
+// When dengan default
+$query->when(
+    $request->search,
+    function ($q, $search) {
+        return $q->where('name', 'like', "%{$search}%");
+    },
+    function ($q) {
+        return $q->where('featured', true); // Default jika tidak ada search
+    }
+);
+
+// Tap - inspect/modify tanpa mengubah return
+$query->tap(function ($q) {
+    Log::info('Query SQL: ' . $q->toSql());
+});
+```
+
+## Kesimpulan
+
+Query Builder & Collections menyediakan toolkit lengkap untuk data manipulation:
+- **Local/Global Scopes** untuk reusable query logic
+- **Advanced where clauses** (JSON, full-text, date) untuk filtering kompleks
+- **Collections** untuk transformasi data in-memory dengan fluent API
+- **Lazy Collections** untuk handling large datasets tanpa memory issues
+- **Conditional queries** untuk dynamic query building
+
+Selanjutnya di **Sesi 32**, kita akan mempelajari Advanced Eloquent Patterns termasuk Accessors & Mutators modern dan query optimization.
+```

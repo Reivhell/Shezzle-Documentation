@@ -1,0 +1,635 @@
+---
+title: "Sesi 36: Authentication Architecture"
+description: "Memahami arsitektur autentikasi Laravel secara mendalam, mengkonfigurasi multiple guards, mengimplementasikan login throttling, dan remember me functi..."
+category: "laravel"
+tags: ["laravel", "authentication"]
+order: 36
+---
+
+## Tujuan Pembelajaran
+
+Memahami arsitektur autentikasi Laravel secara mendalam, mengkonfigurasi multiple guards, mengimplementasikan login throttling, dan remember me functionality.
+
+## 1. Authentication Architecture Overview
+
+### 1.1 Core Components
+
+```
+Request → Guard → User Provider → Database
+              ↓
+        Session/Token
+```
+
+- **Guard**: Bagaimana user di-autentikasi (session, token, custom)
+- **User Provider**: Bagaimana user di-retrieve dari database (eloquent, database)
+- **Driver**: Mekanisme penyimpanan state (session, token, JWT)
+
+### 1.2 Default Configuration
+
+```php
+<?php
+
+// config/auth.php
+return [
+    'defaults' => [
+        'guard' => 'web',        // Guard default
+        'passwords' => 'users',  // Password broker default
+    ],
+
+    'guards' => [
+        'web' => [
+            'driver' => 'session',
+            'provider' => 'users',
+        ],
+
+        'api' => [
+            'driver' => 'token',   // Atau 'sanctum', 'jwt'
+            'provider' => 'users',
+            'hash' => false,
+        ],
+        
+        'admin' => [
+            'driver' => 'session',
+            'provider' => 'admins',
+        ],
+    ],
+
+    'providers' => [
+        'users' => [
+            'driver' => 'eloquent',
+            'model' => App\Models\User::class,
+        ],
+
+        'admins' => [
+            'driver' => 'eloquent',
+            'model' => App\Models\Admin::class,
+        ],
+        
+        // Database provider (tanpa Eloquent)
+        'legacy_users' => [
+            'driver' => 'database',
+            'table' => 'legacy_users',
+        ],
+    ],
+
+    'passwords' => [
+        'users' => [
+            'provider' => 'users',
+            'table' => 'password_resets',
+            'expire' => 60,
+            'throttle' => 60,
+        ],
+    ],
+];
+```
+
+## 2. Guards Deep Dive
+
+### 2.1 Session Guard
+
+```php
+<?php
+
+// Guard default untuk web routes
+Auth::guard('web')->attempt($credentials);
+Auth::guard('web')->check();
+Auth::guard('web')->user();
+
+// Atau helper global (menggunakan default guard)
+Auth::attempt($credentials);
+Auth::check();
+Auth::user();
+```
+
+### 2.2 Token Guard (Legacy)
+
+```php
+<?php
+
+// API token sederhana (tidak direkomendasikan untuk production)
+// Gunakan Sanctum atau Passport sebagai gantinya
+
+// Generate token
+$user->api_token = hash('sha256', Str::random(60));
+$user->save();
+
+// Request dengan header
+// Authorization: Bearer {token}
+
+// Di controller
+public function __construct()
+{
+    $this->middleware('auth:api');
+}
+```
+
+### 2.3 Custom Guard
+
+```php
+<?php
+
+namespace App\Guards;
+
+use Illuminate\Auth\GuardHelpers;
+use Illuminate\Contracts\Auth\Guard;
+use Illuminate\Contracts\Auth\UserProvider;
+
+class ApiKeyGuard implements Guard
+{
+    use GuardHelpers;
+
+    protected $request;
+    protected $provider;
+    protected $user;
+
+    public function __construct(UserProvider $provider, $request)
+    {
+        $this->provider = $provider;
+        $this->request = $request;
+    }
+
+    public function user()
+    {
+        if ($this->user !== null) {
+            return $this->user;
+        }
+
+        $apiKey = $this->request->header('X-API-Key');
+        
+        if (!$apiKey) {
+            return null;
+        }
+
+        $this->user = $this->provider->retrieveByCredentials([
+            'api_key' => hash('sha256', $apiKey),
+            'api_key_enabled' => true,
+        ]);
+
+        return $this->user;
+    }
+
+    public function validate(array $credentials = [])
+    {
+        $user = $this->provider->retrieveByCredentials($credentials);
+        return $user !== null;
+    }
+}
+```
+
+```php
+<?php
+
+// AuthServiceProvider
+use App\Guards\ApiKeyGuard;
+use Illuminate\Support\Facades\Auth;
+
+public function boot(): void
+{
+    Auth::extend('apikey', function ($app, $name, array $config) {
+        return new ApiKeyGuard(
+            Auth::createUserProvider($config['provider']),
+            $app['request']
+        );
+    });
+}
+```
+
+## 3. User Providers
+
+### 3.1 Eloquent Provider
+
+```php
+<?php
+
+// Model User dengan contract
+namespace App\Models;
+
+use Illuminate\Foundation\Auth\User as Authenticatable;
+use Illuminate\Contracts\Auth\MustVerifyEmail;
+use Illuminate\Contracts\Auth\CanResetPassword;
+
+class User extends Authenticatable implements MustVerifyEmail, CanResetPassword
+{
+    use HasFactory, Notifiable;
+
+    protected $fillable = ['name', 'email', 'password'];
+    protected $hidden = ['password', 'remember_token'];
+    protected $casts = [
+        'email_verified_at' => 'datetime',
+        'password' => 'hashed',
+    ];
+
+    // Implementasi MustVerifyEmail
+    public function hasVerifiedEmail()
+    {
+        return $this->email_verified_at !== null;
+    }
+
+    public function markEmailAsVerified()
+    {
+        return $this->forceFill([
+            'email_verified_at' => $this->freshTimestamp(),
+        ])->save();
+    }
+
+    public function sendEmailVerificationNotification()
+    {
+        $this->notify(new VerifyEmailNotification());
+    }
+
+    public function getEmailForVerification()
+    {
+        return $this->email;
+    }
+}
+```
+
+### 3.2 Custom User Provider
+
+```php
+<?php
+
+namespace App\Providers;
+
+use Illuminate\Contracts\Auth\Authenticatable;
+use Illuminate\Contracts\Auth\UserProvider;
+
+class ExternalApiUserProvider implements UserProvider
+{
+    protected $httpClient;
+
+    public function __construct($httpClient)
+    {
+        $this->httpClient = $httpClient;
+    }
+
+    public function retrieveById($identifier)
+    {
+        $response = $this->httpClient->get("/users/{$identifier}");
+        return $response->successful() ? new User($response->json()) : null;
+    }
+
+    public function retrieveByToken($identifier, $token)
+    {
+        // Implementasi remember token
+        return null;
+    }
+
+    public function updateRememberToken(Authenticatable $user, $token)
+    {
+        // Update token di external API
+    }
+
+    public function retrieveByCredentials(array $credentials)
+    {
+        $response = $this->httpClient->post('/auth/lookup', [
+            'email' => $credentials['email'],
+        ]);
+        
+        return $response->successful() ? new User($response->json()) : null;
+    }
+
+    public function validateCredentials(Authenticatable $user, array $credentials)
+    {
+        $response = $this->httpClient->post('/auth/validate', [
+            'email' => $credentials['email'],
+            'password' => $credentials['password'],
+        ]);
+        
+        return $response->successful();
+    }
+}
+```
+
+## 4. Authentication Drivers
+
+### 4.1 Session Driver
+
+```php
+<?php
+
+// config/session.php
+return [
+    'driver' => env('SESSION_DRIVER', 'file'),
+    'lifetime' => env('SESSION_LIFETIME', 120), // menit
+    'expire_on_close' => false,
+    'encrypt' => true,
+    'files' => storage_path('framework/sessions'),
+    'connection' => env('SESSION_CONNECTION'),
+    'table' => 'sessions',
+    'store' => env('SESSION_STORE'),
+    'lottery' => [2, 100], // Garbage collection probability
+    'cookie' => env('SESSION_COOKIE', 'laravel_session'),
+    'path' => '/',
+    'domain' => env('SESSION_DOMAIN'),
+    'secure' => env('SESSION_SECURE_COOKIE', true),
+    'http_only' => true,
+    'same_site' => 'lax',
+];
+```
+
+### 4.2 Stateful vs Stateless
+
+```php
+<?php
+
+// Stateful (Session) - untuk web
+Route::middleware('auth:web')->group(function () {
+    Route::get('/dashboard', [DashboardController::class, 'index']);
+});
+
+// Stateless (Token) - untuk API
+Route::middleware('auth:sanctum')->group(function () {
+    Route::get('/api/user', fn () => auth()->user());
+});
+```
+
+## 5. Login Throttling & Rate Limiting
+
+### 5.1 Built-in Throttling
+
+```php
+<?php
+
+// Fortify/Breeze otomatis menggunakan throttling
+
+// Manual implementation
+use Illuminate\Support\Facades\RateLimiter;
+
+public function login(Request $request)
+{
+    $key = 'login.' . $request->ip();
+    
+    if (RateLimiter::tooManyAttempts($key, 5)) {
+        $seconds = RateLimiter::availableIn($key);
+        throw new HttpResponseException(
+            response()->json([
+                'message' => "Too many attempts. Try again in {$seconds} seconds."
+            ], 429)
+        );
+    }
+
+    if (!Auth::attempt($request->only('email', 'password'))) {
+        RateLimiter::hit($key);
+        throw ValidationException::withMessages([
+            'email' => ['Invalid credentials.'],
+        ]);
+    }
+
+    RateLimiter::clear($key);
+    return response()->json(['token' => $request->user()->createToken('auth')->plainTextToken]);
+}
+```
+
+### 5.2 Advanced Rate Limiting
+
+```php
+<?php
+
+// RouteServiceProvider
+use Illuminate\Cache\RateLimiting\Limit;
+
+public function boot(): void
+{
+    RateLimiter::for('login', function (Request $request) {
+        return [
+            // Per IP
+            Limit::perMinute(5)->by($request->ip()),
+            // Per user (jika sudah tahu email)
+            Limit::perMinute(3)->by($request->input('email', $request->ip())),
+        ];
+    });
+
+    // Dynamic rate limiting
+    RateLimiter::for('api', function (Request $request) {
+        $user = $request->user();
+        
+        // Premium user: 1000 req/min
+        if ($user && $user->isPremium()) {
+            return Limit::perMinute(1000)->by($user->id);
+        }
+        
+        // Regular user: 100 req/min
+        if ($user) {
+            return Limit::perMinute(100)->by($user->id);
+        }
+        
+        // Guest: 30 req/min per IP
+        return Limit::perMinute(30)->by($request->ip());
+    });
+}
+```
+
+## 6. Remember Me Functionality
+
+### 6.1 Implementation
+
+```php
+<?php
+
+// Migration untuk remember token
+Schema::table('users', function (Blueprint $table) {
+    $table->rememberToken(); // varchar(100) nullable
+});
+
+// Login dengan remember
+if (Auth::attempt($credentials, $remember)) {
+    // Cookie remember dibuat jika $remember = true
+}
+
+// Check remember
+if (Auth::viaRemember()) {
+    Log::info('User authenticated via remember token');
+}
+
+// Forget remember pada logout
+Auth::logout(); // Otomatis hapus remember token
+
+// Forget all sessions di device lain
+Auth::logoutOtherDevices($password);
+```
+
+### 6.2 Remember Token Security
+
+```php
+<?php
+
+// Custom remember token length
+class User extends Authenticatable
+{
+    public function getRememberToken()
+    {
+        return $this->remember_token;
+    }
+
+    public function setRememberToken($value)
+    {
+        $this->remember_token = hash('sha256', $value); // Hash token di database
+    }
+
+    public function getRememberTokenName()
+    {
+        return 'remember_token';
+    }
+}
+
+// Validasi remember token dengan hash
+public function retrieveByToken($identifier, $token)
+{
+    $user = $this->retrieveById($identifier);
+    
+    if (!$user) return null;
+    
+    $rememberToken = $user->getRememberToken();
+    
+    // Timing-safe comparison
+    return hash_equals($rememberToken, hash('sha256', $token)) ? $user : null;
+}
+```
+
+## 7. Multi-Guard Authentication
+
+### 7.1 Multiple User Types
+
+```php
+<?php
+
+// config/auth.php
+'guards' => [
+    'web' => ['driver' => 'session', 'provider' => 'users'],
+    'admin' => ['driver' => 'session', 'provider' => 'admins'],
+    'api' => ['driver' => 'sanctum', 'provider' => 'users'],
+],
+
+'providers' => [
+    'users' => ['driver' => 'eloquent', 'model' => App\Models\User::class],
+    'admins' => ['driver' => 'eloquent', 'model' => App\Models\Admin::class],
+],
+
+// Middleware untuk multi-guard
+Route::middleware('auth:web,admin')->group(function () {
+    // Bisa diakses user atau admin
+});
+
+Route::middleware('auth:admin')->group(function () {
+    // Hanya admin
+});
+```
+
+### 7.2 Switching Guards
+
+```php
+<?php
+
+// Login sebagai different guard
+if (Auth::guard('admin')->attempt($credentials)) {
+    return redirect()->intended('/admin/dashboard');
+}
+
+// Check specific guard
+if (Auth::guard('admin')->check()) {
+    // Admin logged in
+}
+
+// Get user dari specific guard
+$admin = Auth::guard('admin')->user();
+
+// Logout dari specific guard
+Auth::guard('admin')->logout();
+```
+
+## 8. Security Hardening
+
+### 8.1 Password Security
+
+```php
+<?php
+
+// Validation
+$request->validate([
+    'password' => [
+        'required',
+        'string',
+        'min:12',                    // Minimum 12 karakter
+        'max:128',                   // Maximum untuk prevent DoS
+        Password::min(12)
+            ->mixedCase()            // Huruf besar & kecil
+            ->numbers()              // Angka
+            ->symbols()              // Symbol
+            ->uncompromised(),       // Check Have I Been Pwned
+    ],
+]);
+
+// Hashing configuration
+// config/hashing.php
+'bcrypt' => [
+    'rounds' => 12,  // Cost factor (higher = slower & more secure)
+],
+```
+
+### 8.2 Session Security
+
+```php
+<?php
+
+// Regenerate session ID setelah login
+Auth::login($user);
+session()->regenerate(); // Prevent session fixation
+
+// Invalidate session pada password change
+$user->update(['password' => Hash::make($newPassword)]);
+Auth::logoutOtherDevices($newPassword);
+
+// Strict session binding
+session(['ip_address' => $request->ip()]);
+session(['user_agent' => $request->userAgent()]);
+
+// Validate pada setiap request
+if (session('ip_address') !== $request->ip()) {
+    Auth::logout();
+    abort(403, 'Session invalid');
+}
+```
+
+### 8.3 Concurrent Session Limiting
+
+```php
+<?php
+
+// Database session store dengan custom logic
+class SessionLimitMiddleware
+{
+    public function handle($request, $next)
+    {
+        if (Auth::check()) {
+            $activeSessions = DB::table('sessions')
+                ->where('user_id', Auth::id())
+                ->where('last_activity', '>', now()->subMinutes(30)->timestamp)
+                ->count();
+
+            if ($activeSessions > 3) {
+                // Invalidate oldest session
+                DB::table('sessions')
+                    ->where('user_id', Auth::id())
+                    ->orderBy('last_activity')
+                    ->limit(1)
+                    ->delete();
+            }
+        }
+
+        return $next($request);
+    }
+}
+```
+
+## Kesimpulan
+
+Authentication Architecture Laravel menyediakan fleksibilitas maksimal:
+- **Guards** untuk multiple authentication mechanisms (session, token, custom)
+- **User Providers** untuk berbagai data sources (Eloquent, Database, External API)
+- **Rate Limiting** untuk prevent brute force attacks
+- **Remember Me** dengan secure token handling
+- **Session Security** dengan regeneration dan invalidation strategies
+
+Selanjutnya di **Sesi 37**, kita akan mempelajari Laravel Breeze sebagai starter kit untuk authentication yang rapid development.
+```

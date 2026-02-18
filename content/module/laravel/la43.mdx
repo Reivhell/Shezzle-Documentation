@@ -1,0 +1,628 @@
+---
+title: "Sesi 43: Advanced Authorization Patterns"
+description: "Mengimplementasikan pola-pola authorization lanjutan termasuk dynamic permissions, ownership-based access, dan handling guest users untuk sistem yang ..."
+category: "laravel"
+tags: ["laravel", "authentication"]
+order: 43
+---
+
+## Tujuan Pembelajaran
+
+Mengimplementasikan pola-pola authorization lanjutan termasuk dynamic permissions, ownership-based access, dan handling guest users untuk sistem yang kompleks.
+
+## 1. Advanced RBAC Implementation
+
+### 1.1 Hierarchical Roles
+
+```php
+<?php
+
+// app/Models/Role.php
+namespace App\Models;
+
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+
+class Role extends Model
+{
+    protected $fillable = ['name', 'label', 'level', 'parent_id'];
+
+    public function permissions(): BelongsToMany
+    {
+        return $this->belongsToMany(Permission::class);
+    }
+
+    public function users(): BelongsToMany
+    {
+        return $this->belongsToMany(User::class);
+    }
+
+    public function parent()
+    {
+        return $this->belongsTo(Role::class, 'parent_id');
+    }
+
+    public function children()
+    {
+        return $this->hasMany(Role::class, 'parent_id');
+    }
+
+    /**
+     * Get all permissions including inherited from parent
+     */
+    public function allPermissions()
+    {
+        $permissions = $this->permissions;
+
+        if ($this->parent) {
+            $permissions = $permissions->merge($this->parent->allPermissions());
+        }
+
+        return $permissions->unique('id');
+    }
+}
+```
+
+```php
+<?php
+
+// app/Models/User.php
+public function hasRole($roles, bool $includeInherited = true): bool
+{
+    $userRoles = $includeInherited 
+        ? $this->allRoles() 
+        : $this->roles;
+
+    if (is_string($roles)) {
+        return $userRoles->contains('name', $roles);
+    }
+
+    return $userRoles->whereIn('name', $roles)->isNotEmpty();
+}
+
+public function allRoles()
+{
+    $roles = collect();
+
+    foreach ($this->roles as $role) {
+        $roles->push($role);
+        
+        // Add parent roles
+        $parent = $role->parent;
+        while ($parent) {
+            $roles->push($parent);
+            $parent = $parent->parent;
+        }
+    }
+
+    return $roles->unique('id');
+}
+```
+
+### 1.2 Contextual Permissions
+
+```php
+<?php
+
+// Permission yang berbeda berdasarkan context
+class ProjectPolicy
+{
+    public function view(User $user, Project $project): bool
+    {
+        // Check permission dalam context project
+        return $user->hasProjectPermission($project, 'view');
+    }
+
+    public function manageMembers(User $user, Project $project): bool
+    {
+        return $user->hasProjectPermission($project, 'members.manage');
+    }
+}
+```
+
+```php
+<?php
+
+// app/Models/User.php
+public function hasProjectPermission(Project $project, string $permission): bool
+{
+    // Cek role dalam project
+    $member = $project->members()->where('user_id', $this->id)->first();
+    
+    if (!$member) {
+        return false;
+    }
+
+    // Owner selalu bisa
+    if ($member->role === 'owner') {
+        return true;
+    }
+
+    // Load permissions untuk role ini dalam context project
+    $permissions = [
+        'admin' => ['*'],
+        'manager' => ['view', 'edit', 'members.view'],
+        'developer' => ['view', 'edit'],
+        'viewer' => ['view'],
+    ];
+
+    $rolePerms = $permissions[$member->role] ?? [];
+
+    return in_array('*', $rolePerms) || in_array($permission, $rolePerms);
+}
+```
+
+## 2. Dynamic Permissions
+
+### 2.1 Permission dengan Conditions
+
+```php
+<?php
+
+// app/Providers/AuthServiceProvider.php
+Gate::define('edit-post', function (User $user, Post $post) {
+    // Basic ownership
+    if ($user->id === $post->user_id) {
+        return true;
+    }
+
+    // Time-based permission (edit dalam 30 menit)
+    if ($post->created_at->diffInMinutes(now()) <= 30) {
+        return $user->id === $post->user_id;
+    }
+
+    // Conditional permission berdasarkan post status
+    if ($post->status === 'draft' && $user->can('edit-drafts')) {
+        return true;
+    }
+
+    return false;
+});
+```
+
+### 2.2 Attribute-Based Access Control (ABAC)
+
+```php
+<?php
+
+// Policy dengan attribute-based rules
+class DocumentPolicy
+{
+    public function view(User $user, Document $document): bool
+    {
+        // ABAC: Access berdasarkan multiple attributes
+        $rules = [
+            // User department harus match document department
+            'department' => $user->department_id === $document->department_id,
+            
+            // User clearance level harus cukup
+            'clearance' => $user->clearance_level >= $document->classification_level,
+            
+            // Document tidak expired
+            'validity' => $document->expires_at === null || $document->expires_at->isFuture(),
+            
+            // User tidak sedang suspended
+            'status' => !$user->is_suspended,
+        ];
+
+        // Semua rules harus pass
+        return !in_array(false, $rules, true);
+    }
+
+    public function download(User $user, Document $document): bool
+    {
+        // Additional rules untuk download
+        return $this->view($user, $document) 
+            && $user->hasSignedNDA()
+            && $document->downloads_count < $document->download_limit;
+    }
+}
+```
+
+## 3. Ownership Authorization
+
+### 3.1 Ownership Trait
+
+```php
+<?php
+
+// app/Traits/Ownable.php
+namespace App\Traits;
+
+use App\Models\User;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
+
+trait Ownable
+{
+    public function owner(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'user_id');
+    }
+
+    public function isOwnedBy(User $user): bool
+    {
+        return $this->user_id === $user->id;
+    }
+
+    public function transferOwnership(User $newOwner): void
+    {
+        $this->update(['user_id' => $newOwner->id]);
+        
+        // Log ownership change
+        OwnershipLog::create([
+            'model_type' => static::class,
+            'model_id' => $this->id,
+            'from_user_id' => $this->getOriginal('user_id'),
+            'to_user_id' => $newOwner->id,
+        ]);
+    }
+}
+```
+
+```php
+<?php
+
+// app/Models/Post.php
+class Post extends Model
+{
+    use Ownable;
+
+    // ...
+}
+```
+
+### 3.2 Ownership dengan Hierarchy
+
+```php
+<?php
+
+// Organization ownership
+class OrganizationPolicy
+{
+    public function update(User $user, Organization $organization): bool
+    {
+        // Direct owner
+        if ($organization->isOwnedBy($user)) {
+            return true;
+        }
+
+        // Admin dalam organization
+        if ($organization->hasAdmin($user)) {
+            return true;
+        }
+
+        // Parent organization owner
+        if ($organization->parent && $organization->parent->isOwnedBy($user)) {
+            return true;
+        }
+
+        return false;
+    }
+}
+```
+
+## 4. Guest User Authorization
+
+### 4.1 Nullable User Policies
+
+```php
+<?php
+
+// Policy yang handle guest users
+class ArticlePolicy
+{
+    public function view(?User $user, Article $article): bool
+    {
+        // Guest bisa lihat published articles
+        if ($user === null) {
+            return $article->is_published && !$article->is_premium;
+        }
+
+        // User bisa lihat published atau own articles
+        return $article->is_published 
+            || $article->user_id === $user->id 
+            || $user->hasRole('editor');
+    }
+
+    public function create(?User $user): bool
+    {
+        // Guest tidak bisa create
+        return $user !== null && $user->hasVerifiedEmail();
+    }
+}
+```
+
+### 4.2 Guest-specific Gates
+
+```php
+<?php
+
+// app/Providers/AuthServiceProvider.php
+Gate::define('view-pricing', function (?User $user) {
+    // Semua bisa lihat pricing, tapi dengan detail berbeda
+    return true;
+});
+
+Gate::define('view-detailed-pricing', function (?User $user) {
+    // Hanya registered users atau users dengan specific criteria
+    if ($user === null) {
+        return false;
+    }
+
+    return $user->hasRole('customer') || $user->isSalesTeam();
+});
+```
+
+### 4.3 Guest User Object
+
+```php
+<?php
+
+// app/GuestUser.php
+namespace App;
+
+class GuestUser
+{
+    public $id = null;
+    public $role = 'guest';
+    public $permissions = ['view-public-content'];
+
+    public function can($ability): bool
+    {
+        return in_array($ability, $this->permissions);
+    }
+
+    public function cannot($ability): bool
+    {
+        return !$this->can($ability);
+    }
+}
+```
+
+```php
+<?php
+
+// Helper untuk mendapatkan current user atau guest
+function currentUser(): User|GuestUser
+{
+    return auth()->user() ?? new GuestUser();
+}
+
+// Penggunaan dalam controller
+public function show(Article $article)
+{
+    $user = currentUser();
+    
+    if (!$user->can('view', $article)) {
+        abort(403);
+    }
+
+    return view('articles.show', compact('article'));
+}
+```
+
+## 5. Permission Caching
+
+### 5.1 Caching User Permissions
+
+```php
+<?php
+
+// app/Models/User.php
+public function permissions()
+{
+    return $this->belongsToMany(Permission::class);
+}
+
+public function cachedPermissions()
+{
+    return Cache::remember("user:{$this->id}:permissions", 3600, function () {
+        return $this->permissions->pluck('name')->toArray();
+    });
+}
+
+public function hasPermission(string $permission): bool
+{
+    return in_array($permission, $this->cachedPermissions());
+}
+
+public function clearPermissionCache(): void
+{
+    Cache::forget("user:{$this->id}:permissions");
+    Cache::forget("user:{$this->id}:roles");
+}
+```
+
+```php
+<?php
+
+// Clear cache saat permissions berubah
+// app/Observers/RoleObserver.php
+class RoleObserver
+{
+    public function updated(Role $role): void
+    {
+        $role->users->each->clearPermissionCache();
+    }
+
+    public function attached(Role $role, $user): void
+    {
+        $user->clearPermissionCache();
+    }
+}
+```
+
+## 6. Middleware Authorization
+
+### 6.1 Custom Middleware
+
+```php
+<?php
+
+// app/Http/Middleware/CheckPermission.php
+namespace App\Http\Middleware;
+
+use Closure;
+use Illuminate\Http\Request;
+
+class CheckPermission
+{
+    public function handle(Request $request, Closure $next, string $permission)
+    {
+        if (!$request->user()?->hasPermission($permission)) {
+            abort(403, 'Unauthorized action.');
+        }
+
+        return $next($request);
+    }
+}
+```
+
+```php
+<?php
+
+// Kernel.php
+protected $routeMiddleware = [
+    // ...
+    'permission' => \App\Http\Middleware\CheckPermission::class,
+];
+
+// Routes
+Route::middleware(['permission:manage-users'])->group(function () {
+    Route::get('/admin/users', [UserController::class, 'index']);
+    Route::post('/admin/users', [UserController::class, 'store']);
+});
+```
+
+### 6.2 Role Middleware
+
+```php
+<?php
+
+// app/Http/Middleware/CheckRole.php
+class CheckRole
+{
+    public function handle(Request $request, Closure $next, ...$roles)
+    {
+        if (!$request->user() || !$request->user()->hasAnyRole($roles)) {
+            abort(403);
+        }
+
+        return $next($request);
+    }
+}
+
+// Usage
+Route::middleware(['role:admin,super-admin'])->group(function () {
+    Route::get('/admin/settings', [SettingController::class, 'index']);
+});
+```
+
+## 7. Testing Advanced Authorization
+
+```php
+<?php
+
+// tests/Feature/AuthorizationTest.php
+class AuthorizationTest extends TestCase
+{
+    use RefreshDatabase;
+
+    public function test_user_can_access_based_on_dynamic_permissions()
+    {
+        $user = User::factory()->create();
+        $user->roles()->create(['name' => 'manager']);
+        
+        // Permission yang bergantung pada context
+        $project = Project::factory()->create();
+        $project->members()->attach($user, ['role' => 'admin']);
+
+        $response = $this->actingAs($user)
+            ->postJson("/projects/{$project->id}/members", [
+                'user_id' => User::factory()->create()->id,
+                'role' => 'developer',
+            ]);
+
+        $response->assertCreated();
+    }
+
+    public function test_guest_access_control()
+    {
+        $publicArticle = Article::factory()->create(['is_published' => true]);
+        $privateArticle = Article::factory()->create(['is_published' => false]);
+
+        // Guest bisa lihat public
+        $response = $this->getJson("/articles/{$publicArticle->id}");
+        $response->assertOk();
+
+        // Guest tidak bisa lihat private
+        $response = $this->getJson("/articles/{$privateArticle->id}");
+        $response->assertForbidden();
+    }
+
+    public function test_ownership_hierarchy()
+    {
+        $owner = User::factory()->create();
+        $admin = User::factory()->create();
+        
+        $organization = Organization::factory()->create(['user_id' => $owner->id]);
+        $organization->admins()->attach($admin);
+
+        // Owner bisa delete
+        $response = $this->actingAs($owner)
+            ->deleteJson("/organizations/{$organization->id}");
+        $response->assertNoContent();
+
+        // Re-create untuk test admin
+        $organization = Organization::factory()->create(['user_id' => $owner->id]);
+        $organization->admins()->attach($admin);
+
+        // Admin tidak bisa delete, tapi bisa update
+        $response = $this->actingAs($admin)
+            ->deleteJson("/organizations/{$organization->id}");
+        $response->assertForbidden();
+
+        $response = $this->actingAs($admin)
+            ->putJson("/organizations/{$organization->id}", ['name' => 'Updated']);
+        $response->assertOk();
+    }
+
+    public function test_permission_caching()
+    {
+        $user = User::factory()->create();
+        $role = Role::factory()->create(['name' => 'editor']);
+        $user->roles()->attach($role);
+
+        // First call - cache miss
+        $this->assertTrue($user->hasPermission('edit-posts'));
+
+        // Modify permission directly in DB
+        DB::table('role_permission')->insert([
+            'role_id' => $role->id,
+            'permission_id' => Permission::factory()->create(['name' => 'delete-posts'])->id,
+        ]);
+
+        // Still false karena cache
+        $this->assertFalse($user->hasPermission('delete-posts'));
+
+        // Clear cache
+        $user->clearPermissionCache();
+
+        // Now true
+        $this->assertTrue($user->hasPermission('delete-posts'));
+    }
+}
+```
+
+## Kesimpulan
+
+Advanced authorization patterns menyediakan fleksibilitas untuk sistem kompleks:
+- **Hierarchical RBAC** dengan inheritance
+- **Contextual permissions** untuk resource-specific access
+- **ABAC** dengan multiple attribute evaluation
+- **Ownership patterns** dengan transfer dan logging
+- **Guest handling** untuk public content
+- **Permission caching** untuk performance
+
+Selanjutnya di **Sesi 44**, kita akan mempelajari Security Hardening untuk aplikasi Laravel.
+```
