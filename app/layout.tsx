@@ -3,11 +3,11 @@ import { ThemeProvider } from '@/components/ThemeProvider';
 import './globals.css';
 
 export const metadata: Metadata = {
-    title: 'DevPortal - Personal Tech Encyclopedia',
+    title: 'Shezzle Docs - Design For Knowledge',
     description:
-        'The next generation developer portal. Minimalist design, maximal utility.',
+        'The next generation developer library. Minimalist design, maximal utility.',
     icons: {
-        icon: '/favicon.ico',
+        icon: '#',
     },
 };
 

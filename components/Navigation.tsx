@@ -67,7 +67,7 @@ export default function Navigation() {
                             <span className="material-symbols-outlined text-[20px]">terminal</span>
                         </div>
                         <span className="font-bold text-lg tracking-tight text-slate-900 dark:text-white">
-                            DevPortal
+                            Shezzle Docs
                         </span>
                     </Link>
                     <div className="hidden md:flex items-center gap-1">

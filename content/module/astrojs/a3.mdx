@@ -1,6 +1,6 @@
 ---
 title: "Sesi 3: Sintaks Dasar Astro Components"
-description: "Astro components adalah file dengan ekstensi `.astro`. Mereka dirancang sebagai **superset dari HTML**, artinya setiap file HTML valid adalah juga fil..."
+description: "Astro components adalah file dengan ekstensi .astro. Mereka dirancang sebagai superset dari HTML"
 category: "astrojs"
 tags: ["astrojs", "components"]
 order: 3
@@ -14,8 +14,7 @@ Astro components adalah file dengan ekstensi `.astro`. Mereka dirancang sebagai 
 
 ### Struktur Dasar File `.astro`:
 
-```astro
----
+<CodeBlock filename="example.astro" language="astro" code={`---
 // Bagian 1: Frontmatter (JavaScript/TypeScript - Server-side)
 // Kode di sini berjalan di server, tidak dikirim ke browser
 const title = "Halo Dunia";
@@ -38,15 +37,14 @@ const items = ["Apel", "Jeruk", "Mangga"];
 <!-- Bagian 4: Scripts (Client-side, hanya jika diperlukan) -->
 <script>
   console.log("Halo dari browser!");
-</script>
-```
+</script>`} />
 
-### Analogi Sederhana:
-
-> Bayangkan file `.astro` seperti **sandwich tiga lapis**:
-> - **Lapis atas (Frontmatter)**: Dapur tempat kamu menyiapkan bahan (data, logic, import)
-> - **Lapis tengah (Template)**: Meja saji tempat bahan disusun jadi hidangan (HTML)
-> - **Lapis bawah (Style/Script)**: Bumbu dan peralatan tambahan yang membuat hidangan lebih menarik
+<InfoBox title="💡 Analogi Sederhana" variant="tip" icon="lightbulb">
+Bayangkan file `.astro` seperti **sandwich tiga lapis**:
+- **Lapis atas (Frontmatter)**: Dapur tempat kamu menyiapkan bahan (data, logic, import)
+- **Lapis tengah (Template)**: Meja saji tempat bahan disusun jadi hidangan (HTML)
+- **Lapis bawah (Style/Script)**: Bumbu dan peralatan tambahan yang membuat hidangan lebih menarik
+</InfoBox>
 
 ---
 
@@ -66,8 +64,7 @@ Template expressions memungkinkan kamu menyisipkan JavaScript dinamis ke dalam H
 
 ### Contoh Lengkap Expressions:
 
-```astro
----
+<CodeBlock filename="expressions.astro" language="astro" code={`---
 const nama = "Budi";
 const umur = 25;
 const hobi = ["Coding", "Membaca", "Gaming"];
@@ -111,15 +108,13 @@ const user = {
 )}
 
 <!-- 6. Optional Chaining dan Nullish Coalescing -->
-<p>Login terakhir: {user?.lastLogin?.toLocaleDateString('id-ID') ?? 'Tidak diketahui'}</p>
-```
+<p>Login terakhir: {user?.lastLogin?.toLocaleDateString('id-ID') ?? 'Tidak diketahui'}</p>`} />
 
 ### Spread Props:
 
 Kamu bisa menyebarkan (spread) object sebagai atribut HTML:
 
-```astro
----
+<CodeBlock filename="spread.astro" language="astro" code={`---
 const linkProps = {
   href: "https://example.com",
   target: "_blank",
@@ -129,13 +124,11 @@ const linkProps = {
 ---
 
 <!-- Menjadi: <a href="..." target="_blank" rel="..." class="..."> -->
-<a {...linkProps}>Kunjungi Website</a>
-```
+<a {...linkProps}>Kunjungi Website</a>`} />
 
 ### Dynamic Tags (Tag HTML Dinamis):
 
-```astro
----
+<CodeBlock filename="dynamic-tags.astro" language="astro" code={`---
 const Element = 'h1'; // Bisa 'h1', 'h2', 'p', dll
 const size = 'large'; // Bisa 'small', 'medium', 'large'
 ---
@@ -147,8 +140,7 @@ const size = 'large'; // Bisa 'small', 'medium', 'large'
 <p class:list={['btn', { 'btn-large': size === 'large', 'btn-small': size === 'small' }]}>
   Tombol
 </p>
-<!-- Output: <p class="btn btn-large">Tombol</p> -->
-```
+<!-- Output: <p class="btn btn-large">Tombol</p> -->`} />
 
 ---
 
@@ -158,10 +150,10 @@ Props adalah cara komponen Astro menerima data dari komponen lain. Ini seperti p
 
 ### Mendefinisikan Props dengan TypeScript:
 
-```astro
----
+<CodeBlock filename="Card.astro" language="astro" code={`---
 // src/components/Card.astro
 interface Props {
+  title: string;                    // Wajib (required)
   description?: string;             // Opsional (optional)
   image?: string;
   tags?: string[];                  // Array dengan default
@@ -222,13 +214,11 @@ const formattedDate = publishDate.toLocaleDateString('id-ID', {
     padding: 0.25rem 0.75rem;
     border-radius: 0 0 8px 0;
   }
-</style>
-```
+</style>`} />
 
 ### Menggunakan Component dengan Props:
 
-```astro
----
+<CodeBlock filename="index.astro" language="astro" code={`---
 // src/pages/index.astro
 import Card from '../components/Card.astro';
 ---
@@ -251,13 +241,11 @@ import Card from '../components/Card.astro';
   title="Tips Performa"
   description="Optimalkan website Astro kamu"
   tags={["performance", "tips"]}
-/>
-```
+/>`} />
 
 ### Props dengan Rest Parameters:
 
-```astro
----
+<CodeBlock filename="Button.astro" language="astro" code={`---
 // src/components/Button.astro
 interface Props {
   variant?: 'primary' | 'secondary' | 'danger';
@@ -270,16 +258,13 @@ const { variant = 'primary', size = 'md', ...attrs } = Astro.props;
 ---
 
 <button 
-  class:list={['btn', `btn-${variant}`, `btn-${size}`]}
+  class:list={['btn', \`btn-\${variant}\`, \`btn-\${size}\`]}
   {...attrs}  <!-- Spread semua atribut tambahan -->
 >
   <slot />
-</button>
-```
+</button>`} />
 
-**Penggunaan:**
-```astro
-<Button 
+<CodeBlock filename="Usage" language="astro" code={`<Button 
   variant="danger" 
   size="lg" 
   onclick="handleClick()" 
@@ -288,8 +273,7 @@ const { variant = 'primary', size = 'md', ...attrs } = Astro.props;
 >
   Hapus Data
 </Button>
-<!-- Output: <button class="btn btn-danger btn-lg" onclick="..." disabled="false" data-tracking-id="...">Hapus Data</button> -->
-```
+<!-- Output: <button class="btn btn-danger btn-lg" onclick="..." disabled="false" data-tracking-id="...">Hapus Data</button> -->`} />
 
 ---
 
@@ -299,8 +283,7 @@ Slots adalah cara meneruskan **konten HTML** ke komponen child. Ini seperti temp
 
 ### Slot Default (Tunggal):
 
-```astro
----
+<CodeBlock filename="Wrapper.astro" language="astro" code={`---
 // src/components/Wrapper.astro
 ---
 
@@ -316,12 +299,9 @@ Slots adalah cara meneruskan **konten HTML** ke komponen child. Ini seperti temp
   <footer>
     <p>© 2026</p>
   </footer>
-</div>
-```
+</div>`} />
 
-**Penggunaan:**
-```astro
----
+<CodeBlock filename="Usage" language="astro" code={`---
 import Wrapper from '../components/Wrapper.astro';
 ---
 
@@ -330,17 +310,16 @@ import Wrapper from '../components/Wrapper.astro';
   <p>Ini konten custom dari parent.</p>
   <button>Klik Saya</button>
   <img src="/foto.jpg" alt="Foto" />
-</Wrapper>
-```
+</Wrapper>`} />
 
 ### Named Slots (Slot Bernama):
 
 Kamu bisa memiliki multiple slots dengan nama berbeda.
 
-```astro
----
+<CodeBlock filename="Layout.astro" language="astro" code={`---
 // src/components/Layout.astro
 interface Props {
+  title: string;
 }
 const { title } = Astro.props;
 ---
@@ -369,12 +348,9 @@ const { title } = Astro.props;
       <slot name="footer" />  <!-- Slot untuk footer -->
     </footer>
   </body>
-</html>
-```
+</html>`} />
 
-**Penggunaan Named Slots:**
-```astro
----
+<CodeBlock filename="Usage" language="astro" code={`---
 import Layout from '../components/Layout.astro';
 ---
 
@@ -403,17 +379,16 @@ import Layout from '../components/Layout.astro';
   
   <!-- slot="footer" -->
   <p slot="footer">Custom footer text</p>
-</Layout>
-```
+</Layout>`} />
 
 ### Slot Fallback (Default Content):
 
 Jika slot tidak diisi, kamu bisa menyediakan konten default.
 
-```astro
----
+<CodeBlock filename="CardWithFallback.astro" language="astro" code={`---
 // src/components/Card.astro
 interface Props {
+  title: string;
 }
 const { title } = Astro.props;
 ---
@@ -434,15 +409,13 @@ const { title } = Astro.props;
       <button>Baca Selengkapnya</button>
     </slot>
   </div>
-</div>
-```
+</div>`} />
 
 ### Mengakses Slot dari Script:
 
 Kamu bisa memeriksa apakah slot diisi atau tidak:
 
-```astro
----
+<CodeBlock filename="Tabs.astro" language="astro" code={`---
 // src/components/Tabs.astro
 const hasIcon = Astro.slots.has('icon');
 const iconContent = await Astro.slots.render('icon');
@@ -457,8 +430,7 @@ const iconContent = await Astro.slots.render('icon');
   <div class="tab-content">
     <slot />
   </div>
-</div>
-```
+</div>`} />
 
 ---
 
@@ -468,9 +440,10 @@ const iconContent = await Astro.slots.render('icon');
 
 ### Masalah yang Dipecahkan Fragment:
 
-```astro
----
-// ❌ Tanpa Fragment - menambah div yang tidak perlu
+<InfoBox title="❌ Tanpa Fragment" variant="warning" icon="error">
+Menambah div yang tidak perlu
+
+<CodeBlock filename="bad-example.astro" language="astro" code={`---
 const items = ['A', 'B', 'C'];
 ---
 
@@ -480,14 +453,13 @@ const items = ['A', 'B', 'C'];
     <span>{item}</span>
     <button>Hapus</button>
   </div>
-))}
-```
+))}`} />
+</InfoBox>
 
-### Solusi dengan Fragment:
+<InfoBox title="✅ Dengan Fragment" variant="tip" icon="check_circle">
+Tidak menambah elemen wrapper
 
-```astro
----
-// ✅ Dengan Fragment - tidak menambah elemen wrapper
+<CodeBlock filename="good-example.astro" language="astro" code={`---
 const items = ['A', 'B', 'C'];
 ---
 
@@ -497,13 +469,12 @@ const items = ['A', 'B', 'C'];
     <span>{item}</span>
     <button>Hapus</button>
   </Fragment>
-))}
-```
+))}`} />
+</InfoBox>
 
 ### Fragment dengan Slot:
 
-```astro
----
+<CodeBlock filename="fragment-slot.astro" language="astro" code={`---
 // Mengisi named slot tanpa wrapper tambahan
 ---
 
@@ -514,15 +485,13 @@ const items = ['A', 'B', 'C'];
   </Fragment>
   
   <h1>Konten Utama</h1>
-</Layout>
-```
+</Layout>`} />
 
 ### Shorthand: `<></>`
 
 Astro juga mendukung sintaks Fragment shorthand seperti React:
 
-```astro
----
+<CodeBlock filename="fragment-shorthand.astro" language="astro" code={`---
 const list = [1, 2, 3];
 ---
 
@@ -534,8 +503,7 @@ const list = [1, 2, 3];
       <span>, </span>
     </>
   ))}
-</>
-```
+</>`} />
 
 ---
 
@@ -545,8 +513,7 @@ Astro memiliki perilaku khusus untuk elemen `<head>` dan `<body>` yang perlu dip
 
 ### Elemen `<head>`:
 
-```astro
----
+<CodeBlock filename="head-example.astro" language="astro" code={`---
 // src/pages/index.astro
 import Seo from '../components/Seo.astro';
 ---
@@ -584,15 +551,13 @@ import Seo from '../components/Seo.astro';
   <body>
     <h1>Konten</h1>
   </body>
-</html>
-```
+</html>`} />
 
 ### De-duplikasi Otomatis:
 
 Astro secara cerdas menangani duplikasi di `<head>`. Jika ada tag yang sama (misalnya title), yang terakhir akan menang:
 
-```astro
----
+<CodeBlock filename="BaseLayout.astro" language="astro" code={`---
 // src/layouts/BaseLayout.astro
 ---
 
@@ -604,11 +569,9 @@ Astro secara cerdas menangani duplikasi di `<head>`. Jika ada tag yang sama (mis
   <body>
     <slot />
   </body>
-</html>
-```
+</html>`} />
 
-```astro
----
+<CodeBlock filename="blog.astro" language="astro" code={`---
 // src/pages/blog.astro
 import BaseLayout from '../layouts/BaseLayout.astro';
 ---
@@ -616,8 +579,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 <BaseLayout>
   <title slot="head">Judul Artikel Spesifik</title>  <!-- Ini yang akan muncul -->
   <h1>Artikel</h1>
-</BaseLayout>
-```
+</BaseLayout>`} />
 
 ---
 
@@ -627,8 +589,7 @@ Frontmatter adalah bagian paling atas file Astro yang diawali dan diakhiri tiga 
 
 ### Apa yang Bisa Dilakukan di Frontmatter:
 
-```astro
----
+<CodeBlock filename="frontmatter.astro" language="astro" code={`---
 // 1. Import Statements
 import Layout from '../layouts/Layout.astro';
 import Card from '../components/Card.astro';
@@ -663,6 +624,7 @@ const paginatedPosts = blogPosts.slice(
 // 7. Type Definitions (TypeScript)
 interface Post {
   id: string;
+  title: string;
   date: Date;
 }
 
@@ -689,19 +651,18 @@ function formatDate(date: Date): string {
       <Card
         title={post.data.title}
         date={formatDate(post.data.pubDate)}
-        href={`/blog/${post.slug}`}
+        href={\`/blog/\${post.slug}\`}
       />
     ))}
   </div>
-</Layout>
-```
+</Layout>`} />
 
 ### Scope Frontmatter:
 
-**Penting:** Variabel di frontmatter hanya tersedia dalam file tersebut. Tidak otomatis tersedia di layout atau komponen child.
+<InfoBox title="⚠️ Penting" variant="warning" icon="warning">
+Variabel di frontmatter hanya tersedia dalam file tersebut. Tidak otomatis tersedia di layout atau komponen child.
 
-```astro
----
+<CodeBlock filename="scope.astro" language="astro" code={`---
 // src/pages/index.astro
 const pageTitle = "Homepage";  // Hanya tersedia di file ini
 ---
@@ -709,8 +670,8 @@ const pageTitle = "Homepage";  // Hanya tersedia di file ini
 <Layout>
   <!-- Layout tidak otomatis tahu tentang pageTitle -->
   <!-- Harus pass via props: <Layout title={pageTitle}> -->
-</Layout>
-```
+</Layout>`} />
+</InfoBox>
 
 ---
 
@@ -724,8 +685,7 @@ const pageTitle = "Homepage";  // Hanya tersedia di file ini
 
 ### Client Scripts:
 
-```astro
----
+<CodeBlock filename="client-script.astro" language="astro" code={`---
 // Frontmatter (server-side)
 const buttonId = "cta-button";
 ---
@@ -741,13 +701,11 @@ const buttonId = "cta-button";
     alert('Tombol diklik!');
     console.log('Button ID:', buttonId);
   });
-</script>
-```
+</script>`} />
 
 ### Scoped Styles:
 
-```astro
----
+<CodeBlock filename="scoped-styles.astro" language="astro" code={`---
 // Frontmatter
 const isActive = true;
 ---
@@ -771,13 +729,11 @@ const isActive = true;
   }
   
   /* Scoped: hanya berlaku untuk elemen di komponen ini */
-</style>
-```
+</style>`} />
 
 ### Script dengan TypeScript:
 
-```astro
----
+<CodeBlock filename="typescript-script.astro" language="astro" code={`---
 // Frontmatter
 interface User {
   name: string;
@@ -799,10 +755,9 @@ const user: User = { name: "Budi", id: 123 };
   const userData: User = { name: "Budi", id: 123 };
   
   document.getElementById('user-btn')?.addEventListener('click', () => {
-    console.log(`User: ${userData.name} (ID: ${userData.id})`);
+    console.log(\`User: \${userData.name} (ID: \${userData.id})\`);
   });
-</script>
-```
+</script>`} />
 
 ---
 
@@ -820,4 +775,6 @@ const user: User = { name: "Budi", id: 123 };
 
 ---
 
-**Selanjutnya:** Di Sesi 4, kita akan membahas **Routing & Halaman** - memahami file-based routing, dynamic routes, nested routes, dan API routes. Kita akan melihat bagaimana struktur folder `src/pages/` secara otomatis menjadi URL website kamu.
+<InfoBox title="🚀 Selanjutnya" variant="info" icon="rocket">
+Di Sesi 4, kita akan membahas **Routing & Halaman** - memahami file-based routing, dynamic routes, nested routes, dan API routes. Kita akan melihat bagaimana struktur folder `src/pages/` secara otomatis menjadi URL website kamu.
+</InfoBox>

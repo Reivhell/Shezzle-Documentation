@@ -1,6 +1,6 @@
 ---
 title: "Sesi 2: Instalasi & Setup Project"
-description: "Sebelum memulai perjalanan dengan Astro, pastikan peralatan kamu sudah siap. Ini seperti memastikan kamu punya sepatu yang nyaman sebelum hiking."
+description: "Sebelum memulai perjalanan dengan Astro, pastikan peralatan kamu sudah siap"
 category: "astrojs"
 tags: ["astrojs", "setup"]
 order: 2
@@ -21,9 +21,9 @@ Sebelum memulai perjalanan dengan Astro, pastikan peralatan kamu sudah siap. Ini
 | **Text Editor** | VS Code (direkomendasikan) | Menulis kode | - |
 | **Browser** | Chrome, Firefox, Safari, Edge terbaru | Testing | - |
 
-### Analogi Sederhana:
-
-> **Node.js** itu seperti mesin mobil. Astro adalah mobilnya. Tanpa mesin yang cukup kuat (Node.js versi lama), mobil Astro tidak bisa jalan dengan optimal. Versi Node.js yang direkomendasikan adalah "mesin" yang sudah diuji dan paling efisien untuk Astro.
+<InfoBox title="Analogi Sederhana" variant="tip" icon="lightbulb">
+**Node.js** itu seperti mesin mobil. Astro adalah mobilnya. Tanpa mesin yang cukup kuat (Node.js versi lama), mobil Astro tidak bisa jalan dengan optimal. Versi Node.js yang direkomendasikan adalah "mesin" yang sudah diuji dan paling efisien untuk Astro.
+</InfoBox>
 
 ### Instalasi Node.js (Jika Belum Punya):
 
@@ -33,16 +33,14 @@ Sebelum memulai perjalanan dengan Astro, pastikan peralatan kamu sudah siap. Ini
 3. Install seperti aplikasi biasa
 
 **Linux (Ubuntu/Debian):**
-```bash
-curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-sudo apt-get install -y nodejs
-```
+
+<CodeBlock filename="terminal" language="bash" code={`curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+sudo apt-get install -y nodejs`} />
 
 **Verifikasi Instalasi:**
-```bash
-node --version    # Harus keluar: v20.x.x atau lebih tinggi
-npm --version     # Harus keluar: 10.x.x atau lebih tinggi
-```
+
+<CodeBlock filename="terminal" language="bash" code={`node --version    # Harus keluar: v20.x.x atau lebih tinggi
+npm --version     # Harus keluar: 10.x.x atau lebih tinggi`} />
 
 ---
 
@@ -54,13 +52,11 @@ Astro menyediakan CLI (Command Line Interface) yang sangat mudah digunakan. Ada 
 
 Buka terminal (Command Prompt, PowerShell, atau Terminal) dan jalankan:
 
-```bash
-# Membuat project baru
+<CodeBlock filename="terminal" language="bash" code={`# Membuat project baru
 npm create astro@latest
 
 # Atau dengan npx (tanpa install global)
-npx create-astro@latest
-```
+npx create-astro@latest`} />
 
 **Langkah-langkah yang akan kamu temui:**
 
@@ -91,8 +87,7 @@ npx create-astro@latest
 
 ### Metode 2: Direct Command (Cepat untuk yang sudah tahu)
 
-```bash
-# Template kosong
+<CodeBlock filename="terminal" language="bash" code={`# Template kosong
 npm create astro@latest my-astro-project -- --template minimal
 
 # Template dengan TypeScript strict
@@ -102,32 +97,27 @@ npm create astro@latest my-astro-project -- --template minimal --typescript stri
 npm create astro@latest my-astro-project -- --template blog
 
 # Template dokumentasi (Starlight)
-npm create astro@latest my-astro-project -- --template starlight
-```
+npm create astro@latest my-astro-project -- --template starlight`} />
 
 ### Struktur Perintah:
 
-```bash
-npm create astro@latest [nama-folder] -- [flags]
+<CodeBlock filename="terminal" language="bash" code={`npm create astro@latest [nama-folder] -- [flags]
 │      │         │            │           │
 │      │         │            │           └── Opsi tambahan (--template, --typescript, dll)
 │      │         │            └── Nama folder project kamu
 │      │         └── Versi terbaru Astro
 │      └── Package runner (menjalankan package tanpa install global)
-└── Node Package Manager
-```
+└── Node Package Manager`} />
 
 ### Setelah Instalasi Selesai:
 
-```bash
-# Masuk ke folder project
+<CodeBlock filename="terminal" language="bash" code={`# Masuk ke folder project
 cd my-astro-project
 
 # Jalankan development server
 npm run dev
 
-# Buka browser ke http://localhost:4321
-```
+# Buka browser ke http://localhost:4321`} />
 
 **Output yang akan kamu lihat:**
 ```
@@ -173,7 +163,7 @@ my-astro-project/
 
 Folder ini untuk file yang **tidak perlu diproses** oleh Astro. Dikopi langsung ke folder `dist/` saat build.
 
-```plaintext
+```
 public/
 ├── favicon.svg           # Icon browser
 ├── robots.txt            # Instruksi untuk search engine crawler
@@ -184,17 +174,16 @@ public/
 ```
 
 **Contoh Penggunaan:**
-```astro
-<!-- src/pages/index.astro -->
+
+<CodeBlock filename="src/pages/index.astro" language="astro" code={`<!-- src/pages/index.astro -->
 <img src="/images/logo-old.png" alt="Logo Lama" />
-<!-- URL: http://localhost:4321/images/logo-old.png -->
-```
+<!-- URL: http://localhost:4321/images/logo-old.png -->`} />
 
 #### 2. `src/assets/` - Asset yang Dioptimasi
 
 Berbeda dengan `public/`, folder ini untuk asset yang **perlu diproses** Astro (optimasi gambar, bundling, dll).
 
-```plaintext
+```
 src/assets/
 ├── images/
 │   ├── hero.jpg          # Akan dioptimasi otomatis
@@ -206,21 +195,20 @@ src/assets/
 ```
 
 **Contoh Penggunaan dengan Optimasi:**
-```astro
----
+
+<CodeBlock filename="src/pages/index.astro" language="astro" code={`---
 import { Image } from 'astro:assets';
 import heroImage from '../assets/images/hero.jpg';
 ---
 
 <!-- Gambar dioptimasi: resize, format modern, lazy loading -->
-<Image src={heroImage} alt="Hero Image" width={800} height={400} />
-```
+<Image src={heroImage} alt="Hero Image" width={800} height={400} />`} />
 
 #### 3. `src/pages/` - File-Based Routing
 
 Ini adalah sistem routing paling intuitif. Setiap file di sini menjadi sebuah halaman website.
 
-```plaintext
+```
 src/pages/
 ├── index.astro           # Route: / (homepage)
 ├── about.astro           # Route: /about
@@ -232,8 +220,8 @@ src/pages/
 ```
 
 **Contoh File Halaman:**
-```astro
----
+
+<CodeBlock filename="src/pages/about.astro" language="astro" code={`---
 // src/pages/about.astro
 const pageTitle = "Tentang Kami";
 const team = ["Alice", "Bob", "Charlie"];
@@ -252,14 +240,13 @@ const team = ["Alice", "Bob", "Charlie"];
       {team.map(member => <li>{member}</li>)}
     </ul>
   </body>
-</html>
-```
+</html>`} />
 
 #### 4. `src/components/` - Komponen Reusable
 
 Komponen adalah blok bangunan UI yang bisa digunakan berulang kali.
 
-```plaintext
+```
 src/components/
 ├── Header.astro          # Komponen header situs
 ├── Footer.astro          # Komponen footer situs
@@ -273,8 +260,8 @@ src/components/
 ```
 
 **Contoh Komponen Button:**
-```astro
----
+
+<CodeBlock filename="src/components/Button.astro" language="astro" code={`---
 // src/components/Button.astro
 interface Props {
   variant?: 'primary' | 'secondary';
@@ -285,7 +272,7 @@ interface Props {
 const { variant = 'primary', size = 'medium', href } = Astro.props;
 ---
 
-<a href={href} class:list={['btn', `btn-${variant}`, `btn-${size}`]}>
+<a href={href} class:list={['btn', \`btn-\${variant}\`, \`btn-\${size}\`]}>
   <slot /> <!-- Slot untuk konten dinamis -->
 </a>
 
@@ -301,12 +288,11 @@ const { variant = 'primary', size = 'medium', href } = Astro.props;
   .btn-secondary { background: #e5e7eb; color: #1f2937; }
   .btn-small { font-size: 0.875rem; }
   .btn-large { font-size: 1.125rem; padding: 0.75rem 1.5rem; }
-</style>
-```
+</style>`} />
 
 **Penggunaan Komponen:**
-```astro
----
+
+<CodeBlock filename="src/pages/index.astro" language="astro" code={`---
 import Button from '../components/Button.astro';
 ---
 
@@ -316,14 +302,13 @@ import Button from '../components/Button.astro';
 
 <Button variant="secondary" size="small" href="/learn">
   Pelajari Lebih Lanjut
-</Button>
-```
+</Button>`} />
 
 #### 5. `src/layouts/` - Template Halaman
 
 Layout adalah kerangka/wrapper yang membungkus konten halaman. Berguna untuk konsistensi (header, footer, meta tags).
 
-```plaintext
+```
 src/layouts/
 ├── BaseLayout.astro      # Layout dasar untuk semua halaman
 ├── BlogLayout.astro      # Layout khusus artikel blog
@@ -331,10 +316,11 @@ src/layouts/
 ```
 
 **Contoh BaseLayout:**
-```astro
----
+
+<CodeBlock filename="src/layouts/BaseLayout.astro" language="astro" code={`---
 // src/layouts/BaseLayout.astro
 interface Props {
+  title: string;
   description?: string;
 }
 
@@ -367,12 +353,11 @@ const { title, description = "Default description" } = Astro.props;
       <p>&copy; 2026 Situs Saya. All rights reserved.</p>
     </footer>
   </body>
-</html>
-```
+</html>`} />
 
 **Penggunaan Layout:**
-```astro
----
+
+<CodeBlock filename="src/pages/index.astro" language="astro" code={`---
 // src/pages/index.astro
 import BaseLayout from '../layouts/BaseLayout.astro';
 ---
@@ -381,14 +366,13 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   <h1>Halo Dunia!</h1>
   <p>Ini adalah konten halaman beranda.</p>
   <!-- Semua ini akan masuk ke <slot /> di BaseLayout -->
-</BaseLayout>
-```
+</BaseLayout>`} />
 
 #### 6. `src/content/` - Content Collections (Astro 2.0+)
 
 Folder spesial untuk mengelola konten seperti blog, dokumentasi, atau data terstruktur.
 
-```plaintext
+```
 src/content/
 ├── config.ts            # Schema dan konfigurasi collections
 ├── blog/                # Collection: blog
@@ -401,13 +385,14 @@ src/content/
 ```
 
 **Contoh Konfigurasi Content Collections:**
-```typescript
-// src/content/config.ts
+
+<CodeBlock filename="src/content/config.ts" language="typescript" code={`// src/content/config.ts
 import { defineCollection, z } from 'astro:content';
 
 const blogCollection = defineCollection({
   type: 'content', // 'content' untuk .md/.mdx, 'data' untuk .json/.yml
   schema: z.object({
+    title: z.string(),
     pubDate: z.date(),
     author: z.string(),
     tags: z.array(z.string()),
@@ -417,8 +402,7 @@ const blogCollection = defineCollection({
 
 export const collections = {
   'blog': blogCollection,
-};
-```
+};`} />
 
 ---
 
@@ -428,8 +412,7 @@ Ini adalah "otak" konfigurasi Astro. File ini menggunakan format ES Modules (ESM
 
 ### Struktur Dasar:
 
-```javascript
-// astro.config.mjs
+<CodeBlock filename="astro.config.mjs" language="javascript" code={`// astro.config.mjs
 import { defineConfig } from 'astro/config';
 
 export default defineConfig({
@@ -460,7 +443,7 @@ export default defineConfig({
     css: {
       preprocessorOptions: {
         scss: {
-          additionalData: `@import "src/styles/vars.scss";`
+          additionalData: \`@import "src/styles/vars.scss";\`
         }
       }
     }
@@ -482,19 +465,16 @@ export default defineConfig({
       entrypoint: 'astro/assets/services/sharp',
     },
   },
-});
-```
+});`} />
 
 ### Penjelasan Properti Penting:
 
 #### `site` dan `base`
 
-```javascript
-export default defineConfig({
+<CodeBlock filename="astro.config.mjs" language="javascript" code={`export default defineConfig({
   site: 'https://docs.example.com',  // URL production
   base: '/docs',                      // Jika deploy di subfolder /docs
-});
-```
+});`} />
 
 **Use Case:**
 - `site`: Penting untuk SEO (sitemap, canonical URLs) dan fitur seperti View Transitions
@@ -509,25 +489,23 @@ export default defineConfig({
 | `'hybrid'` | Campuran: default static, tapi bisa opt-in ke SSR | Most flexible, recommended |
 
 **Contoh Hybrid Mode:**
-```javascript
-export default defineConfig({
-  output: 'hybrid',
-});
 
+<CodeBlock filename="astro.config.mjs" language="javascript" code={`export default defineConfig({
+  output: 'hybrid',
+});`} />
+
+<CodeBlock filename="src/pages/realtime.astro" language="astro" code={`---
 // Di halaman yang butuh SSR:
----
 export const prerender = false; // Force SSR untuk halaman ini
 
 const data = await fetch('https://api.realtime.com/data');
----
-```
+---`} />
 
 #### `integrations`
 
 Integrasi adalah plugin yang menambahkan fitur ke Astro.
 
-```javascript
-import { defineConfig } from 'astro/config';
+<CodeBlock filename="astro.config.mjs" language="javascript" code={`import { defineConfig } from 'astro/config';
 import tailwind from '@astrojs/tailwind';
 import react from '@astrojs/react';
 import sitemap from '@astrojs/sitemap';
@@ -544,8 +522,7 @@ export default defineConfig({
       filter: (page) => !page.includes('/admin/'),
     }),
   ],
-});
-```
+});`} />
 
 ---
 
@@ -571,8 +548,7 @@ Setelah `npm create astro`, file `package.json` akan berisi:
 
 ### Mode Development (`npm run dev`):
 
-```bash
-# Jalankan dev server
+<CodeBlock filename="terminal" language="bash" code={`# Jalankan dev server
 npm run dev
 
 # Dengan host (bisa diakses dari device lain di network)
@@ -582,8 +558,7 @@ npm run dev -- --host
 npm run dev -- --port 3000
 
 # Dengan host dan port
-npm run dev -- --host --port 3000
-```
+npm run dev -- --host --port 3000`} />
 
 **Fitur Development Server:**
 - **HMR (Hot Module Replacement)**: Perubahan kode langsung terlihat di browser tanpa refresh
@@ -592,13 +567,11 @@ npm run dev -- --host --port 3000
 
 ### Mode Build (`npm run build`):
 
-```bash
-# Build untuk production
+<CodeBlock filename="terminal" language="bash" code={`# Build untuk production
 npm run build
 
 # Build dengan verbose logging (debug)
-npm run build -- --verbose
-```
+npm run build -- --verbose`} />
 
 **Output Build:**
 ```
@@ -618,13 +591,11 @@ dist/
 
 ### Mode Preview (`npm run preview`):
 
-```bash
-# Preview build production secara lokal
+<CodeBlock filename="terminal" language="bash" code={`# Preview build production secara lokal
 npm run preview
 
 # Dengan custom port
-npm run preview -- --port 4000
-```
+npm run preview -- --port 4000`} />
 
 **Gunakan ini untuk:**
 - Testing build production sebelum deploy
@@ -639,13 +610,11 @@ Karena kamu menyebutkan Starlight, berikut setup khusus untuk project dokumentas
 
 ### Membuat Project Starlight:
 
-```bash
-# Cara 1: Template langsung
+<CodeBlock filename="terminal" language="bash" code={`# Cara 1: Template langsung
 npm create astro@latest -- --template starlight
 
 # Cara 2: Integrasi ke project existing
-npm install @astrojs/starlight
-```
+npm install @astrojs/starlight`} />
 
 ### Struktur Project Starlight:
 
@@ -668,8 +637,7 @@ my-docs/
 
 ### Konfigurasi Starlight (astro.config.mjs):
 
-```javascript
-import { defineConfig } from 'astro/config';
+<CodeBlock filename="astro.config.mjs" language="javascript" code={`import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
 
 export default defineConfig({
@@ -717,15 +685,15 @@ export default defineConfig({
       customCss: ['./src/styles/custom.css'],
     }),
   ],
-});
-```
+});`} />
 
 ### Format Konten Starlight (MDX):
 
 Starlight menggunakan **MDX** yang memungkinkan kamu menggunakan komponen React/Vue di dalam Markdown.
 
-```mdx
----
+<CodeBlock filename="src/content/docs/guides/installation.mdx" language="mdx" code={`---
+title: Instalasi
+description: Panduan instalasi produk kami
 ---
 
 import CustomComponent from '../../components/CustomComponent.jsx';
@@ -734,32 +702,14 @@ import CustomComponent from '../../components/CustomComponent.jsx';
 
 Pilih metode instalasi yang sesuai:
 
-<div class="tabs-container">
-  
-### npm
+<CodeBlock filename="terminal" language="bash" code={\`### npm
+npm install produk-kami
 
-    ```bash
-    npm install produk-kami
-    ```
-  
-
-  
 ### yarn
+yarn add produk-kami
 
-    ```bash
-    yarn add produk-kami
-    ```
-  
-
-  
 ### pnpm
-
-    ```bash
-    pnpm add produk-kami
-    ```
-  
-
-</div>
+pnpm add produk-kami\`} />
 
 ## Komponen Kustom
 
@@ -771,8 +721,11 @@ Kamu juga bisa menggunakan komponen Astro/React:
 
 Starlight mendukung frontmatter yang kaya:
 
-```mdx
+\`\`\`mdx
 ---
+title: Judul Halaman
+description: Deskripsi meta
+sidebar:
   label: Label di Sidebar
   hidden: false     # Sembunyikan dari sidebar?
   badge:
@@ -782,7 +735,7 @@ pagefind: true      # Masukkan ke search index?
 draft: false        # Draft? (tidak dipublish)
 template: splash    # splash | doc (default)
 ---
-```
+\`\`\``} />
 
 ---
 
@@ -799,4 +752,6 @@ template: splash    # splash | doc (default)
 
 ---
 
-**Selanjutnya:** Di Sesi 3, kita akan mendalami **Sintaks Dasar Astro Components** - memahami cara kerja template expressions, props, slots, dan frontmatter/backmatter.
+<InfoBox title="🚀 Selanjutnya" variant="info" icon="rocket">
+Di Sesi 3, kita akan mendalami **Sintaks Dasar Astro Components** - memahami cara kerja template expressions, props, slots, dan frontmatter/backmatter.
+</InfoBox>

@@ -91,25 +91,25 @@ export default function Footer() {
                             <div className="w-7 h-7 rounded-lg bg-indigo-50 dark:bg-indigo-900/30 flex items-center justify-center text-indigo-600 group-hover:bg-indigo-600 group-hover:text-white transition-colors">
                                 <span className="material-symbols-outlined text-[18px]">terminal</span>
                             </div>
-                            <span className="font-bold text-slate-900 dark:text-white">DevPortal</span>
+                            <span className="font-bold text-slate-900 dark:text-white">Shezzle Docs</span>
                         </Link>
                         <p className="text-xs text-slate-400 dark:text-slate-500 leading-relaxed">
-                            Designed for the modern developer. Built with care and precision for maximum scalability.
+                            The next generation developer library. Minimalist design, maximal utility
                         </p>
                     </div>
                 </div>
 
                 <div className="pt-8 border-t border-slate-100 dark:border-slate-800 flex flex-col md:flex-row items-center justify-between gap-4 text-xs text-slate-400 dark:text-slate-500">
-                    <p>&copy; 2025 DevPortal. All rights reserved.</p>
+                    <p>&copy; 2026 Shezzle Docs. All rights reserved.</p>
                     <div className="flex items-center gap-6">
-                        <a href="#" className="hover:text-slate-600 dark:hover:text-slate-300 transition-colors">
+                        <a href="https://github.com/Reivhell" className="hover:text-slate-600 dark:hover:text-slate-300 transition-colors">
                             GitHub
                         </a>
-                        <a href="#" className="hover:text-slate-600 dark:hover:text-slate-300 transition-colors">
-                            Twitter
+                        <a href="https://instagram.com/Sheznael" className="hover:text-slate-600 dark:hover:text-slate-300 transition-colors">
+                            Instagram
                         </a>
-                        <a href="#" className="hover:text-slate-600 dark:hover:text-slate-300 transition-colors">
-                            Discord
+                        <a href="https://tiktok.com/Sheznael" className="hover:text-slate-600 dark:hover:text-slate-300 transition-colors">
+                            Tiktok
                         </a>
                     </div>
                 </div>
